@@ -1,0 +1,85 @@
+/* /docs: a chooser on the hero, then a sticky mode toggle, the chapter list and fourteen chapters. */
+
+/* ---------- chooser: two big buttons in the hero ---------- */
+.chooser { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; width: min(640px, calc(100vw - 2 * var(--gutter))); margin-top: 10px; }
+.big {
+  display: grid; gap: 8px; align-content: start; padding: 22px 24px 20px; text-align: left;
+  background: rgb(5 8 10 / .55); border: 1px solid rgb(255 255 255 / .35); color: var(--bone);
+  transition: border-color .3s ease, background-color .3s ease, transform .16s ease-out;
+}
+.big:hover { border-color: var(--bone); background: rgb(255 255 255 / .06); }
+.big:active { transform: scale(.98); }
+.bigLabel { font: 400 clamp(28px, 3vw, 44px)/1 var(--karrik); text-transform: uppercase; }
+.bigHint { font-size: 13px; line-height: 1.45; color: var(--silver); }
+
+/* ---------- sticky bar with the mode toggle, full-bleed ink under the fixed header ---------- */
+.bar {
+  position: sticky; top: 58px; z-index: 5; display: flex; align-items: center; gap: 16px; padding: 12px 0;
+  background: var(--ink); box-shadow: 0 0 0 100vmax var(--ink); clip-path: inset(0 -100vmax); border-bottom: 1px solid var(--rule);
+}
+.toggle { display: inline-flex; border: 1px solid var(--ash); }
+.toggle button {
+  min-height: 40px; padding: 0 16px; font-size: 12px; letter-spacing: .08em; text-transform: uppercase; color: var(--ash-text);
+  transition: color .3s ease, background-color .3s ease;
+}
+.toggle button:hover { color: var(--bone); }
+.toggle button[aria-pressed="true"] { background: var(--bone); color: var(--ink); }
+
+/* ---------- chapter list ---------- */
+.toc { padding-top: 32px; scroll-margin-top: 96px; }
+.toc ol { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 250px), 1fr)); gap: 0 32px; }
+.toc a { display: flex; gap: 12px; align-items: baseline; padding: 10px 0; border-bottom: 1px solid var(--rule); font-size: 15px; color: var(--silver); transition: color .3s ease; }
+.toc a:hover { color: var(--bone); }
+.num { flex: none; font-size: 12px; letter-spacing: .08em; color: var(--ash-text); }
+
+/* ---------- chapters ---------- */
+.chapter { padding-top: clamp(56px, 9vh, 104px); scroll-margin-top: 112px; }
+.h2 {
+  display: flex; gap: 14px; align-items: baseline; margin: 0 0 28px; padding-bottom: 14px; border-bottom: 1px solid var(--rule);
+  font: 400 clamp(26px, 2.6vw, 40px)/1.05 var(--karrik); text-transform: uppercase; color: var(--bone); text-wrap: balance;
+}
+.chapter[data-risk] .h2 { border-bottom-color: var(--coral); }
+
+.dumb { display: grid; gap: 14px; max-width: 44ch; }
+.dumb p { margin: 0; font-size: clamp(19px, 1.7vw, 24px); line-height: 1.45; color: var(--bone); text-wrap: pretty; }
+
+.smart { display: grid; gap: 28px; min-width: 0; }
+.lead { margin: 0; max-width: 70ch; font-size: 16px; line-height: 1.65; color: var(--silver); text-wrap: pretty; }
+.formula {
+  margin: 0; padding: 16px 18px; background: #0a0f12; border: 1px solid var(--rule); max-width: 880px;
+  font: 13px/1.7 ui-monospace, SFMono-Regular, Menlo, monospace; color: var(--bone); white-space: pre-wrap; overflow-wrap: anywhere;
+}
+
+/* flow: steps left to right (top to bottom on phones), then the branches it can end in */
+.flow { margin: 0; display: grid; gap: 14px; max-width: 1100px; }
+.steps { list-style: none; margin: 0; padding: 0; display: grid; grid-auto-flow: column; grid-auto-columns: minmax(0, 1fr); gap: 28px; counter-reset: step; }
+.steps li { position: relative; padding: 14px 14px 12px; border: 1px solid var(--rule); background: #0a0f12; font-size: 13px; line-height: 1.45; color: var(--silver); counter-increment: step; }
+.steps li::before { content: counter(step, decimal-leading-zero); display: block; margin-bottom: 6px; font-size: 11px; letter-spacing: .08em; color: var(--ash-text); }
+.steps li:not(:last-child)::after { content: "→"; position: absolute; right: -21px; top: 50%; transform: translateY(-50%); color: var(--ash-text); }
+.branches { list-style: none; margin: 0; padding: 0 0 0 18px; display: grid; gap: 8px; border-left: 1px solid var(--ash); }
+.branches li { display: flex; flex-wrap: wrap; gap: 4px 12px; align-items: baseline; font-size: 14px; line-height: 1.5; color: var(--bone); }
+.branches span { font-size: 11px; letter-spacing: .08em; text-transform: uppercase; color: var(--teal); }
+
+.facts { margin: 0; display: grid; max-width: 980px; }
+.facts div { display: grid; grid-template-columns: 200px minmax(0, 1fr); gap: 24px; padding: 14px 0; border-bottom: 1px solid var(--rule); }
+.facts dt { font-size: 12px; letter-spacing: .08em; text-transform: uppercase; color: var(--ash-text); padding-top: 3px; }
+.facts dd { margin: 0; font-size: 15px; line-height: 1.6; color: var(--silver); }
+.facts code { display: block; margin-top: 4px; font: 12px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace; color: var(--ash-text); overflow-wrap: anywhere; }
+
+.links { display: flex; flex-wrap: wrap; gap: 8px 20px; align-items: baseline; margin: 0; font-size: 14px; }
+.links > span:first-child { font-size: 12px; letter-spacing: .08em; text-transform: uppercase; color: var(--ash-text); }
+
+@media (max-width: 900px) {
+  .steps { grid-auto-flow: row; grid-auto-columns: auto; gap: 22px; }
+  .steps li:not(:last-child)::after { content: "↓"; right: auto; left: 16px; top: auto; bottom: -20px; transform: none; }
+}
+@media (max-width: 760px) {
+  .chooser { grid-template-columns: 1fr; gap: 10px; }
+  .big { padding: 16px 18px; }
+  .facts div { grid-template-columns: 1fr; gap: 6px; }
+}
+.file { font: 13px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace; color: var(--silver); }
+.pending { font-style: normal; font-size: 13px; color: var(--ash-text); }
+
+/* the fee chapter: DNA's fee, Programmable's chip (not ours), the total */
+.fee { margin-top: 28px; }

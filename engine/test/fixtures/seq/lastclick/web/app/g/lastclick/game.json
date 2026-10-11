@@ -1,0 +1,8 @@
+{
+  "slug": "lastclick",
+  "title": "Last Click",
+  "chainId": 1,
+  "address": "0x1111111111111111111111111111111111111111",
+  "codehash": "0x2222222222222222222222222222222222222222222222222222222222222222",
+  "abi": [{ "type": "function", "name": "click", "inputs": [], "outputs": [], "stateMutability": "nonpayable" }]
+}

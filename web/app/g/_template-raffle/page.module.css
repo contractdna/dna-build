@@ -1,0 +1,32 @@
+.page {
+  max-width: 40rem;
+  margin: 0 auto;
+  padding: 2rem 1rem;
+}
+
+.row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin: 1rem 0;
+}
+
+.button {
+  padding: 0.6rem 1.2rem;
+}
+
+.input {
+  flex: 1 1 16rem;
+  min-width: 0;
+  padding: 0.6rem;
+  font-family: monospace;
+}
+
+.ticket {
+  overflow-wrap: anywhere;
+}
+
+.small {
+  font-size: 0.85rem;
+  opacity: 0.8;
+}

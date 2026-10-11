@@ -1,0 +1,73 @@
+/* /play: three games as panels a player can read at a glance (where it stands, how long, your move), the winners, three
+   steps to join, the rules in plain words. */
+
+.games { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 18px; }
+.game:last-child:nth-child(odd) { grid-column: 1 / -1; } /* an odd one out spans the row */
+.game { position: relative; display: flex; flex-direction: column; gap: 18px; min-width: 0; padding: 24px 24px 22px; background: #0a0f12; border: 1px solid var(--rule); }
+.game::before { content: ""; position: absolute; left: -1px; right: -1px; top: -1px; height: 2px; background: var(--c); opacity: .85; }
+.gameHead { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 8px 16px; }
+/* the state chip: the game's colour while it runs; quiet before launch */
+.state { display: inline-flex; align-items: center; gap: 8px; font-size: 12px; letter-spacing: .06em; text-transform: uppercase; color: var(--bone); white-space: nowrap; }
+.state::before { content: ""; width: 6px; height: 6px; background: var(--c); box-shadow: 0 0 10px var(--c); }
+.game[data-pre] .state { color: var(--ash-text); }
+.game[data-pre] .state::before { background: none; border: 1px solid var(--ash-text); box-shadow: none; }
+
+/* the stages: done ones dim, the current one lit in the game's colour */
+.track { list-style: none; margin: 0; padding: 0; display: flex; gap: 4px; }
+.track li { flex: 1; min-width: 0; padding-top: 8px; border-top: 2px solid var(--ash); font-size: 11px; letter-spacing: .06em; text-transform: uppercase; color: var(--ash-text); overflow-wrap: anywhere; }
+.track li[data-done] { border-color: color-mix(in srgb, var(--c) 45%, transparent); }
+.track li[data-done]::before { content: "✓ " / ""; color: var(--c); } /* not colour alone; screen readers get "(done)" */
+.track li[aria-current] { border-color: var(--c); color: var(--bone); }
+
+.readout { display: flex; flex-wrap: wrap; gap: 14px 36px; }
+.fact, .timer { margin: 0; display: grid; gap: 8px; font: 400 clamp(28px, 2.6vw, 40px)/1 var(--karrik); text-transform: uppercase; color: var(--c); }
+.fact span, .timer span { font-size: 11px; line-height: 1.4; letter-spacing: .08em; color: var(--ash-text); }
+.clock { font-variant-numeric: tabular-nums; color: var(--bone); }
+.move { margin: 0; display: grid; gap: 4px; padding: 12px 14px; border: 1px solid color-mix(in srgb, var(--c) 35%, transparent); font-size: 15px; line-height: 1.5; color: var(--bone); }
+.moveLabel { font-size: 11px; letter-spacing: .08em; text-transform: uppercase; color: var(--c); }
+.how { margin: auto 0 0; font-size: 14px; line-height: 1.6; color: var(--silver); }
+
+/* winners: room for ten a draw (two columns of five on wide screens) */
+.none { margin: 0; max-width: 66ch; font-size: 15px; line-height: 1.65; color: var(--silver); }
+.winners { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0 clamp(24px, 4vw, 56px); }
+.winners a { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 2px 16px; padding: 14px 0; border-top: 1px solid var(--rule); font-size: 14px; color: var(--silver); transition: color .3s ease; }
+.winners a:hover { color: var(--bone); }
+.wPrize { grid-row: span 2; font: 400 26px/1 var(--karrik); color: var(--amber); }
+.wWho { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; color: var(--bone); overflow-wrap: anywhere; }
+
+.steps { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: clamp(28px, 4vw, 64px); }
+.steps li { display: grid; gap: 12px; align-content: start; }
+.n { font-size: 12px; color: var(--ash-text); letter-spacing: .08em; }
+.cta { margin: 40px 0 0; }
+
+.rules { margin: 0; display: grid; gap: 0; max-width: 880px; }
+.rules div { display: grid; grid-template-columns: 180px minmax(0, 1fr); gap: 24px; padding: 16px 0; border-bottom: 1px solid var(--rule); }
+.rules dt { font-size: 12px; letter-spacing: .08em; text-transform: uppercase; color: var(--ash-text); padding-top: 2px; }
+.rules dd { margin: 0; font-size: 15px; line-height: 1.6; color: var(--silver); }
+
+/* inside the panels: ballot options, the mystery seal with its in-browser check */
+.options { list-style: none; margin: 0; padding: 0; }
+.options li { display: flex; justify-content: space-between; gap: 16px; padding: 10px 0; border-top: 1px solid var(--rule); font-size: 15px; color: var(--bone); }
+.mono { margin: 0; font: 13px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace; color: var(--silver); overflow-wrap: anywhere; }
+.check { display: grid; gap: 12px; justify-items: start; }
+.pass { margin: 0; font-size: 14px; color: var(--blood); }
+.failText { margin: 0; font-size: 14px; color: var(--coral); }
+
+/* /play/draw/<id>: the facts, and the in-browser check (one line per step) */
+.steps2 { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; font-size: 14px; color: var(--silver); }
+.steps2 li { overflow-wrap: anywhere; }
+.facts { margin: 0; display: grid; gap: 0; max-width: 880px; }
+.facts div { display: grid; grid-template-columns: 180px minmax(0, 1fr); gap: 24px; padding: 12px 0; border-bottom: 1px solid var(--rule); }
+.facts dt { font-size: 12px; letter-spacing: .08em; text-transform: uppercase; color: var(--ash-text); padding-top: 2px; }
+.facts dd { margin: 0; font-size: 15px; line-height: 1.6; color: var(--silver); overflow-wrap: anywhere; }
+.drawWinners { margin: 0; padding-left: 22px; display: grid; gap: 4px; }
+.cmd { display: block; margin: 0; padding: 14px 16px; background: #0a0f12; border: 1px solid var(--rule); font: 13px/1.6 ui-monospace, SFMono-Regular, Menlo, monospace; color: var(--silver); white-space: pre-wrap; overflow-wrap: anywhere; }
+
+@media (max-width: 1000px) { .games { grid-template-columns: 1fr; } }
+@media (max-width: 760px) { .facts div { grid-template-columns: 1fr; gap: 6px; } }
+@media (max-width: 760px) {
+  .game { padding: 20px 18px 18px; }
+  .winners { grid-template-columns: 1fr; }
+  .steps { grid-template-columns: 1fr; }
+  .rules div { grid-template-columns: 1fr; gap: 6px; }
+}

@@ -1,0 +1,120 @@
+# The Sequencer (DNA's AI dev team) builds one game per signed order from the engine's enclave (repository_dispatch,
+# so this file always runs from main). Three jobs, each holding at most one credential, none of them able to push to main:
+#  verify  - no secret: the order must be signed by the enclave's log key (deploy/release.json), fresh, run once (first
+#            attempt, and no other run of this workflow carries its id; read with the job's actions: read token).
+#  build   - the dev LLM key only (environment seq-build): the team writes the game in a checkout of the order's base;
+#            out comes a patch of the game's folders, the PR text and the spend report. No write token at all. The same
+#            environment holds SEQ_PROMPTS, the team's wording: kept private, but not a credential (it opens nothing).
+#  publish - the bot App's key only (environment seq-publish): the patch is checked again as data, sent as one App
+#            commit on seq/<order>-r<round>, and the pull request opened. Nothing from the patch runs here.
+# The enclave never trusts this: it runs every gate again on the exact commit before anything is merged or deployed.
+name: sequencer
+run-name: seq ${{ github.event.client_payload.ref }}
+on:
+  repository_dispatch:
+    types: [sequencer-build]
+
+permissions: {}
+
+# Workflow-wide, so a run's verify starts only once the run before it has finished: of two dispatches of one order,
+# the later one's verify sees the earlier run.
+concurrency:
+  group: sequencer
+  cancel-in-progress: false
+
+env:
+  # solc 0.8.26+commit.8a97fa7a, linux-amd64 (binaries.soliditylang.org/linux-amd64/list.json)
+  SOLC_SHA256: d5f23436f443edb85d8e76906d12f0a86ce0490e7663a9e608efeb7a93f149ef
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      actions: read
+    outputs:
+      base_sha: ${{ steps.v.outputs.base_sha }}
+      slug: ${{ steps.v.outputs.slug }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with: { persist-credentials: false }
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with: { node-version-file: .nvmrc }
+      - run: npm ci --prefix engine --no-audit --no-fund
+      - id: v
+        name: the order is the enclave's, fresh, this is the first attempt, and no other run carries the order
+        env:
+          PAYLOAD: ${{ toJSON(github.event.client_payload) }}
+          GITHUB_RUN_ATTEMPT: ${{ github.run_attempt }}
+          # read-only (actions: read): lists this workflow's runs to refuse an order dispatched again inside its window
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          printf '%s' "$PAYLOAD" > "$RUNNER_TEMP/payload.json"
+          node sequencer/src/verify.ts --payload "$RUNNER_TEMP/payload.json" --out "$RUNNER_TEMP/order.json"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with: { name: order, path: "${{ runner.temp }}/order.json", retention-days: 30 }
+
+  build:
+    needs: verify
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    environment: seq-build
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with: { ref: "${{ needs.verify.outputs.base_sha }}", submodules: true, persist-credentials: false }
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with: { name: order, path: "${{ runner.temp }}" }
+      - uses: foundry-rs/foundry-toolchain@908c540300062bd5a7e473851cdb4282204cee09 # v1.9.1
+        with: { version: v1.8.3, cache: false }
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with: { node-version-file: .nvmrc }
+      - name: solc 0.8.26 (pinned by sha256)
+        run: |
+          curl -fsSL -o "$RUNNER_TEMP/solc" "https://binaries.soliditylang.org/linux-amd64/solc-linux-amd64-v0.8.26+commit.8a97fa7a"
+          echo "$SOLC_SHA256  $RUNNER_TEMP/solc" | sha256sum -c -
+          chmod +x "$RUNNER_TEMP/solc"
+      - run: npm ci --prefix engine --no-audit --no-fund && npm ci --prefix sequencer --no-audit --no-fund
+      - name: the dev team builds
+        env:
+          OPENROUTER_API_KEY_SEQUENCER: ${{ secrets.OPENROUTER_API_KEY_SEQUENCER }}
+          SEQ_PROMPTS: ${{ secrets.SEQ_PROMPTS }}
+          SEQ_SOLC: ${{ runner.temp }}/solc
+        run: node sequencer/src/run.ts --order "$RUNNER_TEMP/order.json" --out "$RUNNER_TEMP/out"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: always()
+        with: { name: build, path: "${{ runner.temp }}/out", retention-days: 30, if-no-files-found: ignore }
+
+  publish:
+    needs: [verify, build]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment: seq-publish
+    # No GITHUB_TOKEN rights: the App token does the writing. actions/checkout reads with this token, which works with
+    # no permissions only while the repository is public. The dna-sandbox rehearsal must confirm it; if it fails, the
+    # fallback is `contents: read` here (docs/sequencer.md, settings).
+    permissions: {}
+    steps:
+      # main's code publishes; the order's base is only data the patch is applied to
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with: { path: trusted, persist-credentials: false }
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with: { ref: "${{ needs.verify.outputs.base_sha }}", path: base, persist-credentials: false }
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with: { name: order, path: "${{ runner.temp }}" }
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with: { name: build, path: "${{ runner.temp }}/out" }
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with: { node-version-file: trusted/.nvmrc }
+      - run: npm ci --prefix trusted/engine --no-audit --no-fund
+      - name: one App commit, the pull request
+        env:
+          SEQ_APP_ID: ${{ secrets.SEQ_APP_ID }}
+          SEQ_APP_KEY: ${{ secrets.SEQ_APP_KEY }}
+        run: |
+          if [ ! -f "$RUNNER_TEMP/out/patch.diff" ]; then echo "no pull request this round (see the build's report)"; exit 0; fi
+          title="$(jq -r .title "$RUNNER_TEMP/out/plan.json")"
+          node trusted/sequencer/src/publish.ts --order "$RUNNER_TEMP/order.json" --patch "$RUNNER_TEMP/out/patch.diff" \
+            --body "$RUNNER_TEMP/out/pr.md" --title "$title" --root base

@@ -1,0 +1,19 @@
+{
+  "name": "adaptive-fee",
+  "version": "v1",
+  "kind": "FeePolicy",
+  "author": "DNA",
+  "review": "internal",
+  "risk": "medium",
+  "summary": "Raises the project fee with realized volatility; capped by the constitution.",
+  "killConditions": [
+    "any ModuleFailed from this plate while it is the canary",
+    "in-window swaps charged at the canary ceiling > 30% (≥ 10 in-window swaps); ceiling = the plate's cap, or the active fee + 1 point when the hook's canary clamp binds first",
+    "in-window swap rate < 70% of the out-of-window rate over the last 1 h or the last full canary window, whichever is longer (≥ 10 out-of-window swaps, a full window of in-window blocks, and ≥ 10 in-window swaps expected at the out-of-window rate)"
+  ],
+  "params": [
+    { "key": "base fee", "unit": "pips" },
+    { "key": "vol multiplier", "unit": "x1e4" },
+    { "key": "fee cap", "unit": "pips" }
+  ]
+}

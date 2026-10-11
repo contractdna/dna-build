@@ -1,0 +1,71 @@
+/* /live: three facts in big words, the feed as a strand of beads, cards into the proof. */
+
+.now { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: clamp(28px, 4vw, 64px); }
+.card { display: flex; flex-direction: column; gap: 14px; min-width: 0; }
+.nowLabel { margin-bottom: 0; }
+.big { margin: 0; font: 400 clamp(30px, 3.2vw, 52px)/1 var(--karrik); text-transform: uppercase; color: var(--bone); transition: opacity 0.6s ease; }
+.pulse { display: inline-block; width: .32em; height: .32em; margin-right: .55em; vertical-align: .22em; border-radius: 50%; background: var(--teal); animation: pulse 2.4s ease-out infinite; }
+@keyframes pulse { from { box-shadow: 0 0 0 0 rgb(79 214 200 / .5); } to { box-shadow: 0 0 0 .32em rgb(79 214 200 / 0); } }
+.figure { margin: 0; font: 400 clamp(30px, 3.2vw, 52px)/1 var(--karrik); color: var(--bone); }
+.fee { margin: 0; font: 400 24px/1.1 var(--karrik); text-transform: uppercase; color: var(--bone); }
+.quote { margin: 0; font: 400 clamp(22px, 2vw, 30px)/1.15 var(--karrik); text-transform: uppercase; color: var(--bone); text-wrap: pretty; }
+.text { margin: 0; font-size: 14px; line-height: 1.6; color: var(--silver); max-width: 36ch; }
+.running { font-size: 14px; line-height: 1.5; }
+.params { margin: 0; display: grid; gap: 6px; }
+.params div { display: flex; justify-content: space-between; gap: 16px; font-size: 14px; }
+.params dt { color: var(--ash-text); }
+.params dd { margin: 0; color: var(--bone); }
+
+/* the feed: a strand with one bead per event, coloured by what kind of event it was */
+.feed { list-style: none; margin: 0; padding: 0; max-width: 820px; }
+.feed li { position: relative; display: grid; grid-template-columns: 64px minmax(0, 1fr); gap: 28px; padding: 0 0 28px; animation: in 1.2s ease both; }
+.feed li::before { content: ""; position: absolute; left: 92px; top: 8px; bottom: -8px; width: 1px; background: var(--rule); }
+.feed li:last-child::before { display: none; }
+.time { padding-top: 2px; font-size: 13px; color: var(--ash-text); }
+.say { position: relative; padding-left: 28px; font-size: 17px; line-height: 1.5; color: var(--silver); }
+.feed li:first-child .say { color: var(--bone); }
+.say::before { content: ""; position: absolute; left: -4px; top: 8px; width: 9px; height: 9px; border-radius: 50%; background: var(--c); box-shadow: 0 0 12px var(--c); }
+@keyframes in { from { opacity: 0; } }
+
+/* the proof, inline: four panels, a topic colour on each top edge, a "full page" link in each head */
+.proof { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 18px; }
+.panel { position: relative; display: flex; flex-direction: column; gap: 18px; min-width: 0; padding: 24px 24px 22px; background: #0a0f12; border: 1px solid var(--rule); }
+.panel::before { content: ""; position: absolute; left: -1px; right: -1px; top: -1px; height: 2px; background: var(--c); opacity: .85; }
+.panelHead { display: flex; flex-wrap: wrap; align-items: baseline; gap: 8px 16px; }
+.panelTitle { margin: 0; font: 400 22px/1.1 var(--karrik); text-transform: uppercase; color: var(--bone); }
+.full { margin-left: auto; font-size: 12px; letter-spacing: .06em; text-transform: uppercase; color: var(--ash-text); transition: color .3s ease; }
+.full:hover { color: var(--bone); }
+.panelNote { margin: auto 0 0; font-size: 12px; line-height: 1.5; color: var(--ash-text); }
+.question { margin: 0; font-size: 17px; line-height: 1.45; color: var(--bone); text-wrap: pretty; }
+.reason { margin: 0; display: grid; gap: 12px; }
+.reason div { display: grid; grid-template-columns: 92px minmax(0, 1fr); gap: 16px; }
+.reason dt { padding-top: 2px; font-size: 11px; letter-spacing: .08em; text-transform: uppercase; color: var(--ash-text); }
+.reason dd { margin: 0; font-size: 14px; line-height: 1.55; color: var(--silver); }
+.panelFoot { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px 24px; margin-top: auto; padding-top: 14px; border-top: 1px solid var(--rule); }
+.conf { display: inline-flex; align-items: center; gap: 12px; font-size: 13px; color: var(--bone); }
+.meter { display: grid; grid-template-columns: repeat(20, 6px); gap: 2px; height: 8px; }
+.meter i { border: 1px solid var(--ash); }
+.meter i[data-on] { background: var(--violet); border-color: var(--violet); }
+.rows { list-style: none; margin: 0; padding: 0; }
+.rows li { display: grid; gap: 6px; padding: 12px 0; border-top: 1px solid var(--rule); }
+.rows li:first-child { border-top: 0; padding-top: 0; }
+.rowMain { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 6px 16px; font-size: 15px; }
+.rowSub { display: flex; flex-wrap: wrap; gap: 4px 18px; font-size: 13px; line-height: 1.5; color: var(--silver); }
+.rowSub b { font-weight: 400; color: var(--teal); }
+.rowSub b[data-neg] { color: var(--rose); }
+.limits { margin: 0; display: grid; gap: 0; }
+.limits div { display: grid; grid-template-columns: minmax(0, 11em) minmax(0, 1fr); gap: 18px; padding: 11px 0; border-top: 1px solid var(--rule); }
+.limits div:first-child { border-top: 0; padding-top: 0; }
+.limits dt { font: 400 17px/1.25 var(--karrik); text-transform: uppercase; color: var(--bone); overflow-wrap: anywhere; }
+.limits dd { margin: 0; font-size: 14px; line-height: 1.5; color: var(--silver); }
+
+@media (max-width: 960px) { .now { grid-template-columns: 1fr; gap: 44px; } .proof { grid-template-columns: 1fr; } }
+@media (max-width: 520px) {
+  .panel { padding: 20px 18px 18px; }
+  .reason div, .limits div { grid-template-columns: 1fr; gap: 4px; }
+}
+@media (max-width: 520px) {
+  .feed li { grid-template-columns: 48px minmax(0, 1fr); gap: 16px; }
+  .feed li::before { left: 68px; }
+  .say { font-size: 15px; }
+}

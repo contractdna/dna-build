@@ -1,0 +1,77 @@
+{
+ "rtmr3": "7f2eb2a338d0310a30a28a430a2dcc2e2f85a0bd0f66db976d4041e34a4cd198c6e9da2a37b33abb7ed4f05998c987ca",
+ "composeHash": "b8f09c7b1db91d4ea8f1fb8d9cbb5d080a6775e554c331a0bf99ebc1b024f27d",
+ "osImageHash": "6427f4f5ded88b72d326bd973e581c1689c5080c6444a0cf90fec7d9e4c8b92a",
+ "eventLog": [
+  {
+   "imr": 3,
+   "event_type": 134217729,
+   "digest": "",
+   "event": "system-preparing",
+   "event_payload": ""
+  },
+  {
+   "imr": 3,
+   "event_type": 134217729,
+   "digest": "",
+   "event": "app-id",
+   "event_payload": "fa4e0b17df0eb5d9497746b6777945448854a17f"
+  },
+  {
+   "imr": 3,
+   "event_type": 134217729,
+   "digest": "",
+   "event": "compose-hash",
+   "event_payload": "b8f09c7b1db91d4ea8f1fb8d9cbb5d080a6775e554c331a0bf99ebc1b024f27d"
+  },
+  {
+   "imr": 3,
+   "event_type": 134217729,
+   "digest": "",
+   "event": "instance-id",
+   "event_payload": "074c23bfd5ee3f135b8afb4a267f069d2ed62e38"
+  },
+  {
+   "imr": 3,
+   "event_type": 134217729,
+   "digest": "",
+   "event": "boot-mr-done",
+   "event_payload": ""
+  },
+  {
+   "imr": 3,
+   "event_type": 134217729,
+   "digest": "",
+   "event": "mr-kms",
+   "event_payload": "3fb0d257d6f90c608aff6af063b5fc74d4ada92f0c0f45864738bdd01c34fd02"
+  },
+  {
+   "imr": 3,
+   "event_type": 134217729,
+   "digest": "",
+   "event": "os-image-hash",
+   "event_payload": "6427f4f5ded88b72d326bd973e581c1689c5080c6444a0cf90fec7d9e4c8b92a"
+  },
+  {
+   "imr": 3,
+   "event_type": 134217729,
+   "digest": "",
+   "event": "key-provider",
+   "event_payload": "7b226e616d65223a226b6d73222c226964223a223330353933303133303630373261383634386365336430323031303630383261383634386365336430333031303730333432303030343838343465623432636364663863353266643466313734663336326663623962626431396334356664343866316564656332643866316361323335333665633161373430323162346365653631306330373466383239346434333162326237666565326333396535333333666461663061343532326434336662313539643966227d"
+  },
+  {
+   "imr": 3,
+   "event_type": 134217729,
+   "digest": "",
+   "event": "storage-fs",
+   "event_payload": "65787434"
+  },
+  {
+   "imr": 3,
+   "event_type": 134217729,
+   "digest": "",
+   "event": "system-ready",
+   "event_payload": ""
+  }
+ ]
+}

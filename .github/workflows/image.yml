@@ -1,0 +1,162 @@
+# The enclave's images, built reproducibly: the engine (engine/Dockerfile; its own image also runs the forge sandbox) and
+# the page check (pagecheck/Dockerfile). Each is built twice, without cache, from the same commit, with the layer
+# timestamps set to the commit time (SOURCE_DATE_EPOCH + rewrite-timestamp); both OCI manifest digests must match. The
+# digest + commit are recorded (job summary + artifacts `engine-image`, `pagecheck-image`), which is what a timelock
+# proposal for a new compose hash cites. Nothing is pushed or deployed here: publishing an image to a registry is a
+# separate, approved step (the digest does not change when the OCI archive, artifact `<image>-oci`, is pushed as-is).
+name: image
+on:
+  pull_request:
+    paths:
+      - "engine/**"
+      - "deploy/**"
+      - "pagecheck/**"
+      - "web/**"
+      - "contracts/games/**"
+      - "contracts/src/games/**"
+      - "contracts/test/games/**"
+      - "contracts/lib/forge-std"
+      - ".github/workflows/image.yml"
+      - ".github/scripts/oci-diff.py"
+  push:
+    tags: ["engine-v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# A newer push to a pull request cancels its older run; every other run gets a group of its own and is never cancelled.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        image: [engine, pagecheck]
+    env:
+      # the builder is an input of the digest: pinned by digest, and recorded with it
+      BUILDKIT: moby/buildkit:v0.33.1@sha256:cec9f139f45e93c5c69c60f8b07cfad9f43f4ef6b6a6cd917527fea5ff2e3dea
+      NAME: ${{ matrix.image }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with: { submodules: true } # forge-std, the game kit's test library (contracts/foundry.lock's revision)
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3.12.0
+        with:
+          driver-opts: image=${{ env.BUILDKIT }}
+      - name: media (release assets pinned by sha256; verified, fetched if missing)
+        if: matrix.image == 'engine'
+        run: bash engine/scripts/fetch-media.sh
+      - name: build twice (no cache), compare digests
+        run: |
+          export SOURCE_DATE_EPOCH=$(git log -1 --format=%ct)
+          for i in 1 2; do
+            docker buildx build . -f "$NAME/Dockerfile" --platform linux/amd64 --no-cache --provenance=false --sbom=false \
+              --build-arg SOURCE_DATE_EPOCH \
+              --output "type=oci,dest=/tmp/$NAME-$i.tar,rewrite-timestamp=true"
+            mkdir -p /tmp/oci-$i && tar -xf /tmp/$NAME-$i.tar -C /tmp/oci-$i
+            jq -r '.manifests[0].digest' /tmp/oci-$i/index.json > /tmp/digest-$i
+            # build 1's archive is kept: the artifact `<image>-oci` is what gets pushed to the registry as-is (same digest)
+            if [ "$i" = 2 ]; then rm -f /tmp/$NAME-$i.tar; fi
+          done
+          echo "build 1: $(cat /tmp/digest-1)"; echo "build 2: $(cat /tmp/digest-2)"
+          if ! cmp -s /tmp/digest-1 /tmp/digest-2; then
+            # name the exact files that differ (path, mode, owner, mtime, size, content hash per layer; the config)
+            python3 .github/scripts/oci-diff.py /tmp/oci-1 /tmp/oci-2 || true
+            echo "::error::the two builds differ: the image is not reproducible"; exit 1
+          fi
+          rm -rf /tmp/oci-1 /tmp/oci-2
+      - name: load the image for the smoke tests
+        run: |
+          # the same build again from the builder's cache, loaded into the local daemon (it can't import an OCI archive)
+          export SOURCE_DATE_EPOCH=$(git log -1 --format=%ct)
+          docker buildx build . -f "$NAME/Dockerfile" --platform linux/amd64 --provenance=false --sbom=false --build-arg SOURCE_DATE_EPOCH --load -t "dna-$NAME:smoke"
+      - name: smoke test (anvil, forge and the pinned solc; the kit compiles with no network; the env lockdown)
+        if: matrix.image == 'engine'
+        run: |
+          ID=dna-engine:smoke
+          docker run --rm --entrypoint anvil "$ID" --version
+          docker run --rm --entrypoint forge "$ID" --version
+          docker run --rm --entrypoint solc "$ID" --version | grep -q "0.8.26+commit.8a97fa7a"
+          # the gates' build as the forge container runs it: no network, read-only, the kit compiled offline with the image's solc
+          docker run --rm --network none --read-only --tmpfs /tmp --entrypoint sh "$ID" -c \
+            'cp -r /app/contracts /tmp/k && cd /tmp/k && HOME=/tmp FOUNDRY_SOLC="$SEQ_SOLC" FOUNDRY_OFFLINE=true forge build --root games'
+          # a fork of a loopback anvil inside the image (G9's shape): forge's HTTP client needs the image's CA certificates
+          # even for plain http to 127.0.0.1; the test passes only on the fork (anvil's chain id, not forge's default)
+          docker run --rm -i --network none --read-only --tmpfs /tmp --entrypoint sh "$ID" -s <<'SH'
+          set -e
+          anvil --port 8545 --chain-id 4242 --silent & a=$!
+          trap 'kill $a' EXIT
+          cp -r /app/contracts /tmp/k && cd /tmp/k && mkdir -p test/games/smoke
+          printf '%s\n' '// SPDX-License-Identifier: MIT' 'pragma solidity 0.8.26;' 'import {Test} from "forge-std/Test.sol";' \
+            'contract ForkTest is Test { function test_fork() public view { assertEq(block.chainid, 4242); } }' > test/games/smoke/Fork.t.sol
+          sleep 2
+          HOME=/tmp FOUNDRY_SOLC="$SEQ_SOLC" FOUNDRY_OFFLINE=true forge test --root games --match-path '*/smoke/*' --fork-url http://127.0.0.1:8545
+          SH
+          # the sandbox as the compose runs it (its own uid 1001 in the engine's group, no environment, no network) and
+          # the engine (uid 1000) handing it G9 through a shared volume: the example game compiled and its conformance
+          # tests run on the sandbox's own anvil; then the engine removes the workspace, sandbox-made files included
+          docker volume create work-smoke
+          docker run -d --name forge-smoke --network none --read-only --tmpfs /tmp --user 1001:1000 -v work-smoke:/work "$ID" node src/sandbox.ts
+          sleep 3
+          [ "$(docker inspect -f '{{.State.Running}}' forge-smoke)" = true ] || { docker logs forge-smoke; exit 1; }
+          docker run --rm -i --network none --read-only --tmpfs /tmp -v work-smoke:/work -v "$PWD/contracts:/repo/contracts:ro" \
+            --entrypoint node "$ID" --input-type=module - <<'JS'
+          import { readdirSync, readFileSync, rmSync } from "node:fs";
+          import { ENCLAVE } from "/app/src/enclave.ts";
+          import { compile, forkGate, workspace } from "/app/src/seq-forge.ts";
+          ENCLAVE.on = true; // forge goes to the sandbox through /work, as in the enclave
+          const files = {};
+          for (const d of ["src/games/example", "test/games/example"]) for (const f of readdirSync(`/repo/contracts/${d}`)) files[`contracts/${d}/${f}`] = readFileSync(`/repo/contracts/${d}/${f}`, "utf8");
+          const ws = workspace("/app/contracts", files, "example");
+          const c = await compile(ws, files, "example");
+          if (!c.ok) throw new Error(`does not compile: ${c.out}`);
+          const g9 = await forkGate(ws, "example");
+          console.log(JSON.stringify(g9));
+          if (!g9.ok) process.exit(1);
+          rmSync(ws, { recursive: true });
+          JS
+          docker rm -f forge-smoke
+          docker volume rm work-smoke
+          # why forge gets a container of its own rather than `unshare -n` inside the engine's: a default container may
+          # not create namespaces (Docker's seccomp profile allows unshare only with CAP_SYS_ADMIN, which the engine,
+          # holding the keys, must not get). Recorded each build.
+          if docker run --rm --entrypoint unshare "$ID" -rn true 2> /tmp/unshare.log; then echo "::warning::unshare -rn worked in a default container"; else echo "unshare -rn refused in a default container: $(cat /tmp/unshare.log)"; fi
+          ! docker run --rm -e ENCLAVE=1 -e CHAIN_ID=1 -e XAI_API_BASE=http://x "$ID" 2> /tmp/lockdown.log
+          grep -q "enclave env lockdown" /tmp/lockdown.log
+          grep -q "XAI_API_BASE is set" /tmp/lockdown.log
+          grep -q "DNA_PERSONA is required" /tmp/lockdown.log
+      - name: smoke test (Chromium renders with no network; the service answers)
+        if: matrix.image == 'pagecheck'
+        run: |
+          ID=dna-pagecheck:smoke
+          # a whole check as the compose runs it (no network, read-only but /tmp): Playwright drives
+          # the image's Chromium against its own anvil and catches a planted unguarded wallet request
+          docker run --rm --network none --read-only --tmpfs /tmp "$ID" node pagecheck/src/selftest.ts
+          docker run -d --name pagecheck-smoke --read-only --tmpfs /tmp -p 127.0.0.1:18090:8090 "$ID"
+          for i in $(seq 1 30); do curl -fsS http://127.0.0.1:18090/health && break; sleep 1; done
+          curl -fsS http://127.0.0.1:18090/health | grep -q '"ok":true'
+          docker rm -f pagecheck-smoke
+      - name: record digest + commit
+        run: |
+          jq -n --arg digest "$(cat /tmp/digest-1)" --arg commit "$GITHUB_SHA" --arg epoch "$(git log -1 --format=%ct)" \
+            --arg dockerfile "$(sha256sum "$NAME/Dockerfile" | cut -d' ' -f1)" --arg buildkit "$BUILDKIT" \
+            '{digest: $digest, commit: $commit, sourceDateEpoch: ($epoch | tonumber), dockerfileSha256: $dockerfile, buildkit: $buildkit, platform: "linux/amd64"}' > "$NAME-image-digest.json"
+          cat "$NAME-image-digest.json"
+          { echo "### $NAME image"; echo; echo '```json'; cat "$NAME-image-digest.json"; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: ${{ matrix.image }}-image
+          path: ${{ matrix.image }}-image-digest.json
+          retention-days: 30
+      # the OCI archive itself (build 1, digest above), for the registry push; short-lived, the digest record is what lasts
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: ${{ matrix.image }}-oci
+          path: /tmp/${{ matrix.image }}-1.tar
+          retention-days: 7
+          compression-level: 0
+          if-no-files-found: error

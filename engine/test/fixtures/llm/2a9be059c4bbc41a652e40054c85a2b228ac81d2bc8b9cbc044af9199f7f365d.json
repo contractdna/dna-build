@@ -1,0 +1,69 @@
+{
+  "via": "openrouter",
+  "request": {
+    "model": "x-ai/grok-4.3",
+    "max_tokens": 800,
+    "messages": [
+      {
+        "role": "system",
+        "content": "sha256:0fe4a7b8b6c50aef1e1d5af16b6d46fdcd1a1b5013b3daae0d2223f5b4014dc0"
+      },
+      {
+        "role": "user",
+        "content": "{\"cycles\":24,\"outcome\":\"rejected\",\"params\":{\"base\":20000,\"cap\":23000,\"cycles\":24,\"mult\":0,\"revenueDeltaPct\":1},\"reason\":\"gates failed\",\"stageReached\":\"search\"}"
+      }
+    ],
+    "response_format": {
+      "type": "json_schema",
+      "json_schema": {
+        "name": "output",
+        "strict": true,
+        "schema": {
+          "type": "object",
+          "properties": {
+            "result": {
+              "type": "string"
+            },
+            "futureRule": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "result",
+            "futureRule"
+          ],
+          "additionalProperties": false
+        }
+      }
+    },
+    "reasoning": {
+      "effort": "low"
+    },
+    "provider": {
+      "order": [
+        "xai"
+      ],
+      "allow_fallbacks": false
+    }
+  },
+  "response": {
+    "synthetic": true,
+    "provider": "xAI",
+    "model": "x-ai/grok-4.3",
+    "object": "chat.completion",
+    "choices": [
+      {
+        "index": 0,
+        "finish_reason": "stop",
+        "message": {
+          "role": "assistant",
+          "content": "{\"result\":\"Synthetic result for a closed experiment.\",\"futureRule\":\"Synthetic rule: re-check swap retention before the next canary.\"}"
+        }
+      }
+    ],
+    "usage": {
+      "prompt_tokens": 100,
+      "completion_tokens": 50
+    }
+  }
+}

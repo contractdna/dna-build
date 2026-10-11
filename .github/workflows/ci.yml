@@ -1,0 +1,251 @@
+name: ci
+on:
+  push:
+    branches: [main]
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+  schedule:
+    - cron: "0 3 * * *" # the full run, nightly
+  workflow_dispatch: # the full run, by hand
+
+permissions:
+  contents: read
+
+# A newer push to a pull request cancels its older run. Every other run gets a group of its own (its run id), so a run
+# on main is never cancelled, not even while pending.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  # Which jobs this run needs. A pull request runs each job whose inputs it changes (every job when CI itself, .nvmrc or
+  # the submodules change); e2e and pagecheck wait while it is a draft. A push to main (the pull request already passed)
+  # runs the cheap jobs only; the nightly schedule and a manual run run every job. A skipped job reports success.
+  changes:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      contracts: ${{ steps.pick.outputs.contracts }}
+      engine: ${{ steps.pick.outputs.engine }}
+      enclave_sim: ${{ steps.pick.outputs.enclave_sim }}
+      sequencer: ${{ steps.pick.outputs.sequencer }}
+      pagecheck: ${{ steps.pick.outputs.pagecheck }}
+      web: ${{ steps.pick.outputs.web }}
+      e2e: ${{ steps.pick.outputs.e2e }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        if: github.event_name == 'pull_request'
+        with: { fetch-depth: 2, persist-credentials: false } # the merge commit and its parents: HEAD^1 is the base
+      - id: pick
+        env:
+          EVENT: ${{ github.event_name }}
+          DRAFT: ${{ github.event.pull_request.draft }}
+        run: |
+          set -euo pipefail
+          # the areas, as patterns on the changed paths
+          contracts='^contracts/'
+          engine='^engine/'
+          sequencer='^sequencer/'
+          web='^web/'
+          pagecheck='^pagecheck/'
+          deploy='^deploy/'
+          docs='^(docs|persona)/|^(README\.md|LICENSE|SECURITY\.md|\.gitignore|\.gitattributes)$'
+          workflows='^\.github/|^(\.nvmrc|\.gitmodules)$' # changes here run every job
+          # each job's inputs; when in doubt an area is in
+          declare -A needs=(
+            [contracts]="contracts engine"                                    # ABI drift and route A run engine/scripts
+            [engine]="contracts engine sequencer web pagecheck deploy docs"   # the publish scan reads every public file
+            [enclave-sim]="contracts engine web"                              # engine/test/enclave*: engine/src, web/app
+            [sequencer]="contracts engine sequencer web deploy docs"          # games, engine/src, web/app, release.json, docs
+            [pagecheck]="engine web pagecheck"                                # a play build of web/, engine/src/seq-gates
+            [web]="contracts engine web"                                      # its tests read contracts/ and engine/models.json
+            [e2e]="contracts engine web deploy"                               # devchain, engine, web LIVE
+          )
+          files=""
+          [ "$EVENT" != pull_request ] || files=$(git diff --name-only HEAD^1 HEAD)
+          changed() { [ -n "$files" ] && grep -qE "${!1}" <<<"$files"; }
+          areas=""
+          for a in contracts engine sequencer web pagecheck deploy docs workflows; do if changed "$a"; then areas+="$a "; fi; done
+          { echo "event: $EVENT${DRAFT:+, draft: $DRAFT}"; echo "changed areas: ${areas:-none}"; } | tee -a "$GITHUB_STEP_SUMMARY"
+          for job in contracts engine enclave-sim sequencer pagecheck web e2e; do
+            run=false
+            case "$EVENT" in
+              push) case $job in contracts|web) run=true;; esac ;;
+              pull_request)
+                if changed workflows; then run=true; else for a in ${needs[$job]}; do if changed "$a"; then run=true; fi; done; fi
+                if [ "$DRAFT" = true ]; then case $job in e2e|pagecheck) run=false;; esac; fi ;;
+              *) run=true ;;
+            esac
+            echo "${job//-/_}=$run" >> "$GITHUB_OUTPUT"
+            echo "- $job: $run" | tee -a "$GITHUB_STEP_SUMMARY"
+          done
+
+  contracts:
+    needs: changes
+    if: needs.changes.outputs.contracts == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with: { submodules: recursive }
+      - uses: foundry-rs/foundry-toolchain@908c540300062bd5a7e473851cdb4282204cee09 # v1.9.1
+        with: { version: v1.8.3 }
+      - name: forge build + test (fork tests skip without MAINNET_RPC_URL)
+        working-directory: contracts
+        run: forge build --sizes && forge test
+      - name: forge lint (src only, foundry.toml [lint]; any finding fails; exclusions are reasoned in README.md "Lint")
+        working-directory: contracts
+        run: forge lint --deny notes
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with: { node-version-file: .nvmrc }
+      - name: ABI drift (engine/src/abi.ts must match contracts/out)
+        run: node engine/scripts/abi.ts && git diff --exit-code engine/src/abi.ts
+      - name: route A pack inputs (exact solc 0.8.26+commit.8a97fa7a Standard JSON == forge out/, pack-config schema)
+        env: { ROUTE_A_DRAFT: "1" } # no launch values in CI: placeholder draft (a real build fails closed without them)
+        run: npm ci --prefix engine && node engine/scripts/route-a.ts build
+
+  engine:
+    needs: changes
+    if: needs.changes.outputs.engine == 'true'
+    runs-on: ubuntu-latest
+    defaults: { run: { working-directory: engine } }
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env: { POSTGRES_PASSWORD: postgres, POSTGRES_DB: dna }
+        ports: ["55434:5432"]
+        options: --health-cmd "pg_isready -U postgres" --health-interval 2s --health-timeout 5s --health-retries 20
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with: { submodules: true } # forge-std: the Sequencer gate tests build games with forge
+      - uses: foundry-rs/foundry-toolchain@908c540300062bd5a7e473851cdb4282204cee09 # v1.9.1; anvil: the long-lived fork test (test/loop.test.ts)
+        with: { version: v1.8.3 }
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with: { node-version-file: .nvmrc, cache: npm, cache-dependency-path: engine/package-lock.json }
+      - run: npm ci
+      - run: npm run check
+      - name: workflow lint (actions pinned by sha, permissions, secrets allow-list, no cache in the Sequencer)
+        run: node scripts/workflow-lint.ts
+      - name: unit tests (pure + engine-db against Postgres and local API fakes)
+        run: npm test
+        env: { TEST_DATABASE_URL: "postgres://postgres:postgres@127.0.0.1:55434/postgres" }
+
+  # the enclave build against the real dstack simulator (Phala's guest agent, Dstack-TEE/dstack v0.5.8 = what
+  # @phala/dstack-sdk 0.5.8 targets): key derivation, the TEE-derived seal key, tcb_info, then the enclave DB tests.
+  # `engine` runs the same tests against scripts/dstack-mock.ts.
+  enclave-sim:
+    needs: changes
+    if: needs.changes.outputs.enclave_sim == 'true'
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env: { POSTGRES_PASSWORD: postgres, POSTGRES_DB: dna }
+        ports: ["55435:5432"]
+        options: --health-cmd "pg_isready -U postgres" --health-interval 2s --health-timeout 5s --health-retries 20
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with: { repository: Dstack-TEE/dstack, ref: 368c62e7de5d4016bd75332824aa7f2ef1d7d19e, path: dstack } # v0.5.8
+      - run: sudo apt-get update && sudo apt-get install -y protobuf-compiler pkg-config libssl-dev
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with: { workspaces: dstack }
+      - name: build the dstack simulator
+        working-directory: dstack/sdk/simulator
+        run: ./build.sh
+      - name: start the simulator (unix socket dstack.sock)
+        working-directory: dstack/sdk/simulator
+        run: |
+          nohup ./dstack-simulator > sim.log 2>&1 &
+          for i in $(seq 1 60); do [ -S dstack.sock ] && break; sleep 1; done
+          [ -S dstack.sock ] || { cat sim.log; exit 1; }
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with: { node-version-file: .nvmrc, cache: npm, cache-dependency-path: engine/package-lock.json }
+      - run: npm ci && bash scripts/fetch-media.sh
+        working-directory: engine
+      - name: enclave tests against the simulator
+        working-directory: engine
+        run: node --test test/enclave*.test.ts
+        env:
+          DSTACK_SIMULATOR_ENDPOINT: ${{ github.workspace }}/dstack/sdk/simulator/dstack.sock
+          TEST_DATABASE_URL: "postgres://postgres:postgres@127.0.0.1:55435/postgres"
+
+  # the Sequencer's workflow code (order check, the dev team's guard, budget and pipeline with a scripted team, publish
+  # against a local fake of GitHub's API); no model is called
+  sequencer:
+    needs: changes
+    if: needs.changes.outputs.sequencer == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with: { submodules: true }
+      - uses: foundry-rs/foundry-toolchain@908c540300062bd5a7e473851cdb4282204cee09 # v1.9.1
+        with: { version: v1.8.3 }
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with: { node-version-file: .nvmrc }
+      - run: npm ci --prefix engine && npm ci --prefix sequencer
+      - run: npx tsc
+        working-directory: sequencer
+      - run: npm test
+        working-directory: sequencer
+
+  # the page check (G15): the harness and every planted page fixture through the real play origin (a play build of
+  # web/ with the fixtures added) in Chromium (the runner's), against anvil; G11 from engine/ on the same fixtures
+  pagecheck:
+    needs: changes
+    if: needs.changes.outputs.pagecheck == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: foundry-rs/foundry-toolchain@908c540300062bd5a7e473851cdb4282204cee09 # v1.9.1
+        with: { version: v1.8.3 }
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with: { node-version-file: .nvmrc }
+      - run: npm ci --prefix engine && npm ci --prefix web && npm ci --prefix pagecheck
+      - run: npx tsc
+        working-directory: pagecheck
+      - run: npm test
+        working-directory: pagecheck
+        env: { PAGECHECK_CHROMIUM: /usr/bin/google-chrome }
+
+  web:
+    needs: changes
+    if: needs.changes.outputs.web == 'true'
+    runs-on: ubuntu-latest
+    defaults: { run: { working-directory: web } }
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with: { node-version-file: .nvmrc, cache: npm, cache-dependency-path: web/package-lock.json }
+      - run: npm ci
+      - run: npx next typegen && npx tsc --noEmit
+      - run: npm test
+      - name: build (mock, the default site)
+        run: npm run build
+      - name: maintenance mode on the built server (SITE_MAINTENANCE=1 at start, no rebuild)
+        run: node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --test test/maintenance.test.mjs
+      - name: build (LIVE, no database at build time)
+        run: NEXT_PUBLIC_LIVE=1 npm run build
+      - name: build the play origin (game pages) and check the built wallet guard
+        run: SITE_ROLE=play NEXT_PUBLIC_LIVE=1 npm run build && node scripts/check-guard-build.mjs
+
+  e2e:
+    needs: changes
+    if: needs.changes.outputs.e2e == 'true'
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env: { POSTGRES_PASSWORD: postgres, POSTGRES_DB: dna }
+        ports: ["55433:5432"]
+        options: --health-cmd "pg_isready -U postgres" --health-interval 2s --health-timeout 5s --health-retries 20
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with: { submodules: recursive }
+      - uses: foundry-rs/foundry-toolchain@908c540300062bd5a7e473851cdb4282204cee09 # v1.9.1
+        with: { version: v1.8.3 }
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with: { node-version-file: .nvmrc }
+      - run: npm ci --prefix engine && npm ci --prefix web && bash engine/scripts/fetch-media.sh
+      - name: anvil → launch → DevActions → indexer → web LIVE → getters + SSE → engine dry_run/live → reorg guard
+        run: engine/scripts/e2e.sh
+        env: { E2E_DATABASE_URL: "postgres://postgres:postgres@127.0.0.1:55433/dna" }

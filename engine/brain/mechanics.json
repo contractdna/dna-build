@@ -1,0 +1,50 @@
+{
+  "hook_fee": [
+    "the hook takes a project fee on every swap; fee modules set it, and the hook never charges more than 5%, whatever a module asks",
+    "the launch fee starts at 3% and slides to 2.2% over the first 1 hour; after that the fee plates move it inside a policy band of 1% to 3.5%",
+    "the launch platform's fee is a fixed 0.3% on top, set in the hook",
+    "a test fee may differ from the live fee by at most 1 point, and every fee change waits at least 1 hour in public first"
+  ],
+  "launch_guard": [
+    "in the pool's first 9 blocks the hook charges a launch tax of 90%, down 10% each block, and all of it goes to buyback-and-burn",
+    "for the first 4 minutes at most 20,000,000 DNA (2% of supply) leaves the pool per block, and from block 4 each wallet may buy at most 10,000,000 DNA",
+    "in that window nobody can add liquidity except at the pool's initialization"
+  ],
+  "buyback_burn": [
+    "35% of the project fees go to buyback-and-burn by default",
+    "the buyback contract buys DNA on the pool with that ETH and burns every DNA it buys: at most 1 ETH a buy, at most 1 buy every 1 hour"
+  ],
+  "liquidity_lock": [
+    "35% of the project fees go to the liquidity vault by default",
+    "the liquidity vault adds that ETH to the pool just above the price, at most every 4 hours, and nothing it adds can ever be withdrawn, by anyone"
+  ],
+  "fee_split": [
+    "by default the fee vault splits project fees 35% to buyback-and-burn, 35% to liquidity, 30% to the treasury and 0% to games",
+    "a split module may move those shares only inside ranges the vault enforces, and the vault distributes once it holds at least 0.05 ETH"
+  ],
+  "veto_safe": [
+    "every change the AI queues waits at least 1 hour on chain, and in that hour the Safe can cancel it",
+    "the Safe can pause the AI at any time; trading, fees and payouts keep running without it",
+    "the AI may have at most 8 changes pending at once, and its autonomy has 10 levels; a level rises only after 5 days without a rollback"
+  ],
+  "idea_market": [
+    "an idea round runs 24 hours; opening an idea stakes 10,000 DNA (refunded) and burns a 1,000 DNA fee, and backing an idea stakes at least 1,000 DNA",
+    "the brain decides each closed round within 3 days; accepted fee ideas go through the same tests as the AI's own, accepted build ideas join the dev team's queue",
+    "a kept fee idea or a shipped build can earn its author a reward from the idea reserve: at least 0.01 ETH, at most 25% of the reserve"
+  ],
+  "games": [
+    "the games pot splits what arrives 70% to the jackpot and 30% to the idea reserve",
+    "a jackpot draw pays 10 winners, at most 3 ETH a draw, and waits until the pot holds 0.25 ETH; a prize stays open for 7 days",
+    "at most 3 dev-team games run at once, and a game nobody plays gets retired with its funds sent back"
+  ],
+  "proof_enclave": [
+    "the engine runs inside a TEE enclave from a public image; the compose hash pins exactly what runs, and a code change waits 1 hour behind a public timelock",
+    "every action has a transaction or a signed log record, signed by a key that exists only inside the enclave",
+    "nobody, the team included, can sign or post as the engine from outside it"
+  ],
+  "dev_team": [
+    "the AI dev team builds 1 thing at a time: a game, a site change or a fee module",
+    "nothing ships unless it passes every gate: fuzz and invariant tests, a fork simulation, static analysis, planted-bug checks, a gas cap and a spec check",
+    "a new game goes live only after 1 public hour, a fee module only when the Safe approves it, and an engine change only when an owner merges it"
+  ]
+}

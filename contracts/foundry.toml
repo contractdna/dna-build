@@ -1,0 +1,56 @@
+[profile.default]
+src = "src"
+out = "out"
+libs = ["lib"]
+# Programmable's own Ethereum hooks: solc 0.8.26, cancun (transient storage).
+# Launch route A admits exactly solc 0.8.26+commit.8a97fa7a (the only 0.8.26 release build; /v3/capabilities
+# compiler.admittedBuilds) and fixes no evm/optimizer/metadata settings: ours below are bound as-is in the Standard JSON.
+# engine/scripts/route-a.ts refuses any other build and byte-compares its Standard JSON output with out/.
+# Changing anything in this file changes every launch address.
+solc_version = "0.8.26"
+evm_version = "cancun"
+optimizer = true
+optimizer_runs = 800
+bytecode_hash = "none"
+# each top-level call in tests/scripts runs as its own tx (cold access lists, intrinsic gas counted):
+# the launch gas gate (script/Launch.s.sol) depends on it
+isolate = true
+# script/Launch.s.sol:LaunchLocal writes, script/DevActions.s.sol reads the local deployment manifest the engine indexes
+fs_permissions = [
+  { access = "read-write", path = "../engine/deployments" },
+  { access = "read", path = "../engine/modules" },
+]
+remappings = [
+  "forge-std/=lib/forge-std/src/",
+  # one v4-core for everything: d153b048 = v4.0.0 + import-only refactor (same ABI as deployed PoolManager)
+  "@uniswap/v4-core/=lib/v4-core/",
+  "@uniswap/v4-periphery/=lib/v4-periphery/",
+  "@openzeppelin/contracts/=lib/openzeppelin-contracts/contracts/",
+  "@openzeppelin/uniswap-hooks/=lib/uniswap-hooks/src/",
+  "permit2/=lib/v4-periphery/lib/permit2/",
+  "solmate/=lib/v4-core/lib/solmate/",
+]
+
+[fuzz]
+runs = 1000
+
+[invariant]
+# CI size; deeper: FOUNDRY_INVARIANT_RUNS=1000 FOUNDRY_INVARIANT_DEPTH=256 forge test --mc SystemInvariantTest
+runs = 64
+depth = 64
+# handlers try/catch and classify every call: a raw revert is a handler bug (IdeaMarket, BountyBoard, System all pass)
+fail_on_revert = true
+
+[fmt]
+# vendored verbatim from Programmable verified MIT sources: keep byte-identical for review diffs
+ignore = ["script/programmable/**"]
+
+[lint]
+# tests and scripts are not deployed; each src lint below was reviewed (reasons: README.md, "Lint")
+ignore = ["test/**", "script/**"]
+exclude_lints = [
+  "unsafe-typecast", "block-timestamp", "reentrancy-events", "reentrancy-no-eth", "unused-return",
+  "require-revert-in-loop", "missing-zero-check", "uninitialized-local", "calls-loop", "erc20-unchecked-transfer",
+  "incorrect-strict-equality", "missing-events-access-control", "boolean-cst", "arbitrary-send-eth", "weak-prng",
+  "divide-before-multiply",
+]

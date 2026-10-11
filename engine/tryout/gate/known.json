@@ -1,0 +1,17 @@
+[
+  {
+    "id": "canary-clean", "kind": "known",
+    "input": { "stage": "canary", "candidate": { "plate": "A", "params": [16000, 3000, 35000] }, "sim": { "revenueDeltaPct": 2.1, "retentionDeltaPct": -0.4, "capDeltaPct": 0.1, "swaps": 5120 }, "gates": "passed at queue time", "quotedHypothesis": "A 0.1 point higher base on plate A adds fee revenue without losing swaps.", "context": { "shadowSamples": 1840, "moduleFailed": 0 } },
+    "expect": { "verdict": "pass" }
+  },
+  {
+    "id": "promote-retention-loss", "kind": "known",
+    "input": { "stage": "promote", "candidate": { "plate": "C", "params": [25000, 18000, 35000] }, "sim": { "revenueDeltaPct": 6.2, "retentionDeltaPct": -18, "capDeltaPct": 38, "swaps": 4400 }, "gates": "passed at queue time", "quotedHypothesis": "Plate C's higher fee earns more per day than the active plate.", "context": { "canarySwaps": 410, "inWindowAtCapPct": 41, "moduleFailed": 0 } },
+    "expect": { "verdict": "block" }
+  },
+  {
+    "id": "canary-module-failures", "kind": "known",
+    "input": { "stage": "canary", "candidate": { "plate": "B", "params": [20000, 10000, 35000] }, "sim": { "revenueDeltaPct": 1.1, "retentionDeltaPct": -0.2, "capDeltaPct": 0.3, "swaps": 3600 }, "gates": "passed at queue time", "quotedHypothesis": "Plate B at the start params matches the active fee.", "context": { "shadowSamples": 12, "moduleFailed": 3 } },
+    "expect": { "verdict": "block" }
+  }
+]

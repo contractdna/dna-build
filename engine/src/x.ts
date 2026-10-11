@@ -1,0 +1,1070 @@
+// X API v2 over fetch (OAuth 2.0 user context, docs.x.com) and the posting pipeline:
+//  - token refresh: POST /2/oauth2/token, grant_type=refresh_token (confidential clients send Basic auth). Access tokens
+//    last 2 h. Every rotated refresh_token is SEALED (src/sealed.ts, purpose 'x-token') before it reaches `secret`, with
+//    the sha256 of the X_REFRESH_TOKEN seed it descends from: a new seed (an operator re-auth) wins over the stored chain.
+//  - mentions: stored only (UNTRUSTED), polled every minute. The quarantined reader is the only model that sees the
+//    text; the writer gets its category. A reply goes only to a post that @mentioned or quoted us (src/tiers.ts
+//    summoned, checked again right before the API call); threads continue post by post per the author's tier, until a
+//    stop rule fires. Until X approves AI replies (or with X_HOLD_IMPORTANT=1), an important account's reply waits for a
+//    signer's Send tap; approved, every eligible author's reply goes out on its own.
+//  - media (scope media.write): an image is one multipart upload, a video is chunked (initialize, append, finalize,
+//    then STATUS polls while processing). Media ids expire (24 h): every post uploads its media again.
+// Pipeline: chain events and closed experiments → x_outbox (one row per event key; one reply per mention id) →
+// x:send (one item per run: posts ≥ X_POST_SPACING_MIN apart and ≤ X_DAILY_POSTS a UTC day, the launch window's
+// X_LAUNCH_* in the first X_LAUNCH_WINDOW_H after LLM_LAUNCH_AT; replies ≤ X_DAILY_REPLIES)
+// → fact sheet → writer (no tools) → filter → pick → code appends the tx link → post. At-most-once: an `attempt` record
+// precedes the POST; a 5xx or a network error after it leaves the item "attempted" (never retried) and alerts.
+// Telegram /mute drops the queue and stops posting until /unmute. Not live: dry_run writes and filters, never posts.
+import { createHash } from "node:crypto";
+import { readFileSync } from "node:fs";
+import { type Address, type Hex } from "viem";
+import { d, LOG_BASE_URL, MEDIA, X } from "./config.ts";
+import { edb as sql } from "./db.ts";
+import { Defer, type Handler } from "./jobs.ts";
+import { decodeOp, OPS } from "./lib.ts";
+import { append, type EnclaveRow, isRolledBack, stateSig, trusted, trustedRecord } from "./log.ts";
+import { mode } from "./mode.ts";
+import type { Vector } from "./policy.ts";
+import { latest, nowIso, record, trustedDocs } from "./records.ts";
+import { ENCLAVE } from "./enclave.ts";
+import { PERSONA } from "./persona.ts";
+import { bundleHits } from "./anonymity.ts";
+import { seal, unseal } from "./sealed.ts";
+import { alert, type ReplyButton, say } from "./telegram.ts";
+import { addressOf, pub } from "./tx.ts";
+import { hookAbi } from "./abi.ts";
+import { allyIssues, appendWeight, type Category, claimFacts, claimIssues, classifyMention, factNumbers, factSheet, feeFacts, linkIssues, OFFICIAL_REPLY, optOutRequest, postFilter, SCOUT, scoutTone, toneBrief, TX_URL, weightedLength, WRITER, type CharacterContext, chooseShapes, draftInCharacter, type Drafted, judgeCall, type JudgeOut, parrotIssue, pickBest, shapesFor, voiceIssues } from "./voice.ts";
+import { llm } from "./llm.ts";
+import { ballotsOpen, GAME_X_EVENTS, gameFacts, reasonOf, VOTES_CLOSED } from "./games.ts";
+import { announce, ANNOUNCEMENTS_URL, bucketOf, eventPosts, postCaps, priorityOf, proofOf, typeOf } from "./announce.ts";
+import { accountIssue, GATE, overlap, type XUser } from "./ideas.ts";
+import { COMPETITOR_NAMES, impersonator, isAlly, type Post, replyPath, stopRule, summoned, type Tier, tierOf, TIERS } from "./tiers.ts";
+import { BINDING_REPLY, parseBinding } from "./rewards.ts";
+import { type Card, cardFor, mediaRecord, requestArtFor } from "./card.ts";
+import { jsonSafe } from "./lib.ts";
+import { dayOfLife, mindNow, pendingNow, storyNow } from "./life.ts";
+import { GUARD_ABI, hasLaunchGuard, mechanicsFor, type Topic } from "./mechanics.ts";
+import { intentOf, MIND_EVENTS, oldTokenTalk, questionOf } from "./voice.ts";
+
+export { weightedLength };
+const sha = (s: string) => createHash("sha256").update(s).digest("hex");
+const hour = () => new Date().toISOString().slice(0, 13);
+
+/** Refuses a text that shares an 8-word run with the private bundle (an echo of the persona or a prompt): checked on
+ *  every draft before any record or post. `shingles`: the loaded bundle's, built once at load (src/persona.ts). */
+export const bundleIssues = (text: string, shingles = PERSONA.shingles) => (bundleHits(text, shingles).length ? ["bundle text"] : []);
+/** The record's candidates (the log is public, /api/log): a refused draft is kept only as its sha256 and its reasons,
+ *  since a refusal may be the very text that must never publish; a draft that passed every check stays as written. */
+export const publicCandidates = (cands: Drafted["candidates"]) => cands.map((c) => (c.issues.length ? { sha256: sha(c.text), issues: c.issues } : c));
+
+// ---------------------------------------------------------------- auth
+
+let access: { token: string; until: number } | undefined;
+let refreshing: Promise<string> | undefined;
+
+/** Access token; concurrent callers share one refresh (a second refresh would spend the single-use refresh token). */
+export async function token() {
+  if (access && Date.now() < access.until) return access.token;
+  return (refreshing ??= refresh().finally(() => { refreshing = undefined; }));
+}
+export const resetToken = () => { access = undefined; };
+/** An access token obtained elsewhere (scripts/live-x.ts refreshes and hands the rotated token to its operator). */
+export const useAccessToken = (token: string, ttlS = 3600) => { access = { token, until: Date.now() + ttlS * 1000 }; };
+
+/** The refresh token to use: the stored (sealed, rotated) one while it descends from the current seed, else the seed. */
+export async function refreshTokenOf(stored: string | undefined, seed = X.refreshToken) {
+  const seedSha = seed ? sha(seed) : null;
+  const open = stored ? await unseal("x-token", stored) : null;
+  const s = open ? (JSON.parse(open) as { token: string; seed: string | null }) : null;
+  if (s && (s.seed === seedSha || !seed)) return { token: s.token, seed: s.seed };
+  return seed ? { token: seed, seed: seedSha } : null;
+}
+
+/** POST /2/oauth2/token with a refresh token (confidential client: Basic auth) → the access token, the ROTATED refresh
+ *  token (the one sent is spent), its lifetime, the granted scopes. Throws with `status` (never the body: it may hold tokens). */
+export async function exchangeRefreshToken(refreshToken: string, clientId = X.clientId, clientSecret = X.clientSecret) {
+  if (!clientId) throw new Error("X_CLIENT_ID unset");
+  const headers: Record<string, string> = { "content-type": "application/x-www-form-urlencoded" };
+  const form = new URLSearchParams({ grant_type: "refresh_token", refresh_token: refreshToken });
+  if (clientSecret) headers.authorization = `Basic ${Buffer.from(`${clientId}:${clientSecret}`).toString("base64")}`;
+  else form.set("client_id", clientId);
+  const res = await fetch(`${X.api}/2/oauth2/token`, { method: "POST", headers, body: form, signal: AbortSignal.timeout(30_000) });
+  const body = (await res.json().catch(() => ({}))) as { access_token?: string; refresh_token?: string; expires_in?: number; scope?: string };
+  if (!res.ok || !body.access_token) throw Object.assign(new Error(`X token refresh ${res.status}`), { status: res.status });
+  return body as typeof body & { access_token: string };
+}
+
+async function refresh() {
+  if (!X.clientId) throw new Error("X_CLIENT_ID unset");
+  const [stored] = await sql<{ value: string }[]>`select value from secret where key = 'x_refresh_token'`;
+  const cur = await refreshTokenOf(stored?.value);
+  if (!cur) throw new Error("no X refresh token (X_REFRESH_TOKEN seeds it)");
+  // the refresh token is single-use: never spend it unless the rotated one can be sealed and stored afterwards
+  await seal("x-token", "probe");
+  let body: Awaited<ReturnType<typeof exchangeRefreshToken>>;
+  try {
+    body = await exchangeRefreshToken(cur.token);
+  } catch (e) {
+    // 400/401 = revoked or spent: only a human re-auth fixes it
+    const st = (e as { status?: number }).status;
+    if (st === 400 || st === 401) await alert(`X token refresh ${st}: the token is revoked or spent. Re-auth: the operator runs OAuth PKCE and sets a new X_REFRESH_TOKEN (sealed env).`, `alert:xauth:${hour()}`);
+    throw e;
+  }
+  if (body.refresh_token) {
+    const value = await seal("x-token", JSON.stringify({ token: body.refresh_token, seed: cur.seed }));
+    await sql`insert into secret (key, value) values ('x_refresh_token', ${value})
+      on conflict (key) do update set value = excluded.value, updated_at = now()`;
+  }
+  access = { token: body.access_token, until: Date.now() + ((body.expires_in ?? 7200) - 300) * 1000 };
+  return access.token;
+}
+
+async function x<T>(method: "GET" | "POST" | "DELETE", path: string, body?: unknown): Promise<{ status: number; body: T; headers: Headers }> {
+  const res = await fetch(`${X.api}${path}`, {
+    method, headers: { authorization: `Bearer ${await token()}`, ...(body ? { "content-type": "application/json" } : {}) },
+    body: body ? JSON.stringify(body) : undefined, signal: AbortSignal.timeout(30_000),
+  });
+  if (res.status === 401) access = undefined;
+  return { status: res.status, body: (await res.json().catch(() => ({}))) as T, headers: res.headers };
+}
+/** The authed X call the pipeline uses (scripts/live-x.ts). */
+export const xApi = x;
+
+// ---------------------------------------------------------------- media upload (never cached: ids expire)
+
+const SEGMENT = 5 * 1024 * 1024;
+/** Test seam: how long to wait between status polls (X says check_after_secs). */
+export const MEDIA_WAIT = { sleep: (s: number) => new Promise((r) => setTimeout(r, s * 1000)), maxPolls: 20 };
+async function xForm<T = unknown>(path: string, form: FormData): Promise<{ status: number; body: T }> {
+  const res = await fetch(`${X.api}${path}`, { method: "POST", headers: { authorization: `Bearer ${await token()}` }, body: form, signal: AbortSignal.timeout(120_000) });
+  if (res.status === 401) access = undefined;
+  return { status: res.status, body: (await res.json().catch(() => ({}))) as T };
+}
+/** One image (≤ 5 MB) → a fresh media id: multipart/form-data (media binary, media_category, media_type). The type is
+ *  read from the bytes (a studio draft is JPEG, a composed card PNG). */
+export async function uploadImage(img: Buffer) {
+  const jpeg = img[0] === 0xff && img[1] === 0xd8 && img[2] === 0xff;
+  const type = jpeg ? "image/jpeg" : "image/png";
+  const form = new FormData();
+  form.set("media_category", "tweet_image");
+  form.set("media_type", type);
+  form.set("media", new Blob([new Uint8Array(img)], { type }), jpeg ? "card.jpg" : "card.png");
+  const r = await xForm<{ data?: { id: string } }>("/2/media/upload", form);
+  if (r.status >= 300 || !r.body.data?.id) throw new Error(`X media upload ${r.status}`);
+  return r.body.data.id;
+}
+/** A video, chunked (5 MB segments), finalized, polled until X has processed it → a fresh media id. */
+export async function uploadVideo(buf: Buffer) {
+  const init = await x<{ data?: { id: string } }>("POST", "/2/media/upload/initialize", { media_type: "video/mp4", total_bytes: buf.length, media_category: "tweet_video" });
+  const id = init.body.data?.id;
+  if (init.status >= 300 || !id) throw new Error(`X media initialize ${init.status}`);
+  for (let i = 0; i * SEGMENT < buf.length; i++) {
+    const form = new FormData();
+    form.set("segment_index", String(i));
+    form.set("media", new Blob([new Uint8Array(buf.subarray(i * SEGMENT, (i + 1) * SEGMENT))], { type: "application/octet-stream" }), "segment");
+    const { status: st } = await xForm(`/2/media/upload/${id}/append`, form);
+    if (st >= 300) throw new Error(`X media append ${i}: ${st}`);
+  }
+  type Info = { data?: { processing_info?: { state: string; check_after_secs?: number; error?: { message?: string } } } };
+  let r = await x<Info>("POST", `/2/media/upload/${id}/finalize`);
+  if (r.status >= 300) throw new Error(`X media finalize ${r.status}`);
+  for (let n = 0; ; n++) {
+    const info = r.body.data?.processing_info;
+    if (!info || info.state === "succeeded") return id;
+    if (info.state === "failed") throw new Error(`X media processing failed: ${info.error?.message ?? ""}`.slice(0, 200));
+    if (n >= MEDIA_WAIT.maxPolls) throw new Error("X media still processing");
+    await MEDIA_WAIT.sleep(Math.min(info.check_after_secs ?? 1, 10));
+    r = await x<Info>("GET", `/2/media/upload?command=STATUS&media_id=${id}`);
+    if (r.status >= 300) throw new Error(`X media status ${r.status}`);
+  }
+}
+/** Upload a card's media; null on failure (the post goes out text-only, the error in its record). */
+async function uploadCard(c: Card | null): Promise<{ id: string | null; error?: string }> {
+  if (!c || c.kind === "none") return { id: null };
+  try {
+    return { id: c.kind === "video" ? await uploadVideo(c.buf) : await uploadImage(c.png) };
+  } catch (e) {
+    return { id: null, error: (e as Error).message.slice(0, 300) };
+  }
+}
+
+/** A human draft's media: a file pinned in the image's media/ dir (the logo MP4, a plate), never an arbitrary path. */
+export function draftMedia(name: unknown): Card | null {
+  if (name === undefined || name === null) return null;
+  if (typeof name !== "string" || !/^[\w.-]+(\/[\w.-]+)?$/.test(name) || name.includes("..")) throw Object.assign(new Error(`media ${String(name)}: not a file in media/`), { final: true });
+  const buf = readFileSync(new URL(name, MEDIA.dir));
+  const sha256 = createHash("sha256").update(buf).digest("hex");
+  if (name.endsWith(".mp4")) return { kind: "video", buf, sha256, source: "logo" };
+  return { kind: "image", png: buf, sha256, source: "plate", plate: name, layer: { badge: "", headline: "", figures: [] } };
+}
+
+// ---------------------------------------------------------------- mentions (stored, untrusted)
+
+type Ref = { type: string; id: string };
+type Mention = { id: string; text: string; author_id?: string; created_at?: string; referenced_tweets?: Ref[]; conversation_id?: string; user?: XUser | null;
+  entities?: { mentions?: { id?: string | null; username?: string | null }[] } };
+type Mentions = { data?: Mention[]; includes?: { users?: (XUser & { id: string; username: string })[] }; meta?: { newest_id?: string } };
+
+export const mentionsHandler: Handler = {
+  lane: "x",
+  run: async () => {
+    if (!X.userId) return "X_USER_ID unset";
+    const [s] = await sql<{ value: { sinceId?: string } }[]>`select value from state where key = 'engine_x'`;
+    // the author's profile feeds the idea gate (src/ideas.ts authorIssue) and the reply gate (accountIssue)
+    const q = new URLSearchParams({ max_results: "100", expansions: "author_id", "user.fields": "username,created_at,public_metrics,verified,verified_type", "tweet.fields": "created_at,referenced_tweets,conversation_id,entities" });
+    if (s?.value.sinceId) q.set("since_id", s.value.sinceId);
+    // simplification: one page per poll (≤ 100 mentions a minute); follow meta.next_token if the bot gets busier
+    const r = await x<Mentions>("GET", `/2/users/${X.userId}/mentions?${q}`);
+    if (r.status !== 200) throw new Error(`X mentions ${r.status}`);
+    const users = new Map((r.body.includes?.users ?? []).map((u) => [u.id, u]));
+    for (const m of r.body.data ?? []) {
+      // signed in the enclave: a mention row the DB made up (to steer a reply at any tweet id) is never answered; the
+      // author's profile is part of it (a DB can't hand a gate-failing author a badge)
+      const u = m.author_id ? users.get(m.author_id) : undefined;
+      const raw = JSON.parse(JSON.stringify({ ...m, user: u ?? null })) as Mention;
+      await sql`insert into x_mention (id, author_id, author_username, text, created_at, raw, sig)
+        values (${m.id}, ${m.author_id ?? null}, ${u?.username ?? null}, ${m.text}, ${m.created_at ?? null}, ${sql.json(raw as never)}, ${await stateSig("x_mention", m.id, { author: m.author_id ?? null, text: m.text, raw })})
+        on conflict (id) do nothing`;
+    }
+    if (r.body.meta?.newest_id) {
+      await sql`insert into state (key, block, value) values ('engine_x', 0, ${sql.json({ sinceId: r.body.meta.newest_id })})
+        on conflict (key) do update set value = excluded.value, updated_at = now()`;
+    }
+    return `${r.body.data?.length ?? 0} mentions`;
+  },
+};
+
+// ---------------------------------------------------------------- human-approved drafts (Telegram)
+
+/** Pure: why a human-approved draft can't be posted ([] = ok). Drafts are exact human text: no number rule. */
+export function postIssues(text: string): string[] {
+  const issues = [...linkIssues(text.normalize("NFKC")), ...bundleIssues(text)];
+  if (!text.trim()) issues.push("empty");
+  if (weightedLength(text) > 280) issues.push("over 280 weighted chars");
+  return issues;
+}
+
+/** Posts (drafts + pipeline) and replies attempted today (UTC), and when the last post went out. dry_run counts too,
+ *  so a dry run paces exactly like live. */
+export async function usedToday() {
+  // the spacing is measured on the DB's clock (the records' `at` is the DB's now()), never against Node's
+  const [r] = await sql<{ post: number; reply: number; since: number | null }[]>`select
+    count(*) filter (where coalesce(doc->>'type', 'post') = 'post')::int as post,
+    count(*) filter (where doc->>'type' = 'reply')::int as reply,
+    (extract(epoch from now() - max(at) filter (where coalesce(doc->>'type', 'post') = 'post')) * 1000)::float8 as since
+    from log where kind = 'x_post' and doc->>'status' in ('attempt', 'dry_run') and at >= date_trunc('day', now() at time zone 'UTC') at time zone 'UTC'`;
+  return { post: r.post, reply: r.reply, sinceLastMs: r.since ?? Infinity };
+}
+
+/** Draft handler for kind 'x_post' (a one-off human-approved post, e.g. the pinned "only account" notice). At-most-
+ *  once: an `attempt` record is written before the POST; a retry that finds one stops and asks a human. */
+export async function postDraft(payload: Record<string, unknown>, draftId: string) {
+  const text = String(payload.text);
+  const fail = (msg: string) => Object.assign(new Error(msg), { final: true });
+  const issues = postIssues(text);
+  if (issues.length) throw fail(`not postable: ${issues.join(", ")}`);
+  const card = draftMedia(payload.media);
+  const m = await mode();
+  if (m !== "live") {
+    await append("x_post", draftId, { draftId, text, mode: m, status: "skipped" });
+    return { skipped: m };
+  }
+  if (await muted()) throw fail("X posting is muted (/unmute first)");
+  const cap = postCaps().daily;
+  if ((await usedToday()).post >= cap) throw fail(`daily post cap ${cap} reached`);
+  const [prior] = await sql`select 1 from log where kind = 'x_post' and ref = ${draftId} and doc->>'status' = 'attempt'`;
+  if (prior) throw fail(`draft ${draftId} was already attempted: check X before re-drafting`);
+  await append("x_post", draftId, { draftId, text, mode: m, type: "post", status: "attempt", media: mediaRecord(card) });
+  const up = await uploadCard(card);
+  const stop = await stopped();
+  if (stop) {
+    await append("x_post", draftId, { draftId, status: "dropped", why: stop });
+    throw fail(`not posted: ${stop} while it was being sent`);
+  }
+  const r = await x<{ data?: { id: string } }>("POST", "/2/tweets", { text, ...(up.id ? { media: { media_ids: [up.id] } } : {}) });
+  if (r.status !== 201 || !r.body.data?.id) throw fail(`X post ${r.status}`);
+  await append("x_post", draftId, { draftId, tweetId: r.body.data.id, status: "posted", mediaId: up.id, mediaError: up.error ?? null });
+  return { tweetId: r.body.data.id };
+}
+
+// ---------------------------------------------------------------- mute (Telegram kill switch)
+
+/** Muted? Enclave: the newest verified 'mode' x_mute record decides (none = muted: fail closed, the DB can only
+ *  silence the account; a fresh enclave posts after a signer's /unmute). Plain build: the state row. */
+export async function muted() {
+  if (ENCLAVE.on) return (await trustedDocs<{ muted: boolean }>("mode", "x_mute").catch((e) => (isRolledBack(e) ? [{ muted: true }] : Promise.reject(e))))[0]?.muted ?? true;
+  const [r] = await sql<{ value: { muted: boolean } }[]>`select value from state where key = 'x_mute'`;
+  return !!r?.value.muted;
+}
+/** Why nothing may go to X right now (null = it may): the engine is not live, or posting is muted. Checked once more
+ *  right before every POST, so a /mute or /halt that lands while a post is being written or uploaded drops it. */
+export async function stopped(): Promise<string | null> {
+  const m = await mode();
+  if (m !== "live") return m;
+  return (await muted()) ? "muted" : null;
+}
+export async function setMuted(on: boolean, by: string) {
+  const value = { muted: on, by };
+  await sql.begin(async (tx) => {
+    await tx`insert into state (key, block, value) values ('x_mute', 0, ${tx.json(value)})
+      on conflict (key) do update set value = excluded.value, updated_at = now()`;
+    await append("mode", "x_mute", { muted: on, by }, tx);
+    if (on) await tx`update x_outbox set status = 'skipped', error = 'muted', updated_at = now() where status in ('queued', 'held')`;
+  });
+}
+
+// ---------------------------------------------------------------- delete (Telegram brake)
+
+/** Telegram `/delete <tweet id>` (an allowlisted signer). A brake like /mute: it removes one of this account's own
+ *  posts (a tweet id in a signed `posted` record) and can do nothing else. It never posts, an id the log doesn't name as
+ *  ours never reaches X, and it works in every mode. A signed record says who deleted what. Returns the reply text. */
+export async function deletePost(id: string | undefined, by: string) {
+  if (!id || !/^\d{1,20}$/.test(id)) return "usage: /delete <tweet id> (one of this account's own posts)";
+  const rows = await sql<(EnclaveRow & { doc: { status: string } })[]>`select doc, kind, ref, body, eprev, ehash, esig from log
+    where kind = 'x_post' and doc->>'tweetId' = ${id} and doc->>'status' in ('posted', 'deleted') order by log.seq desc`;
+  const ours: (EnclaveRow & { doc: { status: string } })[] = [];
+  for (const r of rows) if (await trustedRecord(r, "x_post record")) ours.push(r);
+  const posted = ours.find((r) => r.doc.status === "posted");
+  if (!posted?.ref) return `not one of our posts: ${id}`;
+  if (ours.some((r) => r.doc.status === "deleted")) return `post ${id} was already deleted`;
+  let r: { status: number; body: { data?: { deleted?: boolean } } };
+  try {
+    r = await x("DELETE", `/2/tweets/${id}`);
+  } catch (e) {
+    return `X delete failed: ${(e as Error).message.slice(0, 200)}`;
+  }
+  if (r.status !== 200 || !r.body.data?.deleted) return `X refused to delete ${id}: ${r.status}`;
+  await append("x_post", posted.ref, { status: "deleted", tweetId: id, by });
+  return `deleted post ${id}`;
+}
+
+// ---------------------------------------------------------------- the outbox
+
+type Kind = "post" | "reply";
+/** One row per event key (a chain log, a closed experiment, a mention): a replayed watcher range never posts twice. */
+export async function enqueueX(eventKey: string, type: Kind, event: Record<string, unknown>, o: { replyTo?: string; link?: string } = {}) {
+  const ev = JSON.parse(JSON.stringify(event)) as Record<string, unknown>;
+  const sig = await stateSig("x_outbox", eventKey, outboxValue(type, ev, o.replyTo ?? null, o.link ?? null));
+  const [r] = await sql<{ id: string }[]>`insert into x_outbox (type, event_key, event, reply_to, link, sig)
+    values (${type}, ${eventKey}, ${sql.json(ev as never)}, ${o.replyTo ?? null}, ${o.link ?? null}, ${sig}) on conflict do nothing returning id::text`;
+  return r?.id;
+}
+/** What an outbox row's signature covers (enclave): a row the DB made up never reaches the writer. */
+const outboxValue = (type: string, event: unknown, replyTo: string | null, link: string | null) => ({ type, event, replyTo, link });
+
+type RunRow = { id: string; data: { id: string; label: string; vector: Vector }; sig: string | null };
+const runOfOp = async (id: string) => {
+  const [r] = await sql<RunRow[]>`select id, data, sig from thread where kind = 'fee' and (data->'allOps' ? ${id} or data->'ops' ? ${id}) order by created_at desc limit 1`;
+  return r && (await trusted("thread", r.id, r.data, r.sig)) ? r.data : undefined;
+};
+
+type ChainEv = { eventName: string; args: Record<string, unknown>; transactionHash: Hex; logIndex?: number | null };
+/** Watcher hook (head): the agent's own queued ops, tests going live, Safe vetoes of agent ops, rollbacks. */
+export async function onChainEvent(e: ChainEv) {
+  const key = `${e.eventName}:${e.transactionHash}:${e.logIndex ?? 0}`;
+  const link = `${TX_URL}${e.transactionHash}`;
+  const a = e.args;
+  switch (e.eventName) {
+    case "Queued":
+      if (String(a.proposer).toLowerCase() !== addressOf("agent")?.toLowerCase()) return;
+      return publish(key, { event: "queued", opId: String(a.id), op: Number(a.op), data: a.data, eta: String(a.eta), proposer: a.proposer }, link);
+    case "Executed":
+      if (Number(a.op) !== 1 && Number(a.op) !== 2) return; // SetShadow / SetCanary: a test goes live
+      return publish(key, { event: "test_live", opId: String(a.id), op: Number(a.op) }, link);
+    case "Cancelled":
+      return publish(key, { event: "cancelled", opId: String(a.id) }, link);
+    case "RolledBack":
+      return publish(key, { event: "rolled_back", route: Number(a.kind) === 0 ? "fee" : "split" }, link);
+    // module code the Safe approved by hash: it can be registered (level 10) and tested; nothing goes live by this
+    case "CodehashApproved":
+      return publish(key, { event: "module_approved", codehash: String(a.codehash), kind: Number(a.kind) === 0 ? "fee" : "split" }, link);
+  }
+  // the game layer and the idea market: ballots, jackpot draws / claims / expiries, idea rewards, mysteries, idea rounds
+  if (GAME_X_EVENTS.has(e.eventName)) return publish(key, { event: "game", name: e.eventName, args: jsonSafe(a) as Record<string, unknown> }, link);
+}
+
+/** An event the public should see: on the site at once (an `announce` record, src/announce.ts), on X by priority. */
+async function publish(key: string, ev: Record<string, unknown>, link: string) {
+  const id = await enqueueX(key, "post", ev, { link });
+  const raw = await announceEvent(key, ev, link);
+  if (id && raw) await requestArtFor(key, factSheet(raw)); // the studio starts now, not when the post is due
+  return id;
+}
+/** An engine event that is not a chain log (the jackpot's params): published the same way. */
+export const publishEvent = publish;
+/** Resolve an outbox event now and record it for the site (best effort: one that can't be resolved yet is recorded
+ *  when it is sent or rolled into the digest). */
+async function announceEvent(key: string, ev: Record<string, unknown>, link: string | null) {
+  try {
+    const raw = await resolve(ev);
+    if (raw) await announce(key, raw, { raw: ev, tx: link, proof: proofOf(raw.append) });
+    return raw;
+  } catch (err) {
+    console.error(`announce ${key}:`, (err as Error).message);
+    return null;
+  }
+}
+
+/** A closed experiment that ran on-chain (loop.ts): kept / killed / rolled back, with the sample size, the reason (a
+ *  fixed phrase), where it came from (a ballot, a mystery) and the tx of its last executed op when indexed. */
+export async function enqueueOutcome(run: { id: string; label: string; vector: Vector; outcome?: string; reason?: string; source?: string; allOps?: string[]; ops?: string[] }, samples: number) {
+  const ops = run.allOps ?? run.ops ?? [];
+  const [ex] = ops.length ? await sql<{ tx: string }[]>`select tx from chain_log where event = 'Executed' and args->>'id' = any(${ops}) order by block desc, log_index desc limit 1` : [];
+  const ev = { event: "outcome", outcome: run.outcome === "accepted" ? "kept (promoted)" : run.outcome === "rolled_back" ? "rolled back" : "killed", plate: run.label, fee: feeFacts(run.vector), samples,
+    reason: run.outcome === "accepted" ? "promoted to the live fee" : reasonOf(run.reason ?? ""), source: run.source ?? (await aiPick()) };
+  return publish(`outcome:${run.id}`, ev, ex ? `${TX_URL}${ex.tx}` : `${LOG_BASE_URL}/lab/experiments`);
+}
+
+/** The nightly reflection (after the day's journal, 00:05 UTC, once a day): what it learned and what comes next, from
+ *  the journal's own lines (src/voice.ts factSheet screens them; the next step said only as the journal or the brain has
+ *  it), linking the journal. */
+export const enqueueReflection = (date: string, j: { learned: string; tomorrow: string }) =>
+  publish(`reflection:${date}`, { event: "reflection", date, learned: j.learned, tomorrow: j.tomorrow }, `${LOG_BASE_URL}/journal`);
+
+/** The AI's own experiments while holders can't vote yet (< 1% staked, from the indexer's snapshot). */
+async function aiPick() {
+  const [c] = await sql<{ locked: string | null; supply: string | null }[]>`select value->'game'->'vault'->>'totalLocked' as locked, value->>'totalSupply' as supply from state where key = 'chain'`;
+  return c?.locked != null && c.supply != null && !ballotsOpen(BigInt(c.locked), BigInt(c.supply)) ? VOTES_CLOSED : undefined;
+}
+
+const utc = (s: bigint) => { const d = new Date(Number(s) * 1000); return { utcHour: d.getUTCHours(), utcMinute: d.getUTCMinutes() }; };
+
+/** Raw outbox event → the raw fact input (resolved at send time: the run saves its op ids after the receipt, so a
+ *  head event can be seen first). null = not ours to post (an op no experiment of the agent owns). */
+export async function resolve(ev: Record<string, unknown>): Promise<Record<string, unknown> | null> {
+  const run = ev.opId ? await runOfOp(String(ev.opId)) : undefined;
+  switch (ev.event) {
+    case "queued": {
+      const op = decodeOp(Number(ev.op), ev.data as Hex);
+      const fee = op.name === "SetParams" ? feeFacts((op.args[1] as Hex[]).slice(0, 3).map((w) => Number(BigInt(w))) as Vector) : undefined;
+      return { event: "queued", op: op.name, opId: Number(ev.opId), plate: run?.label, fee, activatesAt: utc(BigInt(String(ev.eta))) };
+    }
+    case "test_live":
+      if (!run) return null;
+      return { event: "test_live", op: ev.op === 1 ? "SetShadow" : "SetCanary", plate: run.label, fee: feeFacts(run.vector) };
+    case "cancelled": {
+      // finalized chain_log may not hold a Queued vetoed within ~13 min: an experiment's op is ours either way
+      const [q] = await sql<{ op: number; proposer: Address }[]>`select (args->>'op')::int as op, args->>'proposer' as proposer from chain_log where event = 'Queued' and args->>'id' = ${String(ev.opId)}`;
+      if (!run && q?.proposer.toLowerCase() !== addressOf("agent")?.toLowerCase()) return null; // the Safe cancelling its own op
+      // a veto: the Safe's owners said no to one of the agent's ops
+      return { event: "cancelled", opId: Number(ev.opId), plate: run?.label, op: q ? OPS[q.op] : undefined, by: "the Safe owners" };
+    }
+    case "reply": {
+      // the asked topic's mechanics (code's lines; the launch guard's only on a hook that has it)
+      const topic = typeof ev.topic === "string" ? (ev.topic as Topic) : undefined;
+      const mechanics = topic ? mechanicsFor(topic, await hasLaunchGuard(HOOK_READ.launchGuard)) : [];
+      return { event: "reply", category: ev.category, topic, question: ev.question, state: await stateFacts(), relationship: ev.relationship, ...(mechanics.length ? { mechanics } : {}), ...(typeof ev.rival === "string" ? { rival: ev.rival } : {}) };
+    }
+    case "game": {
+      const g = await gameFacts(ev);
+      return g && { ...g.facts, append: g.append };
+    }
+    default:
+      return ev;
+  }
+}
+
+/** The hook's `baselineFee()` now, in pips: 3% at the pool's initialization sliding to 2.2% over the first hour, then
+ *  2.2%; a hook with the launch guard returns its launch tax for its first blocks. Test seam. */
+export const HOOK_READ = {
+  baselineFee: async () => Number(await pub.readContract({ address: d.hook, abi: hookAbi, functionName: "baselineFee" })),
+  // a hook without the launch guard has no such view: the read reverts and no guard line is told
+  launchGuard: () => pub.readContract({ address: d.hook, abi: GUARD_ABI, functionName: "launchGuard" }),
+};
+type LiveRoute = { active: string; activeParams: Hex[] };
+/** The live fee a post states: the active module's parameters, or with none the hook's baseline as `read` returns it
+ *  (pips). A failed read states nothing ({}): never a guessed number. */
+export async function liveFee(r: LiveRoute | undefined, read: () => Promise<number> = HOOK_READ.baselineFee): Promise<Record<string, number>> {
+  if (r && !/^0x0{40}$/i.test(r.active)) return feeFacts(r.activeParams.slice(0, 3).map((w) => Number(BigInt(w))) as Vector);
+  return read().then((pips) => ({ basePct: pips / 1e4 }), () => ({}));
+}
+
+/** Public live state for replies: level, the live fee, the open test's stage and plate (all on-chain). */
+export async function stateFacts() {
+  const [chain] = await sql<{ value: { level?: number; route?: LiveRoute } }[]>`select value from state where key = 'chain'`;
+  const [row] = await sql<(RunRow & { stage: string })[]>`select id, stage, data, sig from thread where kind = 'fee' and stage <> 'closed' order by created_at limit 1`;
+  const open = row && (await trusted("thread", row.id, row.data, row.sig)) ? row : undefined;
+  const live = await liveFee(chain?.value.route);
+  return {
+    level: chain?.value.level, liveFee: live,
+    testing: open ? { stage: /shadow/.test(open.stage) ? "shadow" : "canary", plate: open.data.label } : undefined,
+  };
+}
+
+type Outbox = { id: string; type: Kind; event_key: string; event: Record<string, unknown>; reply_to: string | null; link: string | null; created_at: Date; errors: number; sig: string | null; status?: string };
+/** Events that set the milestone mood (a first, a record, the run's opening moments). */
+/** A mention asking which contract is real: with a 0x address in it, it still gets the official line. */
+const CONTRACT_ASK = /\b(contract|ca|real|official|legit|scam|fake|genuine|right one|the one)\b/i;
+const MILESTONE_MOOD = new Set(["online", "contracts_connected", "keys_handed", "first_idea_round", "first_burn", "milestone", "seq_online"]);
+/** Posts that carry what the engine waits on (a status, the opening post, a reply). */
+const PENDING_EVENTS = new Set(["status", "online", "reply"]);
+/** Events whose first ever is marked `first` (a first experiment, test, result, build, ship, draw, round, reward). */
+const FIRST_EVENTS = new Set(["queued", "test_live", "outcome", "seq_started", "seq_shipped", "seq_released", "jackpot_drawn", "idea_round", "reward_paid", "ballot_result", "mystery_result", "module_approved"]);
+/** Writer failures (not an LLM-cap Defer) an item may have before it is dropped: no Grok call every minute for 6 h. */
+/** Writer failures (an invalid answer; a provider's 429 or 5xx is a wait, not a failure: src/llm.ts TRANSIENT) before a
+ *  post rolls into the digest; the item waits 2^errors minutes after each (2, 4, 8, 16, 32: about an hour in all). */
+export const MAX_WRITER_ERRORS = 6;
+const setStatus = (id: string, status: string, extra: { error?: string; tweetId?: string } = {}) =>
+  sql`update x_outbox set status = ${status}, error = ${extra.error ?? null}, tweet_id = ${extra.tweetId ?? null}, updated_at = now() where id = ${id}`;
+
+/** The newest tone brief (≤ 48 h old), else none. */
+export async function currentTone(): Promise<string[]> {
+  const t = await latest<{ phrases: string[] }>("tone", "brief");
+  return t && Date.now() - t._at.getTime() < 48 * 3600_000 ? t.phrases : [];
+}
+
+/** The writer's character memory (src/character.ts characterContext). Only the process entry point (src/engine.ts) fills
+ *  this slot, so no module that decides or moves money imports that memory; left empty, the writer runs without it. */
+export const CHARACTER_MEMORY: { context: (o: { authorId?: string; type?: "post" | "reply" }) => Promise<CharacterContext | null> } = { context: async () => null };
+
+export const sendHandler: Handler = {
+  lane: "x",
+  run: async () => {
+    const m = await mode();
+    if (m === "halted") return "halted";
+    // an 'attempt' older than 5 min: the process died between the attempt record and the outcome. It may be on X
+    for (const s of await sql<Outbox[]>`select id::text, type, event_key, event, reply_to, link, created_at, errors, sig from x_outbox where status = 'attempt' and updated_at < now() - interval '5 minutes'`) {
+      await attempted(s, "process died mid-post");
+    }
+    // a post queued too long rolls into the daily digest (never dropped); only a stale reply is skipped. Cutoffs on the
+    // DB's clock
+    const stale = sql`created_at < now() - make_interval(secs => ${X.staleMs / 1000})`;
+    await sql`update x_outbox set status = 'digest', error = 'rolled into the digest: stale', updated_at = now() where status = 'queued' and type = 'post' and ${stale} and event->>'event' <> 'digest'`;
+    await sql`update x_outbox set status = 'skipped', error = 'stale', updated_at = now() where status in ('queued', 'held') and type = 'reply' and ${stale}`;
+    // a digest not out within the stale window never takes a slot the next day (the next digest counts anew)
+    await sql`update x_outbox set status = 'skipped', error = 'stale digest', updated_at = now() where status = 'queued' and type = 'post' and event->>'event' = 'digest' and ${stale}`;
+    // a held reply whose Send / Skip message never reached Telegram: shown again
+    for (const h of await sql<Outbox[]>`select id::text, type, event_key, event, reply_to, link, created_at, errors, sig from x_outbox where status = 'held' and error = ${KEYBOARD_MISSING}`) {
+      const rec = await latest<{ status: string; text?: string }>("x_post", h.event_key).catch(() => undefined);
+      if (rec?.status === "held" && typeof rec.text === "string") await showHeld(h, rec.text);
+    }
+    // by rank (the digest's last slot 0, money 1 > ballot / mystery results 2 > experiments 3 > the rest and replies 4),
+    // then in order
+    const queued = (await sql<Outbox[]>`select id::text, type, event_key, event, reply_to, link, created_at, errors, sig from x_outbox where status = 'queued'
+      and (errors = 0 or updated_at < now() - make_interval(mins => power(2, errors)::int)) order by id`)
+      .sort((a, b) => rankOf(a) - rankOf(b) || Number(a.id) - Number(b.id));
+    if (!queued.length) return "nothing queued";
+    if (await muted()) {
+      await sql`update x_outbox set status = 'skipped', error = 'muted', updated_at = now() where status in ('queued', 'held')`;
+      return "muted";
+    }
+    const used = await usedToday();
+    const caps = postCaps(); // the launch window's, or the normal ones
+    // events take all but the day's last post, which is the digest's
+    const room = (i: Outbox) => used.post < (i.event.event === "digest" ? caps.daily : eventPosts());
+    // replies wait (stay queued) for an hour after X refused one
+    const paused = await repliesPaused();
+    // the first post is "online": once the Safe's initialize is indexed, every other post waits for it (replies go)
+    const first = m === "live" && (await onlineAhead());
+    const ready = queued.filter((i) => (i.type === "reply" ? !paused && used.reply < X.dailyReplies : (!first || i.event_key === "online") && room(i) && used.sinceLastMs >= caps.spacingMs));
+    if (!ready.length) return `waiting: posts ${used.post}/${caps.daily} (spacing ${caps.spacingMs / 60_000} min), replies ${used.reply}/${X.dailyReplies}${paused ? ", replies paused after a 403" : ""}${first ? ", posts after the online post" : ""}`;
+    // queue-not-wait: an item whose image isn't ready stays queued and the next one goes (never a wait in-process)
+    for (const item of ready) {
+      const r = await sendOne(item, m);
+      if (r !== WAIT) return r;
+    }
+    return `waiting for images: ${ready.map((i) => i.event_key).join(", ")}`;
+  },
+};
+const WAIT = Symbol("wait");
+
+/** True while the launch has begun (the registry's Initialized is indexed) and the "online" post is not out yet: not
+ *  queued by x:launch, queued, mid-attempt, or skipped by a /mute (x:launch queues it again). Once it is posted, rolled
+ *  into the digest or failed, nothing waits on it. */
+export async function onlineAhead() {
+  const [init] = await sql`select 1 from chain_log where event = 'Initialized' and address = ${d.registry.toLowerCase()} limit 1`;
+  if (!init) return false;
+  const [o] = await sql<{ status: string }[]>`select status from x_outbox where event_key = 'online'`;
+  return !o || ["queued", "attempt", "skipped"].includes(o.status);
+}
+
+/** The outbox order: posts by priority, replies with the rest. */
+export const rankOf = (i: { type: string; event: Record<string, unknown> }) => (i.type === "reply" ? 4 : priorityOf(i.event));
+/** A post the writer could not produce rolls into the digest (never dropped); a reply or the digest itself fails. */
+async function giveUp(item: Outbox, status: "skipped" | "failed", error: string) {
+  if (item.type === "post" && item.event.event !== "digest") return setStatus(item.id, "digest", { error: `rolled into the digest: ${error}` });
+  await setStatus(item.id, status, { error });
+  if (item.event.event === "digest") await alert(`The daily digest ${item.event_key} was not posted: ${error}.`, `alert:digest:${item.event_key}`);
+}
+
+async function sendOne(item: Outbox, m: string): Promise<unknown> {
+  if (!(await trusted("x_outbox", item.event_key, outboxValue(item.type, item.event, item.reply_to, item.link), item.sig))) {
+    await setStatus(item.id, "skipped", { error: "unsigned outbox row" });
+    return "skipped";
+  }
+  const block = item.type === "reply" ? await replyBlock(item) : null;
+  if (block) { await setStatus(item.id, "skipped", { error: block }); return "skipped"; }
+  const raw = await resolve(item.event);
+  if (!raw) { await setStatus(item.id, "skipped", { error: "not an agent op" }); return "skipped"; }
+  if (item.type === "post" && raw.event !== "digest") await announce(item.event_key, raw, { raw: item.event, tx: item.link, proof: proofOf(raw.append) }); // if not yet
+  // the run's day on every post; the mind (src/life.ts; screened by factSheet) on the posts about its work; what it
+  // waits on where someone may ask; the first of a kind marked
+  const ev = String(raw.event);
+  const facts = factSheet({
+    ...raw, day: await dayOfLife(), ...(await storyNow(item.event_key, ev)), ...(MIND_EVENTS.has(ev) ? { mind: await mindNow() } : {}), ...(PENDING_EVENTS.has(ev) ? { pending: await pendingNow() } : {}),
+    ...(FIRST_EVENTS.has(ev) && !(await sql`select 1 from log where kind = 'announce' and doc->>'type' = ${ev} and ref <> ${item.event_key} limit 1`).length ? { first: true } : {}),
+    // an idea the intake took in: the reply says it is logged
+    ...(item.type === "reply" && raw.category === "idea" && item.reply_to && (await sql`select 1 from intake where mention_id = ${item.reply_to} and status in ('candidate', 'picked')`).length
+      ? { intake: "their idea is logged for the open round; when it closes the top ideas go on-chain to be staked on" } : {}),
+  });
+  // the mention a reply answers (code's check only: the writer never sees it)
+  const mention = item.type === "reply" && item.reply_to ? (await sql<{ text: string }[]>`select text from x_mention where id = ${item.reply_to}`)[0]?.text : undefined;
+  // the image: generated art (re-checked here, approved while approvals are on), a plate, the logo, or none
+  let card: Card | null = null;
+  if (item.type === "post") {
+    const c = await cardFor(item.event_key, item.created_at, { ...item.event, link: item.link }, facts);
+    if (c === "wait") return WAIT;
+    card = c;
+  }
+  const allowed = factNumbers(facts);
+  const tone = await currentTone();
+  // code appends: game text (a winner's short address, a commitment), then the tx link
+  const suffix = [raw.append, item.link].filter(Boolean).join("\n");
+  // a binding and the official-contract answer get one fixed text each (code, never the writer)
+  const fixed = raw.event === "binding_reply" ? BINDING_REPLY : raw.event === "official_reply" ? OFFICIAL_REPLY : null;
+  const author = item.type === "reply" && typeof item.event.author === "string" ? item.event.author : undefined;
+  const memory = fixed ? null : await CHARACTER_MEMORY.context({ authorId: author, type: item.type });
+  // a first or a milestone is an event: the mood says so; 4 shapes, never the one this event used last time
+  const mood = memory && (facts.first === true || MILESTONE_MOOD.has(ev)) ? "milestone" as const : memory?.mood;
+  const shapes = chooseShapes(shapesFor(item.type, facts, mood), memory?.recent ?? [], ev);
+  // in a thread, a draft that repeats one of our earlier replies there adds no new fact: it is not sent
+  const before = item.type === "reply" ? (await ourThread(item.reply_to)).map((p) => p.text) : [];
+  // a fixed text already sent in this thread adds nothing: never repeated there
+  if (fixed && before.includes(fixed)) { await setStatus(item.id, "skipped", { error: "no new fact" }); return "skipped"; }
+  // an event that shipped nothing never reads as shipped, live, fixed, merged or approved (src/voice.ts claimIssues)
+  // a draft that only restates code's stage text is refused (parrotIssue); an echo of the private bundle too (bundleIssues)
+  const filter = (text: string) => [...postFilter(text, allowed, appendWeight(suffix), { intent: intentOf(facts), priceJoke: facts.category === "price_fud", claim: claimFacts(facts) }), ...(before.some((b) => overlap(b, text) >= GATE.overlap) ? ["no new fact"] : []), ...claimIssues(facts, text), ...allyIssues(facts, text), ...voiceIssues(facts, text, { linked: !!item.link, mention }), ...[parrotIssue(facts, text)].filter((x): x is string => !!x), ...bundleIssues(text)];
+  let w: Drafted;
+  try {
+    w = fixed ? { model: "code", candidates: [{ text: fixed, issues: [] }], redraft: false }
+      : await draftInCharacter(facts, tone, filter, memory ? { ...memory, mood: mood ?? memory.mood, shapes, card: card?.kind === "image", ...(before.length ? { thread: before.slice(-5) } : {}) } : null, undefined, shapes);
+  } catch (e) {
+    if (e instanceof Defer) throw e; // the LLM cap: the item stays queued until tomorrow
+    const n = item.errors + 1;
+    await sql`update x_outbox set errors = ${n}, error = ${(e as Error).message.slice(0, 300)}, updated_at = now() where id = ${item.id}`;
+    if (n >= MAX_WRITER_ERRORS) {
+      await giveUp(item, "failed", `writer failed ${n} times: ${(e as Error).message.slice(0, 200)}`);
+      await alert(`X writer failed ${n} times on ${item.event_key} (${item.type}); ${item.type === "post" ? "it rolled into the digest" : "no reply"}. Last error: ${(e as Error).message.slice(0, 200)}`, `alert:xwriter:${item.event_key}`);
+    }
+    return `writer failed (${n}/${MAX_WRITER_ERRORS})`;
+  }
+  const candidates = w.candidates;
+  // the judge orders what passed every filter (2 or more); it never decides what is safe: on any failure, the first
+  const passing = candidates.filter((c) => !c.issues.length);
+  let judged: (JudgeOut & { model: string }) | null = null;
+  if (passing.length >= 2) {
+    try {
+      const j = await llm(judgeCall(facts, passing.map((c) => c.text), (memory?.recent ?? []).map((p) => p.text)));
+      judged = { ...j.data, model: j.model };
+    } catch (e) {
+      console.error(`x judge ${item.event_key}:`, (e as Error).message.slice(0, 200));
+    }
+  }
+  const pick = pickBest(candidates, judged);
+  // character memory reads these back (src/character.ts): the shape, mood, the running joke, the reader's X id
+  const character = memory ? { shape: pick?.shape, mood: mood ?? memory.mood, redraft: w.redraft, ...(author ? { author } : {}) } : {};
+  const rec = { type: item.type, outbox: item.id, event: item.event_key, facts, promptHash: sha(WRITER), personaSha256: PERSONA.sha256, model: w.model, tone, candidates: publicCandidates(candidates), shapes, ...(judged ? { judge: judged } : {}), mode: m, media: mediaRecord(card), ...character };
+  if (!pick) {
+    await append("x_post", item.event_key, { ...rec, status: "miss" });
+    await giveUp(item, "skipped", "no candidate passed the filter");
+    return "miss";
+  }
+  const draft = pick.text.normalize("NFKC").trim();
+  const text = `${draft}${suffix ? `\n${suffix}` : ""}`;
+  // the writer's own text and joke ride in the record, so a held reply sent by a tap carries them too
+  const sent = { ...rec, draft, ...(pick.joke ? { joke: pick.joke } : {}) };
+  if (m !== "live") {
+    await append("x_post", item.event_key, { ...sent, text, status: "dry_run" });
+    await setStatus(item.id, "dry_run");
+    return { dryRun: text };
+  }
+  // the official-contract answer to an important account waits for the tap like any reply to one (X_HOLD_IMPORTANT)
+  if (item.type === "reply" && HELD_EVENTS.has(String(item.event.event)) && replyPath(tierOfItem(item)) === "hold") return hold(item, { ...sent, text });
+  return deliver(item, text, card, sent);
+}
+
+/** The POST, at most once: the signed `attempt` record (text, media sha256 + provenance) precedes the upload and the
+ *  call. `held`: a signer's Send on a held reply (a rate limit puts it back on hold instead of the queue). */
+async function deliver(item: Outbox, text: string, card: Card | null, rec: Record<string, unknown>, held = false): Promise<unknown> {
+  await token(); // a refresh that fails here leaves the item queued: no attempt record, no false "may have posted"
+  // the exact text (and the media's sha256 + provenance) is in this signed record BEFORE the upload and the POST: /proof
+  // finds it by the tweet id the `posted` record links
+  await append("x_post", item.event_key, { ...rec, text, status: "attempt" });
+  await setStatus(item.id, "attempt");
+  const up = await uploadCard(card);
+  const stop = await stopped();
+  if (stop) {
+    // X was never called: nothing may be on X, so the item is dropped (a held reply too), never "attempted"
+    await append("x_post", item.event_key, { type: item.type, outbox: item.id, status: "dropped", why: stop });
+    await setStatus(item.id, "skipped", { error: stop });
+    return stop;
+  }
+  let r: { status: number; body: { data?: { id: string } } };
+  try {
+    r = await x("POST", "/2/tweets", { text, ...(item.reply_to ? { reply: { in_reply_to_tweet_id: item.reply_to } } : {}), ...(up.id ? { media: { media_ids: [up.id] } } : {}) });
+  } catch (e) {
+    return attempted(item, `network error after the attempt: ${(e as Error).message}`);
+  }
+  if (r.status === 201 && r.body.data?.id) {
+    await append("x_post", item.event_key, { type: item.type, outbox: item.id, tweetId: r.body.data.id, status: "posted", mediaId: up.id, mediaError: up.error ?? null });
+    await setStatus(item.id, "posted", { tweetId: r.body.data.id });
+    // the owners see each post as it goes out; a note that fails to queue never touches the post
+    await alert(postedNote(item, r.body.data.id, text), `posted:${item.id}`).catch(() => {});
+    return { tweetId: r.body.data.id };
+  }
+  if (r.status >= 500) return attempted(item, `X ${r.status} after the attempt`);
+  if (r.status === 429 && held) {
+    await append("x_post", item.event_key, { ...rec, text, status: "held" }); // X posted nothing: Send works again later
+    await setStatus(item.id, "held");
+    return "X rate limit (429): tap Send again later";
+  }
+  if (r.status === 429) { await setStatus(item.id, "queued"); throw new Defer(15 * 60_000, "X rate limit (429)"); }
+  await append("x_post", item.event_key, { type: item.type, outbox: item.id, status: "failed", http: r.status });
+  await setStatus(item.id, "failed", { error: `X ${r.status}` });
+  // a refused reply ends its thread and pauses replies for an hour (repliesPaused): never a run of 403s
+  if (item.type === "reply" && r.status === 403) {
+    await alert(`X refused reply #${item.id} to ${statusUrl(item.reply_to ?? "")} (403: not summoned, blocked, or the app is limited). The thread stops; replies pause for an hour.`, `alert:xreply403:${hour()}`);
+    return "failed 403";
+  }
+  await alert(r.status === 401 || r.status === 403
+    ? `X post ${r.status}: the token is revoked or lacks scope. Re-auth: the operator runs OAuth PKCE and sets a new X_REFRESH_TOKEN (sealed env).`
+    : `X post ${item.event_key} failed: ${r.status}.`, `alert:xpost:${item.id}`);
+  return `failed ${r.status}`;
+}
+
+/** The post may or may not be on X: never retried, a human checks. */
+async function attempted(item: Outbox, why: string) {
+  await append("x_post", item.event_key, { type: item.type, outbox: item.id, status: "attempted", error: why.slice(0, 300) });
+  await setStatus(item.id, "attempted", { error: why.slice(0, 300) });
+  await alert(`X ${item.type} #${item.id} (${item.event_key}) may have posted: ${why}. Not retried: check the account.`, `alert:xattempted:${item.id}`);
+  return "attempted";
+}
+
+// ---------------------------------------------------------------- replies
+
+/** This mention gets no reply (its one outbox row, skipped): it never comes back to the replies job. */
+export const skipReply = (mentionId: string, why: string) =>
+  sql`insert into x_outbox (type, event_key, event, reply_to, status, error) values ('reply', ${`reply:${mentionId}`}, '{}', ${mentionId}, 'skipped', ${why}) on conflict do nothing`;
+
+type MentionRow = { id: string; author_id: string | null; text: string; raw: Mention; sig: string | null };
+const statusUrl = (id: string) => `https://x.com/i/status/${id}`;
+/** The owners' Telegram note for a post that went out: what it was (a reply names the post it answered), where, the text. */
+export const postedNote = (item: Pick<Outbox, "type" | "event_key" | "reply_to">, tweetId: string, text: string) =>
+  `Posted: ${item.type === "reply" && item.reply_to ? `reply to ${statusUrl(item.reply_to)}` : item.event_key}\n${statusUrl(tweetId)}\n${text.slice(0, 280)}`;
+const signedMention = async (m: MentionRow | undefined) => !!m && (await trusted("x_mention", m.id, { author: m.author_id, text: m.text, raw: m.raw }, m.sig));
+const parentOf = (m: Mention) => m.referenced_tweets?.find((r) => r.type === "replied_to")?.id;
+
+/** X's summon test on a stored mention: it @mentions us, or quotes one of our posts (our signed `posted` records). */
+async function isSummoned(m: Mention) {
+  const quoted = (m.referenced_tweets ?? []).filter((r) => r.type === "quoted").map((r) => r.id);
+  // simplification: the plain log row, not a verified record: a forged one only costs a refused reply (a 403 pauses replies)
+  const ours = quoted.length ? await sql<{ id: string }[]>`select doc->>'tweetId' as id from log where kind = 'x_post' and doc->>'status' = 'posted' and doc->>'tweetId' = any(${quoted})` : [];
+  return summoned(m, X.userId, new Set(ours.map((r) => r.id)));
+}
+
+/** Our posted replies in the conversation of this mention (or of `conv`): the text we sent and when it went out. */
+async function ourThread(mentionId: string | null, conv?: string): Promise<Post[]> {
+  conv ??= mentionId ? (await sql<{ conv: string | null }[]>`select raw->>'conversation_id' as conv from x_mention where id = ${mentionId}`)[0]?.conv ?? undefined : undefined;
+  if (!conv) return [];
+  return sql<Post[]>`select o.tweet_id as id, l.doc->>'text' as text, (extract(epoch from o.updated_at) * 1000)::float8 as at from x_outbox o
+    join x_mention x on x.id = o.reply_to join log l on l.kind = 'x_post' and l.ref = o.event_key and l.doc->>'status' = 'attempt'
+    where o.type = 'reply' and o.status = 'posted' and x.raw->>'conversation_id' = ${conv}`;
+}
+/** The author's earlier posts in this conversation, newest first. */
+const theirThread = async (m: MentionRow, conv: string): Promise<Post[]> =>
+  (await sql<MentionRow[]>`select id, author_id, text, raw, sig from x_mention where raw->>'conversation_id' = ${conv} and author_id = ${m.author_id}
+    and (length(id), id) < (length(${m.id}::text), ${m.id}::text) order by length(id) desc, id desc limit 50`).map((r) => ({ id: r.id, text: r.text, parent: parentOf(r.raw) }));
+
+/** Reply events that follow the tier's reply path (auto, held for the Send tap, off); the binding notice always goes. */
+const HELD_EVENTS = new Set(["reply", "official_reply"]);
+const tierOfItem = (item: Outbox): Tier => (["important", "competitor"].includes(String(item.event.tier)) ? item.event.tier as Tier : "normal");
+
+/** X refused a reply (403) in the last hour: replies wait (they stay queued or held), none is sent. */
+const repliesPaused = async () => (await sql`select 1 from x_outbox where type = 'reply' and status = 'failed' and error = 'X 403' and updated_at > now() - interval '1 hour' limit 1`).length > 0;
+
+/** The reply ceilings: X.dailyReplies a UTC day and X.hourlyReplies in the last 60 minutes (across midnight too), over
+ *  every reply that holds a slot. `except`: the reply asking (a held one already holds its own). */
+async function overCeiling(except?: string) {
+  const now = Date.now();
+  const [{ n, hour }] = await sql<{ n: number; hour: number }[]>`select count(*) filter (where created_at >= ${new Date(now - (now % 86_400_000))})::int as n,
+    count(*) filter (where created_at > ${new Date(now - 3600_000)})::int as hour from x_outbox where type = 'reply' and status <> 'skipped'
+    and created_at > ${new Date(now - 86_400_000 - 3600_000)} ${except ? sql`and id <> ${except}` : sql``}`;
+  return n >= X.dailyReplies || hour >= X.hourlyReplies;
+}
+
+/** Why a queued or held reply may not go out (null = it may): checked before the writer runs and again at a Send tap,
+ *  so the reply API is never called for a post that did not summon us. */
+async function replyBlock(item: Outbox): Promise<string | null> {
+  const [m] = await sql<MentionRow[]>`select id, author_id, text, raw, sig from x_mention where id = ${item.reply_to}`;
+  if (!(await signedMention(m))) return "no signed mention";
+  if (!(await isSummoned(m.raw))) return "not summoned (no @mention or quote of us)";
+  if (m.author_id && (await sql`select 1 from x_optout where author_id = ${m.author_id}`).length) return "opted out";
+  if (HELD_EVENTS.has(String(item.event.event)) && replyPath(tierOfItem(item)) === "off") return "AI replies are off until X approves them";
+  return null;
+}
+
+/** An important account's reply before X approves AI replies: the exact text is signed as `held` and shown to the
+ *  signers with Send / Skip; nothing goes to X until a Send tap (pressReply). */
+async function hold(item: Outbox, rec: Record<string, unknown> & { text: string }) {
+  await append("x_post", item.event_key, { ...rec, status: "held" });
+  await setStatus(item.id, "held");
+  await showHeld(item, rec.text);
+  return { held: item.id };
+}
+/** Marks a held reply whose Send / Skip message Telegram did not take: x:send shows it again. */
+const KEYBOARD_MISSING = "Send / Skip not shown yet";
+/** The Send / Skip message. When Telegram fails, the row is marked (x:send retries) and a queued alert names the reply. */
+async function showHeld(item: Outbox, text: string) {
+  const [m] = await sql<{ author_username: string | null }[]>`select author_username from x_mention where id = ${item.reply_to}`;
+  try {
+    await say(`Reply draft #${item.id} for @${m?.author_username ?? "?"} (important account). Send posts exactly this as a reply to ${statusUrl(item.reply_to ?? "")}\n\n${text}`,
+      { reply_markup: { inline_keyboard: [[{ text: "Send", callback_data: `x:${item.id}:s` }, { text: "Skip", callback_data: `x:${item.id}:k` }]] } });
+    await sql`update x_outbox set error = null where id = ${item.id} and status = 'held'`;
+  } catch (e) {
+    await sql`update x_outbox set error = ${KEYBOARD_MISSING} where id = ${item.id} and status = 'held'`;
+    await alert(`Reply draft #${item.id} is held, but Telegram did not take its Send / Skip message (${(e as Error).message.slice(0, 200)}). The next x:send run shows it again.`, `alert:xheld:${item.id}`);
+  }
+}
+
+/** A signer's tap on a held reply. Send posts exactly the signed held text, once (the claim held → attempt is one
+ *  statement: a second tap, or a Skip racing it, finds nothing to claim), after the pipeline's checks (mode, mute,
+ *  summoned, opt-out, the 403 pause, the reply ceilings); Skip drops it. A pause or a ceiling leaves it held. */
+export const pressReply: ReplyButton = async (id, send, by) => {
+  const notWaiting = (status?: string) => `Reply #${id} is not waiting for a tap (${status ?? "unknown"}).`;
+  const [item] = await sql<Outbox[]>`select id::text, type, event_key, event, reply_to, link, created_at, errors, sig, status from x_outbox where id = ${id} and type = 'reply'`;
+  if (item?.status !== "held") return notWaiting(item?.status);
+  if (!(await trusted("x_outbox", item.event_key, outboxValue(item.type, item.event, item.reply_to, item.link), item.sig))) return `Reply #${id}: unsigned outbox row.`;
+  const draft = await latest<{ status: string; text?: string } & Record<string, unknown>>("x_post", item.event_key).catch((e) => (isRolledBack(e) ? undefined : Promise.reject(e)));
+  if (draft?.status !== "held" || typeof draft.text !== "string") return `Reply #${id}: no signed draft to send.`;
+  const { _seq, _at, status: _s, text, ...rec } = draft as typeof draft & { _seq: string; _at: Date; text: string };
+  const claim = (status: string, error: string | null = null) =>
+    sql`update x_outbox set status = ${status}, error = ${error}, updated_at = now() where id = ${id} and status = 'held' returning id`.then((r) => r.length > 0);
+  if (!send) {
+    if (!(await claim("skipped", `skipped by ${by}`))) return notWaiting("already taken");
+    await append("x_post", item.event_key, { type: "reply", outbox: item.id, status: "skipped", by });
+    return `Reply #${id} skipped.`;
+  }
+  const m = await mode();
+  if (m !== "live") return `Reply #${id} not sent: the mode is ${m}.`;
+  if (await muted()) return `Reply #${id} not sent: X posting is muted.`;
+  const block = await replyBlock(item);
+  if (block) return (await claim("skipped", block)) ? `Reply #${id} not sent: ${block}.` : notWaiting("already taken");
+  if (await repliesPaused()) return `Reply #${id} not sent yet: X refused a reply in the last hour. Tap Send again after the pause.`;
+  if (await overCeiling(id)) return `Reply #${id} not sent yet: the reply ceilings are reached. Tap Send again later.`;
+  await token(); // before the claim: a failed refresh leaves the reply held, not a dead attempt
+  if (!(await claim("attempt"))) return notWaiting("already taken");
+  const r = await deliver(item, text, null, { ...rec, by }, true);
+  return (r as { tweetId?: string })?.tweetId ? `Reply #${id} sent: ${statusUrl((r as { tweetId: string }).tweetId)}` : `Reply #${id}: ${String(r)}`;
+};
+
+/** Replies to one person's same question (its words, mentions, links and punctuation aside) before it is left alone. */
+export const SAME_ASK = 2;
+export const sameAsk = (a: string, b: string) => {
+  const n = (t: string) => t.normalize("NFKC").toLowerCase().replace(/https?:\/\/\S+|@\w+/g, " ").replace(/[^\p{L}\p{N}]+/gu, " ").trim();
+  return n(a) === n(b) && n(a) !== "";
+};
+type Decision = { skip: string } | { wait: string } | { later: string } | { kind: Category; topic: Topic; question?: string };
+/** Reader failures per mention (an invalid answer): tried again on later runs, skipped after READER_TRIES.
+ *  simplification: in memory; a restart gives a mention its tries again (it is still left alone after a day). */
+const READER_FAILS = new Map<string, number>();
+export const READER_TRIES = 3;
+/** One mention → skip (with the reason), wait (a ceiling or the reader's budget: the next run tries again) or reply. */
+async function decide(m: MentionRow, tier: Tier): Promise<Decision> {
+  if (!(await isSummoned(m.raw))) return { skip: "not summoned (no @mention or quote of us)" };
+  // replies need no badge: the account's age and followers (accountIssue), then every cap below
+  const gate = accountIssue(m.raw.user, Date.now());
+  if (gate) return { skip: `author gate: ${gate}` };
+  if (replyPath(tier) === "off") return { skip: "AI replies are off until X approves them" };
+  const lim = TIERS[tier];
+  const [{ mine }] = await sql<{ mine: number }[]>`select count(*)::int as mine from x_outbox o join x_mention x on x.id = o.reply_to where o.type = 'reply' and o.status <> 'skipped'
+    and x.author_id = ${m.author_id} and o.created_at >= date_trunc('day', now() at time zone 'UTC') at time zone 'UTC'`;
+  if (mine >= lim.perAuthorDay) return { skip: `${lim.perAuthorDay} replies to this author today` };
+  // the same question from the same person: answered twice (a week), then left alone
+  const asked = await sql<{ text: string }[]>`select x.text from x_outbox o join x_mention x on x.id = o.reply_to where o.type = 'reply' and o.status <> 'skipped'
+    and x.author_id = ${m.author_id} and o.created_at > now() - interval '7 days'`;
+  if (asked.filter((a) => sameAsk(a.text, m.text)).length >= SAME_ASK) return { skip: `the same question answered ${SAME_ASK} times` };
+  const conv = m.raw.conversation_id;
+  const parent = parentOf(m.raw);
+  if (tier === "normal") {
+    // one answer per author per conversation: everyone under a busy post is answered once
+    if (conv && (await sql`select 1 from x_outbox o join x_mention x on x.id = o.reply_to where o.type = 'reply' and o.status <> 'skipped' and x.raw->>'conversation_id' = ${conv} and x.author_id = ${m.author_id}`).length) return { skip: "already replied to this author in this conversation" };
+    if (parent && (await sql`select 1 from x_outbox where type = 'reply' and tweet_id = ${parent}`).length) return { skip: "reply to our reply" };
+  } else if (conv) {
+    // a thread: one turn per new post of theirs, while it runs
+    const [t] = await sql<{ turns: number; open: number; stopped: number }[]>`select count(*) filter (where o.status <> 'skipped')::int as turns,
+      count(*) filter (where o.status in ('queued', 'held', 'attempt'))::int as open, count(*) filter (where o.error like 'stop:%' or o.error = 'X 403')::int as stopped
+      from x_outbox o join x_mention x on x.id = o.reply_to where o.type = 'reply' and x.raw->>'conversation_id' = ${conv} and x.author_id = ${m.author_id}`;
+    if (t.stopped) return { skip: "thread stopped" };
+    if (t.turns >= lim.perConversation) return { skip: `${lim.perConversation} turns in this conversation` };
+    if (t.open) return { skip: "our previous reply in this thread is not out yet" };
+  }
+  const stop = stopRule({ id: m.id, text: m.text, parent }, conv ? await theirThread(m, conv) : [], conv ? await ourThread(null, conv) : [], Date.now());
+  if (stop) return { skip: `stop: ${stop}` };
+  if (await overCeiling()) return { wait: "the reply ceilings" }; // later mentions wait (≤ 1 day)
+  // a relaunch, an old or other token, a migration: code reads it and only the official line answers (no model)
+  if (oldTokenTalk(m.text)) return { kind: "official_contract", topic: "other" };
+  try {
+    const r = (await classifyMention(m.text)).data;
+    // an ally's hello or a competitor's jab often reads as bait: they are answered (as a greeting), everyone else's is not
+    if (r.kind === "bait") return isAlly(m.author_id) || tier === "competitor" ? { kind: "greeting", topic: r.topic } : { skip: "bait" };
+    return oldTokenTalk(r.question) ? { kind: "official_contract", topic: r.topic } : { kind: r.kind, topic: r.topic, question: questionOf(r.question) };
+  } catch (e) {
+    if (e instanceof Defer) return { wait: `the reader: ${e.message.slice(0, 120)}` }; // the LLM cap or provider trouble: next run
+    const n = (READER_FAILS.get(m.id) ?? 0) + 1;
+    READER_FAILS.set(m.id, n);
+    if (n < READER_TRIES) return { later: `reader failed (${n}/${READER_TRIES}), tried again next run` };
+    READER_FAILS.delete(m.id);
+    return { skip: `reader failed ${n} times: ${(e as Error).message.slice(0, 200)}` };
+  }
+}
+
+/** Signers hear about every mention from an important (or competitor) account, with what the engine does about it. */
+function alertMention(m: MentionRow, tier: Tier, plan: string) {
+  const u = m.raw.user;
+  const pm = u?.public_metrics ?? {};
+  const who = `@${u?.username ?? m.author_id} (${pm.followers_count ?? 0} followers, ${pm.listed_count ?? 0} lists, ${u?.verified_type ?? "no"} badge)`;
+  // one alert per author per 6 h: a thread's later turns arrive as reply drafts
+  return alert(`${tier === "important" ? "Important" : "Competitor"} account mentioned us: ${who}\n${statusUrl(m.id)}\nTheir post (untrusted): ${JSON.stringify(m.text.slice(0, 280))}\nPlan: ${plan}`,
+    `alert:xmention:${m.author_id}:${Math.floor(Date.now() / (6 * 3600_000))}`);
+}
+
+/** Mentions → replies (src/tiers.ts). Only to a post that @mentions or quotes us, from an author who passes the idea
+ *  gate's author checks; per tier: normal one reply per author per conversation and X.repliesPerAuthor a UTC day, important and
+ *  competitor a turn per new post of theirs in a thread (TIERS) until a stop rule fires; all under ceilings of
+ *  X.dailyReplies a day and X.hourlyReplies an hour. One reply per mention id (x_outbox unique reply_to); never to our
+ *  own posts or an opted-out author; bait and injection get nothing. Until X approves AI replies, only important
+ *  accounts get one, held for a Send tap; approved, every tier's reply is sent without a tap (X_HOLD_IMPORTANT=1 holds
+ *  an important account's). The mention text reaches only the quarantined reader (the writer gets its
+ *  category) and the code stop rules. Mentions older than a day (by when they were posted: a long halt never ends in
+ *  replies to old posts) are left alone; mentions skipped while muted are not
+ *  answered after /unmute. */
+export const repliesHandler: Handler = {
+  lane: "x",
+  run: async () => {
+    const todo = await sql<MentionRow[]>`select m.id, m.author_id, m.text, m.raw, m.sig from x_mention m
+      where m.fetched_at > now() - interval '1 day' and coalesce(m.created_at, m.fetched_at) > now() - interval '1 day' and not exists (select 1 from x_outbox o where o.event_key = 'reply:' || m.id)
+      order by length(m.id), m.id limit 20`;
+    const out: Record<string, string> = {};
+    const skip = async (m: MentionRow, why: string) => {
+      await skipReply(m.id, why);
+      out[m.id] = why;
+    };
+    for (const m of todo) {
+      if (!(await signedMention(m))) { await skip(m, "unsigned mention row"); continue; }
+      if (m.author_id && m.author_id === X.userId) { await skip(m, "own post"); continue; }
+      if (parseBinding(m.text)) continue; // a wallet binding: the intake replies once, or marks it skipped
+      // shaped like us or an ally, or an address outside the binding format (a scam's "send me ETH 0x…"): never a reply
+      const fake = impersonator(m.raw.user ? { id: m.author_id ?? undefined, ...m.raw.user } : null);
+      if (fake) { await skip(m, fake); continue; }
+      // an address in a contract question ("is 0x… the real contract?") gets the official line (once a day); any other
+      // loose address gets nothing
+      const loose = /0x[0-9a-f]{40}/i.test(m.text);
+      if (loose && !CONTRACT_ASK.test(m.text)) { await skip(m, "an address outside the binding format"); continue; }
+      if (m.author_id && (await sql`select 1 from x_optout where author_id = ${m.author_id}`).length) { await skip(m, "opted out"); continue; }
+      if (optOutRequest(m.text)) {
+        if (m.author_id) await sql`insert into x_optout (author_id) values (${m.author_id}) on conflict do nothing`;
+        await skip(m, "opt-out request"); continue;
+      }
+      const tier = tierOf(m.raw.user ? { id: m.author_id ?? undefined, ...m.raw.user } : null);
+      const d = await decide(m, tier);
+      // a reader retry ("later") alerts nothing yet: the final verdict does
+      if (tier !== "normal" && !("later" in d)) await alertMention(m, tier, "skip" in d ? `no reply (${d.skip})` : "wait" in d ? `waiting on ${d.wait}` : replyPath(tier) === "hold" ? "a reply draft follows: tap Send to post it" : "replying");
+      if ("wait" in d) break;
+      if ("later" in d) { out[m.id] = d.later; continue; }
+      if ("skip" in d) { await skip(m, d.skip); continue; }
+      // which contract is the real one: the fixed answer (code text), rate-limited like any reply (decide's caps)
+      if (d.kind === "official_contract" || loose) {
+        // the fixed line once per author a UTC day ("ca? ca? ca?" gets it once)
+        if ((await sql`select 1 from x_outbox o join x_mention x on x.id = o.reply_to where o.type = 'reply' and o.status <> 'skipped' and o.event->>'event' = 'official_reply'
+          and x.author_id = ${m.author_id} and o.created_at >= date_trunc('day', now() at time zone 'UTC') at time zone 'UTC'`).length) { await skip(m, "the official line went to this author today"); continue; }
+        await enqueueX(`reply:${m.id}`, "reply", { event: "official_reply", tier, ...(m.author_id ? { author: m.author_id } : {}) }, { replyTo: m.id });
+        out[m.id] = "official_contract";
+        continue;
+      }
+      // an ally (important, held for the tap) is marked so the writer stays warm; a competitor so it never names an ally
+      const relationship = isAlly(m.author_id) ? "ally" : tier === "competitor" ? "competitor" : undefined;
+      // a competitor that came at us first may be answered by name (code's name for it, never its handle)
+      const rival = relationship === "competitor" && m.author_id ? COMPETITOR_NAMES[m.author_id] : undefined;
+      await enqueueX(`reply:${m.id}`, "reply", { event: "reply", category: d.kind, topic: d.topic, ...(d.question ? { question: d.question } : {}), ...(rival ? { rival } : {}), tier, ...(relationship ? { relationship } : {}), ...(m.author_id ? { author: m.author_id } : {}) }, { replyTo: m.id });
+      out[m.id] = d.kind;
+    }
+    return out;
+  },
+};
+
+// ---------------------------------------------------------------- the daily digest
+
+/** The digest posts only on a day something happened: a rolled-over post, an experiment closed, a jackpot winner, ETH
+ *  paid or DNA burned (silence when nothing happened). */
+export const digestDue = (f: { total: number; survived: number; extinct: number; winners: number; ethPaid: number; dnaBurned: number }) =>
+  f.total + f.survived + f.extinct + f.winners > 0 || f.ethPaid > 0 || f.dnaBurned > 0;
+
+/** The day's numbers for the digest, from the signed announcements and the indexed chain: the
+ *  generation (newest epoch), experiments survived / extinct, jackpot winners and the ETH paid, DNA burned. */
+export async function dayFacts(day = new Date().toISOString().slice(0, 10)) {
+  const from = new Date(`${day}T00:00:00Z`), to = new Date(from.getTime() + 86_400_000);
+  const ann = (await sql<{ ref: string }[]>`select distinct ref from log where kind = 'announce' and at >= ${from} and at < ${to} and doc->>'type' in ('outcome', 'jackpot_drawn')`);
+  let survived = 0, extinct = 0, winners = 0, eth = 0;
+  for (const { ref } of ann) {
+    const [a] = await trustedDocs<{ type: string; facts: Record<string, unknown> }>("announce", ref);
+    if (!a) continue;
+    if (a.type === "outcome") { if (a.facts.outcome === "kept (promoted)") survived++; else extinct++; }
+    if (a.type === "jackpot_drawn") { winners += Number(a.facts.winners ?? 0); eth += Number(a.facts.prizeEth ?? 0); }
+  }
+  return { generation: (await latest<{ n: number }>("epoch"))?.n ?? 0, survived, extinct, winners, ethPaid: Number(eth.toFixed(3)), dnaBurned: await burnedDna(from, to) };
+}
+
+/** Whole DNA burned (every indexed DNA Transfer to 0x0: the token's own logs only) from `from` until `to` (or now). */
+export async function burnedDna(from: Date, to?: Date) {
+  const [{ burned }] = await sql<{ burned: string | null }[]>`select sum((args->>'value')::numeric)::text as burned from chain_log
+    where event = 'Transfer' and address = ${d.token.toLowerCase()} and args->>'to' = '0x0000000000000000000000000000000000000000' and at >= ${from} ${to ? sql`and at < ${to}` : sql``}`;
+  return Math.round(Number(BigInt(String(burned ?? "0").split(".")[0]) / 10n ** 18n));
+}
+
+/** Daily (23:00 UTC), one post that counts as 1 of the 15: the day's numbers (`dayFacts`) and the posts that did not
+ *  fit today (rolled over, or still queued behind the cap) by kind, with the link to the full list; each of those is
+ *  on the site already (announced again here if it never resolved before). */
+export const digestHandler: Handler = {
+  lane: "x",
+  run: async (job) => {
+    // at its hour only: a run caught up at boot hours later never posts a stale digest (what it would have counted
+    // stays in 'digest' and goes into the next one)
+    const due = typeof job.payload.due === "string" ? Date.parse(job.payload.due) : NaN;
+    if (Date.now() - due > 3600_000) return `missed the digest hour (${job.payload.due}): rolled into the next one`;
+    const items = await sql<Outbox[]>`select id::text, type, event_key, event, reply_to, link, created_at, errors, sig from x_outbox
+      where type = 'post' and status in ('queued', 'digest') and event->>'event' <> 'digest' order by id`;
+    // counts first, then the digest (keyed by its batch: a retry after a crash enqueues the same row, never a second),
+    // then the batch is marked in one statement. It posts on every day something happened, with the day's numbers
+    const counts: Record<string, number> = { money: 0, games: 0, experiments: 0, other: 0 };
+    const ids: string[] = [];
+    for (const i of items) {
+      if (!(await trusted("x_outbox", i.event_key, outboxValue(i.type, i.event, i.reply_to, i.link), i.sig))) { await setStatus(i.id, "skipped", { error: "unsigned outbox row" }); continue; }
+      await announceEvent(i.event_key, i.event, i.link);
+      counts[bucketOf(typeOf(i.event))]++;
+      ids.push(i.id);
+    }
+    const total = ids.length;
+    const day = new Date().toISOString().slice(0, 10);
+    const facts = { event: "digest", total, ...counts, ...(await dayFacts(day)) };
+    if (!digestDue(facts)) return "nothing happened today: no digest (silence when nothing happened)";
+    const key = `digest:${day}:${ids[0] ?? "day"}`;
+    const id = await enqueueX(key, "post", facts, { link: ANNOUNCEMENTS_URL });
+    if (id) await requestArtFor(key, factSheet(facts));
+    if (ids.length) await sql`update x_outbox set status = 'digested', error = null, updated_at = now() where id = any(${ids}::bigint[])`;
+    return { digest: day, total };
+  },
+};
+
+// ---------------------------------------------------------------- tone scout (daily)
+
+export const scoutHandler: Handler = {
+  lane: "x",
+  run: async () => {
+    if (!SCOUT.handles.length) return "no read-list: no tone scout";
+    const fromDate = new Date(Date.now() - 86_400_000).toISOString().slice(0, 10);
+    const r = await scoutTone(fromDate);
+    const phrases = toneBrief(r.data.phrases);
+    await record("tone", "brief", { phrases, dropped: r.data.phrases.length - phrases.length, fromDate, model: r.model, at: nowIso() });
+    return { phrases: phrases.length };
+  },
+};

@@ -1,0 +1,14 @@
+{
+  "about": "SYNTHETIC OpenRouter Messages response (POST /api/v1/messages), shaped per openrouter.ai/docs api-reference anthropic-messages (MessagesResult with provider and usage.cost), checked 2026-10-09. No real call was made.",
+  "response": {
+    "id": "gen-synthetic-messages",
+    "type": "message",
+    "role": "assistant",
+    "model": "anthropic/claude-fable-5.1-20260831",
+    "provider": "Anthropic",
+    "stop_reason": "end_turn",
+    "stop_sequence": null,
+    "content": [{ "type": "thinking", "thinking": "" }, { "type": "text", "text": "{\"verdict\":\"pass\",\"reason\":\"synthetic\"}" }],
+    "usage": { "input_tokens": 1000, "cache_creation_input_tokens": 0, "cache_read_input_tokens": 100000, "output_tokens": 1000, "cost": 0.0851, "is_byok": false, "service_tier": "standard" }
+  }
+}

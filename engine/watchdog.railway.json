@@ -1,0 +1,11 @@
+{
+  "$schema": "https://railway.com/railway.schema.json",
+  "build": { "builder": "RAILPACK", "watchPatterns": ["engine/src/**", "engine/scripts/watchdog.ts", "engine/deployments/**", "engine/package-lock.json"] },
+  "deploy": {
+    "startCommand": "node scripts/watchdog.ts",
+    "healthcheckPath": "/health",
+    "healthcheckTimeout": 300,
+    "restartPolicyType": "ALWAYS",
+    "numReplicas": 1
+  }
+}

@@ -1,0 +1,8 @@
+{
+  "slug": "template",
+  "title": "Game title",
+  "chainId": 1,
+  "address": "0x0000000000000000000000000000000000000000",
+  "codehash": "0x0000000000000000000000000000000000000000000000000000000000000000",
+  "abi": [{ "type": "function", "name": "click", "inputs": [], "outputs": [], "stateMutability": "nonpayable" }]
+}

@@ -1,0 +1,79 @@
+/* The homepage journey. Text sits over a fixed canvas; scene.js fades each block. */
+/* scroll drives the camera: no scrollbar, so the canvas, the drawing buffer and innerWidth are the same width everywhere
+   (a classic 15–17 px scrollbar would squeeze the scene and shift the text masks) */
+:global(html:has([data-dna])) { scrollbar-width: none; }
+:global(html:has([data-dna]))::-webkit-scrollbar { display: none; }
+.root { --g-ink: #eef3f2; --g-mist: #b8c4c3; --g-line: #ffffff26; color: var(--g-ink); background: #05080a; }
+.canvas { position: fixed; inset: 0; width: 100%; height: 100%; display: block; } /* a canvas is a replaced element: without an explicit size it shows at its drawing-buffer size (2–3× the window on HiDPI). 100% of the fixed box, not 100vh (iOS's large viewport) */
+.load { position: fixed; inset: 0; z-index: 30; display: grid; place-items: center; background: #05080a; font-size: 13px; letter-spacing: .3em; color: #7f8d8c; transition: opacity 1s ease, visibility 0s 1s; }
+.load[data-gone] { opacity: 0; visibility: hidden; }
+.scroll { position: relative; height: 1500vh; pointer-events: none; }
+
+/* the one headline: big type left, a small column under it */
+.head, .organ { position: fixed; z-index: 4; inset: 0; display: flex; flex-direction: column; justify-content: center; padding: 0 8vw; pointer-events: none; opacity: 0; }
+.head { gap: 34px; }
+.head h1 { margin: 0; font-weight: 400; font-size: clamp(56px, min(8.6vw, 15vh), 260px); line-height: .92; text-transform: uppercase; letter-spacing: -.01em; }
+.col { max-width: min(30em, 40vw); font-size: clamp(13px, min(0.98vw, 1.75vh), 20px); line-height: 1.7; text-transform: uppercase; }
+.col p { margin: 0; }
+.col p + p { margin-top: 18px; }
+
+.organ { gap: 26px; }
+.organ h2 { margin: 0; font-weight: 400; font-size: clamp(44px, min(6.4vw, 11vh), 200px); line-height: .92; text-transform: uppercase; max-width: 36vw; }
+.organ p { margin: 0; max-width: min(27em, 34vw); font-size: clamp(13px, min(0.98vw, 1.75vh), 20px); line-height: 1.7; text-transform: uppercase; }
+.organ .split { display: flex; gap: 22px; margin-top: 26px; max-width: none; white-space: nowrap; }
+.split span { display: flex; flex-direction: column; gap: 6px; font-size: clamp(11px, min(0.84vw, 1.5vh), 17px); letter-spacing: .04em; }
+.split b { font-weight: 400; font-size: clamp(26px, min(2.4vw, 4.2vh), 58px); line-height: 1; letter-spacing: 0; }
+
+.end { position: fixed; z-index: 4; left: 8vw; top: 50%; transform: translateY(-50%); max-width: 40vw; opacity: 0; display: flex; flex-direction: column; align-items: flex-start; gap: 22px; text-transform: uppercase; font-size: clamp(12px, min(0.9vw, 1.6vh), 18px); pointer-events: none; }
+.end:focus-within { opacity: 1 !important; } /* a keyboard user tabbing to a link always sees it */
+.big { font-size: clamp(30px, min(3.6vw, 6.2vh), 96px); line-height: 1; }
+.end nav { display: flex; flex-direction: column; gap: 14px; }
+.end a { color: var(--g-ink); border-bottom: 1px solid var(--g-line); padding-bottom: 3px; }
+.end a:hover { border-color: var(--g-ink); }
+.ca { margin-top: 6px; padding: 0; font: inherit; text-align: left; text-transform: uppercase; color: var(--g-mist); background: none; border: 0; cursor: var(--cursor-link); pointer-events: auto; }
+.ca:hover { color: var(--g-ink); }
+/* the address keeps its checksummed case (the label stays uppercase) and wraps on narrow screens */
+.addr { display: block; text-transform: none; overflow-wrap: anywhere; }
+
+.status { position: fixed; z-index: 10; left: var(--gutter); bottom: 26px; font-size: 13px; color: var(--g-mist); display: flex; gap: 10px; align-items: center; text-shadow: 0 0 12px #000; }
+.status i { width: 6px; height: 6px; background: #e9fbf8; display: block; }
+.demo { color: var(--g-ink); }
+
+@media (max-width: 760px) {
+  .organ .split { gap: 16px; margin-top: 16px; }
+  .split b { font-size: 24px; }
+  .head { padding: 0 16px; gap: 18px; }
+  .head h1 { font-size: 13vw; }
+  .col { max-width: 50vw; font-size: 12px; }
+  .organ { justify-content: flex-start; padding: 92px 16px 0; gap: 14px; }
+  .organ h2 { font-size: 10.5vw; max-width: none; }
+  .organ p { max-width: 86vw; font-size: 12px; }
+  .end { left: 16px; max-width: 50vw; }
+  .big { font-size: 26px; }
+}
+
+/* short landscape windows (phones on their side, squat browser windows): the desktop layout, tightened to fit the height */
+@media (min-width: 761px) and (max-height: 520px) {
+  .head, .organ { gap: 12px; padding-top: 56px; padding-bottom: 44px; }
+  .head h1 { font-size: clamp(36px, 13vh, 72px); }
+  .col { font-size: 11px; line-height: 1.5; }
+  .col p + p { margin-top: 8px; }
+  .organ h2 { font-size: clamp(32px, 11vh, 64px); }
+  .organ p { font-size: 11px; line-height: 1.5; }
+  .organ .split { margin-top: 8px; }
+  .split b { font-size: 22px; }
+  .status { bottom: 12px; font-size: 11px; }
+}
+
+/* no WebGL or no JS: the story as a plain page */
+.root[data-flat] :is(.canvas, .scroll, .load), :global(html:not(.js)) :is(.canvas, .scroll, .load) { display: none; }
+.root[data-flat] :is(.head, .organ, .end), :global(html:not(.js)) :is(.head, .organ, .end) {
+  position: relative; inset: auto; transform: none; opacity: 1 !important; max-width: none; padding: 96px var(--gutter) 0;
+}
+.root[data-flat] .end, :global(html:not(.js)) .end { left: auto; top: auto; padding-bottom: 120px; pointer-events: auto; }
+
+/* the fee, with Programmable's part as its own chip (not ours) */
+.organ .feeLine { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 14px; max-width: min(36em, 40vw); }
+@media (max-width: 760px) { .organ .feeLine { max-width: 86vw; } }
+@media (min-width: 761px) and (max-height: 520px) { .organ .feeLine { gap: 6px 10px; } }
+.root[data-flat] .organ .feeLine, :global(html:not(.js)) .organ .feeLine { max-width: none; }

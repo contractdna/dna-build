@@ -1,0 +1,55 @@
+/* /evolution: phylogeny tree + epoch history. Bone linework; full bone only for what is alive now. */
+
+/* tree: drawn at its authored size (svg width/height attrs = viewBox), so SVG text is never scaled down.
+   Narrower than the tree, it scrolls inside this box; contain keeps it from ever widening the page. */
+.scroller { overflow-x: auto; overscroll-behavior-x: contain; scrollbar-width: thin; contain: inline-size; }
+.scroller:focus-visible { outline-offset: 4px; }
+.tree { display: block; max-width: none; font-family: var(--karrik); }
+
+.guideLine { stroke: var(--rule); stroke-width: 1; stroke-dasharray: 2 4; }
+.epochLabel, .epochLabelNow { fill: var(--silver); font-size: 13px; }
+.epochLabelNow { fill: var(--bone); }
+.blk { fill: var(--ash-text); font-size: 10px; }
+
+.trunk { fill: none; stroke: var(--bone); stroke-width: 1.2; }
+.live, .dead { fill: none; stroke-width: 1; }
+.live { stroke: var(--silver); }
+.dead { stroke: var(--ash); stroke-dasharray: 3 3; }
+.cross { fill: none; stroke: var(--ash); stroke-width: 1.2; }
+.tip { fill: var(--ink); stroke: var(--bone); stroke-width: 1.2; }
+.tipCore { fill: var(--bone); }
+.node, .nodeNow { fill: var(--ink); stroke: var(--silver); stroke-width: 1.2; }
+.nodeNow { stroke: var(--bone); fill: var(--bone); }
+
+.leaf { fill: var(--silver); font-size: 12px; }
+.leafLive, .leafDead { font-size: 10px; }
+.leafLive { fill: var(--bone); }
+.leafDead { fill: var(--ash-text); }
+
+.hint { display: none; }
+
+/* epoch history: hairline-ruled columns */
+.history { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 220px), 1fr)); gap: 32px; }
+.epoch { min-width: 0; padding-top: 16px; border-top: 1px solid var(--rule); }
+.epoch[data-current] { border-top-color: var(--bone); }
+.cell { display: block; width: 120px; height: 72px; margin: 0 0 14px -10px; }
+.membrane, .inner { fill: none; stroke: var(--ash); stroke-linejoin: round; }
+.membrane { stroke-width: 1.2; }
+.inner { stroke-width: 0.8; }
+.nucleus { fill: var(--ash); }
+.cell[data-current] .membrane, .cell[data-current] .inner { stroke: var(--bone); }
+.cell[data-current] .nucleus { fill: var(--bone); }
+
+.epochName { margin: 0 0 4px; font: 400 32px/1.1 var(--karrik); color: var(--silver); }
+.epoch[data-current] .epochName { color: var(--bone); }
+.fields { display: grid; gap: 14px; margin: 20px 0 0; }
+.fields dt { font-size: 13px; color: var(--ash-text); margin-bottom: 2px; }
+.fields dd { margin: 0; font-size: 16px; line-height: 1.5; color: var(--bone); }
+.fields dd.num { display: flex; align-items: center; gap: 8px; }
+.to { color: var(--ash-text); }
+
+/* below the tree's width it scrolls, so say so.
+   simplification: tied to the current epoch count; swap for @container scroll-state(scrollable: inline) once it ships widely */
+@media (max-width: 1419px) {
+  .hint { display: flex; align-items: center; gap: 8px; margin: 12px 0 0; font-size: 13px; color: var(--ash-text); }
+}

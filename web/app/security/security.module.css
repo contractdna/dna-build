@@ -1,0 +1,19 @@
+/* /security: log rows (ref · finding · status), grouped by kind. */
+
+.list { list-style: none; margin: 0; padding: 0; }
+.item {
+  display: grid; grid-template-columns: 120px minmax(0, 1fr) auto; gap: 10px 32px;
+  padding: 24px 0; border-top: 1px solid var(--rule);
+}
+.item:first-child { border-top: 0; padding-top: 4px; }
+.ref { display: flex; flex-direction: column; gap: 2px; font-size: 13px; color: var(--ash-text); padding-top: 6px; }
+.h3 { margin: 0 0 8px; font: 400 clamp(24px, 2.2vw, 30px)/1.15 var(--karrik); color: var(--bone); }
+.detail { margin: 0; }
+.source { margin: 10px 0 0; font-size: 13px; color: var(--ash-text); }
+.chips { display: flex; flex-direction: column; gap: 4px; align-items: flex-end; }
+
+@media (max-width: 900px) {
+  .item { grid-template-columns: minmax(0, 1fr); gap: 10px; }
+  .ref { flex-direction: row; gap: 12px; padding-top: 0; order: -2; }
+  .chips { flex-direction: row; gap: 18px; align-items: baseline; order: -1; }
+}

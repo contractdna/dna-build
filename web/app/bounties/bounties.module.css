@@ -1,0 +1,41 @@
+/* /bounties: one row per bounty (id · brief + checklist · facts · action). */
+
+.list { list-style: none; margin: 0; padding: 0; }
+.item {
+  display: grid; grid-template-columns: 56px minmax(0, 1fr) 200px 210px; gap: 16px 32px;
+  padding: 28px 0; border-top: 1px solid var(--rule);
+}
+.item:first-child { border-top: 0; padding-top: 4px; }
+.id { font-size: 13px; color: var(--ash-text); padding-top: 8px; }
+.h3 { margin: 0 0 8px; font: 400 clamp(26px, 2.4vw, 32px)/1.1 var(--karrik); color: var(--bone); text-wrap: balance; }
+.request { margin: 0; }
+.h4 { margin: 20px 0 8px; font-weight: 400; font-size: 13px; color: var(--ash-text); }
+
+/* requirements: a hairline dash per item (no implied tracked state) */
+.reqs { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
+.reqs li { position: relative; padding-left: 22px; font-size: 15px; line-height: 1.5; color: var(--silver); }
+.reqs li::before { content: ""; position: absolute; left: 0; top: 0.75em; width: 10px; border-top: 1px solid var(--ash); }
+
+.meta { margin: 0; display: grid; gap: 14px; align-content: start; }
+.meta dt { font-size: 13px; color: var(--ash-text); margin-bottom: 2px; }
+.meta dd { margin: 0; font-size: 14px; color: var(--bone); white-space: nowrap; }
+.reward dd { font: 400 clamp(32px, 2.8vw, 40px)/1 var(--karrik); letter-spacing: -0.02em; }
+
+.act { display: flex; flex-direction: column; align-items: flex-start; gap: 12px; }
+.gate { margin: 0; font-size: 13px; line-height: 1.5; color: var(--ash-text); }
+
+@media (max-width: 1180px) {
+  .item { grid-template-columns: 56px minmax(0, 1fr) 200px; }
+  .act { grid-column: 2; }
+}
+@media (max-width: 900px) {
+  .item { grid-template-columns: minmax(0, 1fr); gap: 16px; }
+  .id { padding-top: 0; }
+  .act { grid-column: auto; }
+  .meta { grid-template-columns: repeat(3, auto); justify-content: start; gap: 12px 28px; align-items: end; }
+}
+@media (max-width: 420px) { .meta { grid-template-columns: repeat(2, auto); } }
+
+/* agent-proposed, unfunded: dimmed until the Safe escrows the reward */
+.item[data-proposed] .h3 { color: var(--silver); }
+.item[data-proposed] .reward dd { color: var(--ash-text); }

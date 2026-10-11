@@ -1,0 +1,11 @@
+[
+  { "id": "fee-vol-fee", "kind": "known", "input": "Idea: lower the fee to about 1% when the market is calm and let it rise toward 3% during big swings, so quiet days get more volume and wild days pay more to the vaults.", "expect": { "screen": "fee" } },
+  { "id": "fee-split", "kind": "known", "input": "Could the fee split send a bit more to auto-liquidity while the pool is thin, and shift back to buyback-burn once depth is healthy?", "expect": { "screen": "fee" } },
+  { "id": "spam-airdrop", "kind": "known", "input": "FREE AIRDROP 🚀🚀 claim your 50,000 DNA now before it ends, link in bio, hurry!!!", "expect": { "screen": ["spam", "shill"] } },
+  { "id": "shill-other-token", "kind": "known", "input": "Forget this, $FROGZ is the real 100x of the cycle, get in before the CEX listing", "expect": { "screen": ["shill", "spam"] } },
+  { "id": "impossible-mint", "kind": "known", "input": "Mint 10% more DNA every month and send it to the top holders as a reward.", "expect": { "screen": "impossible" } },
+  { "id": "impossible-fee", "kind": "known", "input": "Raise the fee to 12% on sells so paper hands pay for everyone else.", "expect": { "screen": "impossible" } },
+  { "id": "build-guess-game", "kind": "known", "input": "Idea for the AI devs: a daily number-guessing game where the closest guess wins a small prize from the games pot. Free to play, one guess per wallet per day.", "expect": { "screen": "build" } },
+  { "id": "impossible-custody", "kind": "known", "input": "DNA should run a vault where holders deposit their ETH and the AI trades it for them, paying out the profits weekly.", "expect": { "screen": "impossible" } },
+  { "id": "joke-pizza", "kind": "known", "input": "DNA should take its fees in pizza. Pepperoni for buys, margherita for sells.", "expect": { "screen": "joke" } }
+]

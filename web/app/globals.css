@@ -1,0 +1,48 @@
+/* DNA identity (the homepage's world): deep space, cool white type, Karrik everywhere, colour only to mean a topic.
+   The token names predate the rebrand and are kept so every page re-themes in one place:
+   --ink = page background, --bone = primary text, --blood = the living AI (now teal). */
+:root {
+  /* DNA pointer (hotspot = the arrow tip); the warm one marks what can be clicked. Touch devices never show it. */
+  --cursor: url("/cursor.svg") 2 2, auto;
+  --cursor-link: url("/cursor-link.svg") 2 2, pointer;
+  --ink: #05080a;     /* page background */
+  --bone: #eef3f2;    /* primary text */
+  --silver: #b8c4c3;  /* secondary text */
+  --ash-text: #7f8d8c; /* small labels: 5.8:1 on ink */
+  --ash: #3a4648;     /* hairlines and marks only */
+  --rule: rgba(255, 255, 255, 0.12);
+  --blood: #4fd6c8;   /* the living AI and "test running" marks */
+  /* topic colours: one meaning each, never decoration */
+  --teal: #4fd6c8; --violet: #8a5cf0; --lilac: #cdb6ff; --rose: #ff86bb; --coral: #ff6f5e; --amber: #ffc06b;
+  --karrik: var(--font-karrik), ui-sans-serif, system-ui, sans-serif;
+  --gutter: clamp(16px, 4vw, 56px);
+  color-scheme: dark;
+}
+
+* { box-sizing: border-box; }
+html, body { margin: 0; background: var(--ink); color: var(--bone); }
+html { -webkit-text-size-adjust: 100%; scrollbar-color: var(--ash) transparent; scrollbar-width: thin; }
+body {
+  font-family: var(--karrik);
+  font-size: 16px;
+  line-height: 1.6;
+  font-variant-numeric: tabular-nums lining-nums;
+  font-synthesis: none; /* Karrik ships one weight: never fake bold */
+  -webkit-font-smoothing: antialiased;
+  overflow-x: hidden;
+}
+a { color: inherit; text-decoration: none; }
+button { font: inherit; color: inherit; background: none; border: 0; padding: 0; cursor: var(--cursor-link); }
+:focus-visible { outline: 1px solid var(--bone); outline-offset: 3px; }
+::selection { background: var(--bone); color: var(--ink); }
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation-duration: 0.01ms !important; animation-iteration-count: 1 !important; transition-duration: 0.01ms !important; }
+}
+
+.sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0; }
+
+html { cursor: var(--cursor); }
+a, button, summary, label[for], select, [role="button"] { cursor: var(--cursor-link); }
+input, textarea, [contenteditable="true"] { cursor: text; }
+

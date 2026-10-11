@@ -1,0 +1,16 @@
+{
+  "name": "param-split",
+  "version": "v1",
+  "kind": "SplitPolicy",
+  "author": "DNA",
+  "review": "internal",
+  "risk": "low",
+  "summary": "Routes project fees by its params (buyback-burn, auto-liquidity, treasury, games), each inside FeeVault's bounds. Params that don't add up to 100% fall back to 35/30/25/10. A rollback falls back to FeeVault's immutable 35/35/30/0: games off.",
+  "killConditions": ["any destination outside its bounds"],
+  "params": [
+    { "key": "buyback (bps)" },
+    { "key": "auto-liquidity (bps)" },
+    { "key": "treasury (bps)" },
+    { "key": "games (bps)" }
+  ]
+}

@@ -1,0 +1,19 @@
+{
+  "spec": "A free game: each click starts or extends a one-hour round; when a round runs out, anyone settles it and the last clicker is owed 10% of the game's free balance.",
+  "specSha256": "e74bf32d34395bc04b0fa5cf8455dab4ed95f2d57a4c7cf6b58a79b3c6f7c25c",
+  "interface": [
+    "click()",
+    "settle()",
+    "leader()",
+    "deadline()",
+    "ROUND()",
+    "PRIZE_BPS()"
+  ],
+  "files": [
+    "contracts/src/games/lastclick/LastClick.sol",
+    "contracts/test/games/lastclick/LastClick.t.sol",
+    "web/app/g/lastclick/page.tsx",
+    "web/app/g/lastclick/game.json",
+    "web/app/g/lastclick/page.module.css"
+  ]
+}

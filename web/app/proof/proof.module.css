@@ -1,0 +1,34 @@
+/* /proof: claims with their check, the in-browser verifier, the release table, the log viewer. */
+
+.claims { list-style: none; margin: 0; padding: 0; display: grid; gap: 0; }
+.claim { display: grid; grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr); gap: 10px 40px; padding: 22px 0; border-top: 1px solid var(--rule); }
+.claim:first-child { border-top: 0; padding-top: 4px; }
+.claimText { margin: 0; font-size: 17px; line-height: 1.55; color: var(--bone); text-wrap: pretty; }
+.how { margin: 0; font-size: 14px; line-height: 1.6; color: var(--silver); }
+
+.run { display: grid; gap: 22px; justify-items: start; }
+.steps { list-style: none; margin: 0; padding: 0; width: 100%; }
+.step { display: grid; grid-template-columns: 76px minmax(0, 1fr); gap: 16px; padding: 12px 0; border-top: 1px solid var(--rule); font-size: 15px; line-height: 1.5; color: var(--silver); }
+.mark { font-size: 12px; letter-spacing: .08em; text-transform: uppercase; color: var(--ash-text); padding-top: 2px; }
+.step[data-status="pass"] .mark { color: var(--blood); }
+.step[data-status="fail"] .mark, .fail { color: var(--coral); }
+.detail { display: block; margin-top: 4px; font-size: 13px; color: var(--ash-text); overflow-wrap: anywhere; }
+.fail { margin: 0; font-size: 14px; }
+
+.hash { font-size: 14px; color: var(--bone); overflow-wrap: anywhere; }
+.pending { color: var(--ash-text); }
+
+.form { display: grid; gap: 4px; width: min(100%, 520px); }
+.row { display: flex; gap: 12px; }
+.record { display: grid; gap: 18px; width: 100%; }
+.body { margin: 0; max-height: 420px; overflow: auto; padding: 18px; font: 13px/1.55 ui-monospace, SFMono-Regular, Menlo, monospace; color: var(--silver); background: #0a0f12; border: 1px solid var(--rule); white-space: pre-wrap; overflow-wrap: anywhere; }
+
+.list { margin: 0; padding-left: 1.1em; display: grid; gap: 12px; font-size: 16px; line-height: 1.6; color: var(--silver); max-width: 70ch; }
+.list strong { color: var(--bone); font-weight: 400; }
+.notice { margin: 0; max-width: 70ch; padding: 20px 22px; font-size: 15px; line-height: 1.65; color: var(--silver); border: 1px solid var(--rule); border-left: 2px solid var(--blood); }
+.cmd { display: block; margin-top: 12px; padding: 12px 14px; font: 13px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace; color: var(--bone); background: #0a0f12; overflow-x: auto; white-space: pre; }
+
+@media (max-width: 900px) {
+  .claim { grid-template-columns: minmax(0, 1fr); }
+  .row { flex-direction: column; }
+}

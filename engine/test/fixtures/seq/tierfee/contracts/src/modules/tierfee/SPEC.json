@@ -1,0 +1,30 @@
+{
+  "spec": "A fee module that charges a bigger swap one or two steps more: a base fee, one step at a tier size and two at four times it, capped.",
+  "specSha256": "491dbf217cf70f714f6eef2d7401f4d9fef3b46d8aac35c9773f2b2898e39e0e",
+  "module": "fee",
+  "interface": [],
+  "bounds": {
+    "min": [
+      "10000",
+      "0",
+      "10000",
+      "100000000000000000"
+    ],
+    "max": [
+      "35000",
+      "5000",
+      "35000",
+      "10000000000000000000"
+    ],
+    "start": [
+      "20000",
+      "5000",
+      "35000",
+      "1000000000000000000"
+    ]
+  },
+  "files": [
+    "contracts/src/modules/tierfee/TierFee.sol",
+    "contracts/test/modules/tierfee/TierFee.t.sol"
+  ]
+}

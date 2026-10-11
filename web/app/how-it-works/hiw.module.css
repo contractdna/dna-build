@@ -1,0 +1,85 @@
+/* /how-it-works: the homepage's story for people who want it written down. The loop as a strand of beads, the rules as
+   a spec sheet of big values, the fee as one line and one bar, the games as rows, the checks as links. */
+
+/* ---------- the loop ---------- */
+.hook { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.15fr); gap: 16px clamp(32px, 5vw, 80px); align-items: end; margin-bottom: clamp(44px, 7vh, 72px); }
+.hookLead { margin: 0; font: 400 clamp(34px, 4.2vw, 64px)/0.95 var(--karrik); text-transform: uppercase; color: var(--bone); text-wrap: balance; }
+.hookText { margin: 0; max-width: 54ch; font-size: 16px; line-height: 1.65; color: var(--silver); text-wrap: pretty; }
+
+.loop { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)) minmax(0, 1.3fr); gap: 0 clamp(16px, 2vw, 28px); }
+.loop > li { position: relative; display: flex; flex-direction: column; gap: 10px; padding-top: 34px; min-width: 0; }
+/* the strand: one hairline through every stage, a glowing bead in the stage's colour */
+.loop > li::before { content: ""; position: absolute; top: 8px; left: 0; right: calc(-1 * clamp(16px, 2vw, 28px)); height: 1px; background: var(--rule); }
+.loop > li:last-child::before { right: 0; background: linear-gradient(90deg, var(--rule), transparent); }
+.loop > li::after { content: ""; position: absolute; top: 3px; left: 0; width: 11px; height: 11px; border-radius: 50%; background: var(--c, var(--bone)); box-shadow: 0 0 14px var(--c, var(--bone)); }
+.verdict { --c: var(--bone); }
+.step { font-size: 12px; letter-spacing: .08em; color: var(--ash-text); }
+.stage { margin: 0; font: 400 clamp(20px, 1.7vw, 26px)/1.05 var(--karrik); text-transform: uppercase; color: var(--bone); }
+.time { align-self: flex-start; padding: 2px 8px; border: 1px solid var(--rule); font-size: 12px; color: var(--c); white-space: nowrap; }
+.stageText { margin: 0; font-size: 14px; line-height: 1.6; color: var(--silver); text-wrap: pretty; }
+.fork { display: grid; gap: 12px; }
+.fork p { margin: 0; display: grid; gap: 4px; padding: 12px 14px; border: 1px solid var(--rule); font-size: 14px; line-height: 1.55; color: var(--silver); }
+.fork b { font: 400 18px/1 var(--karrik); text-transform: uppercase; }
+.fork [data-kept] b { color: var(--teal); }
+.fork [data-killed] b { color: var(--rose); }
+.foot { margin: 32px 0 0; max-width: 72ch; font-size: 14px; line-height: 1.6; color: var(--ash-text); text-wrap: pretty; }
+
+/* ---------- the rules: a spec sheet ---------- */
+.rules { margin: 0; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 0 clamp(24px, 4vw, 64px); }
+.rules div { display: grid; gap: 10px; align-content: start; padding: 22px 0 26px; border-top: 1px solid var(--rule); }
+.rules dt { font: 400 clamp(40px, 4.6vw, 72px)/0.95 var(--karrik); text-transform: uppercase; color: var(--bone); }
+.rules dd { margin: 0; max-width: 34ch; font-size: 15px; line-height: 1.55; color: var(--silver); }
+
+/* ---------- fees ---------- */
+.feeText { margin: 28px 0 22px; max-width: 66ch; font-size: 15px; line-height: 1.65; color: var(--silver); }
+.split { display: flex; gap: 3px; height: 10px; }
+.split span { background: var(--c); box-shadow: 0 0 16px color-mix(in srgb, var(--c) 45%, transparent); }
+.splitKey { list-style: none; margin: 18px 0 0; padding: 0; display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 18px clamp(16px, 3vw, 40px); }
+.splitKey li { display: grid; align-content: start; gap: 4px; font-size: 13px; line-height: 1.5; color: var(--silver); }
+.splitKey b { font: 400 clamp(26px, 2.4vw, 36px)/1 var(--karrik); color: var(--c); }
+
+/* ---------- the games: one row each ---------- */
+.games { list-style: none; margin: 0; padding: 0; }
+.games > li { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 2.1fr); gap: 14px clamp(24px, 4vw, 64px); padding: 26px 0 30px; border-top: 1px solid var(--rule); }
+.games > li:first-child { border-top: 0; padding-top: 0; }
+.gameName { margin: 0; display: flex; align-items: baseline; gap: 12px; font: 400 clamp(24px, 2.2vw, 34px)/1 var(--karrik); text-transform: uppercase; color: var(--bone); }
+.gameName::before { content: ""; flex: none; width: 8px; height: 8px; background: var(--c); box-shadow: 0 0 12px var(--c); transform: translateY(-.15em); }
+.gameBody { display: grid; gap: 14px; justify-items: start; }
+.facts { list-style: none; margin: 0; padding: 0; display: flex; flex-wrap: wrap; gap: 8px; }
+.facts li { padding: 3px 10px; border: 1px solid color-mix(in srgb, var(--c) 45%, transparent); font-size: 12px; letter-spacing: .02em; color: var(--bone); }
+.gameText { margin: 0; max-width: 64ch; font-size: 15px; line-height: 1.65; color: var(--silver); text-wrap: pretty; }
+.go { font-size: 12px; letter-spacing: .06em; text-transform: uppercase; color: var(--ash-text); transition: color .3s ease; }
+.go:hover { color: var(--bone); }
+
+/* ---------- checks: link rows ---------- */
+.checks { list-style: none; margin: 0; padding: 0; }
+.checks a { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 2.1fr); gap: 8px clamp(24px, 4vw, 64px); padding: 20px 0; border-top: 1px solid var(--rule); transition: background-color .3s ease; }
+.checks li:first-child a { border-top: 0; }
+.checkName { font: 400 clamp(20px, 1.7vw, 26px)/1.1 var(--karrik); text-transform: uppercase; color: var(--bone); }
+.checkText { font-size: 15px; line-height: 1.6; color: var(--silver); transition: color .3s ease; }
+.checks a:hover .checkText { color: var(--bone); }
+
+.risk { margin: 0; max-width: 70ch; font-size: 16px; line-height: 1.65; color: var(--silver); text-wrap: pretty; }
+.next { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 36px; }
+
+@media (max-width: 1100px) {
+  .loop { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 36px clamp(16px, 3vw, 40px); }
+  .loop > li::before { right: 0; }
+  .verdict { grid-column: 1 / -1; }
+  .fork { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+@media (max-width: 900px) {
+  .hook { grid-template-columns: 1fr; }
+  .rules { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .splitKey { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .games > li, .checks a { grid-template-columns: 1fr; }
+}
+@media (max-width: 600px) {
+  /* the strand runs down the left edge */
+  .loop { grid-template-columns: 1fr; gap: 0; }
+  .loop > li { padding: 0 0 30px 30px; }
+  .loop > li::before { top: 10px; bottom: 0; left: 5px; right: auto; width: 1px; height: auto; }
+  .loop > li:last-child::before { background: linear-gradient(180deg, var(--rule), transparent); }
+  .fork { grid-template-columns: 1fr; }
+  .rules { grid-template-columns: 1fr; }
+}

@@ -1,0 +1,5 @@
+# binary media: release assets pinned in media/release.sha256, fetched by scripts/fetch-media.sh
+media/dna-logo.mp4
+media/plates/*.jpg
+media/references/
+media/**/*.part

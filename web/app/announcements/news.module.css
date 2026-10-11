@@ -1,0 +1,44 @@
+/* /announcements: a terminal. The feed sits on a near-solid panel so every row reads at full contrast. Monospace here
+   is the data, not a costume. */
+.main { --mono: ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, monospace; }
+
+.page > header :is(h1, p) { text-shadow: 0 1px 14px var(--ink), 0 0 4px var(--ink); }
+
+.term { position: relative; font: 14px/1.6 var(--mono); color: var(--silver);
+  background: rgb(5 8 10 / .94); border: 1px solid rgb(79 214 200 / .32);
+  box-shadow: 0 30px 80px -20px rgb(0 0 0 / .9), 0 0 60px -30px rgb(79 214 200 / .35); }
+.bar { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 6px 24px; padding: 12px 18px; border-bottom: 1px solid rgb(79 214 200 / .18); }
+.cmd { margin: 0; font: inherit; color: var(--bone); }
+.host { color: var(--teal); }
+.meta { display: inline-flex; flex-wrap: wrap; align-items: baseline; gap: 6px 14px; font-size: 12px; color: var(--ash-text); }
+.stats { display: flex; flex-wrap: wrap; gap: 4px 22px; margin: 0; padding: 10px 18px; border-bottom: 1px solid var(--rule); font-size: 12px; color: var(--ash-text); }
+.stats b { font-weight: 400; color: var(--teal); }
+
+.feed { list-style: none; margin: 0; padding: 10px 0; }
+.row { display: grid; grid-template-columns: 14px 98px 124px minmax(0, 1fr) auto; gap: 0 14px; align-items: baseline; padding: 7px 18px; animation: type .5s steps(6) both; }
+.row:hover { background: rgb(79 214 200 / .05); }
+.row:first-child .what { color: var(--bone); }
+.prompt { color: var(--teal); }
+.time { color: var(--ash-text); white-space: nowrap; }
+.tag { justify-self: start; padding: 0 6px; font-size: 12px; color: var(--c); border: 1px solid color-mix(in srgb, var(--c) 40%, transparent); }
+.tag { --c: var(--silver); } /* priority 1 money, 2 vote / mystery, 3 test, 4 update */
+.tag[data-k="1"] { --c: var(--amber); }
+.tag[data-k="2"] { --c: var(--lilac); }
+.tag[data-k="3"] { --c: var(--teal); }
+.what { color: var(--silver); overflow-wrap: anywhere; }
+.links { display: inline-flex; gap: 14px; white-space: nowrap; }
+.links a { display: inline-flex; align-items: center; gap: 5px; color: var(--teal); text-decoration: underline; text-decoration-color: rgb(79 214 200 / .35); text-underline-offset: 3px; }
+.links a:hover { text-decoration-color: var(--teal); }
+.empty { margin: 0; padding: 18px; color: var(--silver); }
+.wait { display: flex; align-items: center; gap: 14px; margin: 0; padding: 10px 18px 16px; border-top: 1px solid var(--rule); color: var(--ash-text); }
+.cursor { width: .6em; height: 1.1em; margin-right: -4px; background: var(--teal); animation: blink 1.06s steps(1) infinite; }
+@keyframes blink { 50% { opacity: 0; } }
+@keyframes type { from { clip-path: inset(0 100% 0 0); } }
+
+@media (max-width: 760px) {
+  .term { margin-inline: calc(-1 * var(--gutter) + 8px); font-size: 13px; }
+  .row { grid-template-columns: 14px auto minmax(0, 1fr); gap: 2px 10px; padding: 10px 14px; }
+  .what { grid-column: 2 / -1; }
+  .links { grid-column: 2 / -1; }
+  .bar, .stats, .wait { padding-inline: 14px; }
+}

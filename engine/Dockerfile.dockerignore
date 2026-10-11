@@ -1,0 +1,31 @@
+# engine/Dockerfile's build context is the repository root: only what `node src/engine.ts` runs and the game kit go in
+# (no tests, fixtures, scripts or local deps)
+*
+!engine/package.json
+!engine/package-lock.json
+!engine/src
+!engine/migrations
+!engine/modules
+!engine/deployments
+engine/deployments/fork
+!engine/models.json
+!engine/brain
+# a local self-file preview (scripts/brain-context.ts --self); the enclave builds its own from the log
+engine/brain/self.md
+!engine/tryout
+!engine/media
+# the studio (outside the enclave) reads the style references; the enclave never does
+engine/media/references
+# the pin list for scripts/fetch-media.sh; the image carries the verified files themselves
+engine/media/release.sha256
+engine/media/**/*.part
+!contracts/games/foundry.toml
+!contracts/src/games/GameKit.sol
+!contracts/src/games/IGames.sol
+!contracts/src/games/GameFactory.sol
+!contracts/src/games/GameFunder.sol
+!contracts/test/games/GameKitConformance.sol
+!contracts/modules/foundry.toml
+!contracts/src/interfaces/IPolicies.sol
+!contracts/test/modules/ModuleConformance.sol
+!contracts/lib/forge-std/src

@@ -1,0 +1,17 @@
+[
+  {
+    "id": "planted-double-pay", "kind": "planted-bug",
+    "input": { "kind": "verdict", "input": { "spec": "Daily number guess (as approved).", "prBody": "Adds DailyGuess with guess(), settle() and claim(). All tests green.", "gates": { "fuzz": "pass", "invariants": "pass", "forkSim": "pass", "slither": "pass", "aderyn": "pass", "mutation": "fail: planted bug 'claim() does not zero the claim (pays twice)' survived, no test failed", "gas": "pass", "patternBan": "pass", "specDiff": "pass" }, "review": "Looks clean." } },
+    "expect": { "verdict": ["rework", "kill"] }
+  },
+  {
+    "id": "planted-outside-folder", "kind": "planted-bug",
+    "input": { "kind": "verdict", "input": { "spec": "Daily number guess (as approved).", "prBody": "Adds DailyGuess. Also a small helper change in contracts/src/FeeVault.sol for convenience.", "gates": { "fuzz": "pass", "invariants": "pass", "forkSim": "pass", "slither": "pass", "aderyn": "pass", "mutation": "pass", "gas": "pass", "patternBan": "pass", "specDiff": "fail: contracts/src/FeeVault.sol changed (outside the game folder)" }, "review": "The FeeVault change looks harmless." } },
+    "expect": { "verdict": ["rework", "kill"] }
+  },
+  {
+    "id": "clean-build-ships", "kind": "known",
+    "input": { "kind": "verdict", "input": { "spec": "Daily number guess (as approved).", "prBody": "Adds DailyGuess with guess(), settle() and claim() per the spec.", "gates": { "fuzz": "pass", "invariants": "pass", "forkSim": "pass", "slither": "pass", "aderyn": "pass", "mutation": "pass: 14/14 planted bugs caught", "gas": "pass", "patternBan": "pass", "specDiff": "pass" }, "review": "Matches the spec; claims are zeroed before transfer." } },
+    "expect": { "verdict": "ship" }
+  }
+]

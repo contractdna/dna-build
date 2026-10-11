@@ -1,0 +1,76 @@
+.shell {
+  min-height: 100svh;
+  display: grid;
+  grid-template-rows: auto 1fr auto;
+  grid-template-columns: minmax(0, 1fr); /* wide content (tables) scrolls inside its wrapper, never widens the page */
+  background: var(--ink);
+}
+.skip { position: absolute; left: 16px; top: -48px; z-index: 30; padding: 8px 12px; background: var(--bone); color: var(--ink); font-size: 13px; }
+.skip:focus { top: 16px; }
+
+/* ---------- header: wordmark, the nav words, one hairline under the row ---------- */
+.header {
+  position: fixed; inset: 0 0 auto; z-index: 10;
+  display: flex; align-items: baseline; gap: clamp(32px, 5vw, 72px);
+  padding: 22px var(--gutter) 18px; font-size: 13px; line-height: 1.4;
+  background: linear-gradient(180deg, rgb(5 8 10 / .95) 80%, rgb(5 8 10 / 0));
+}
+.header::after { content: ""; position: absolute; left: var(--gutter); right: var(--gutter); bottom: 0; height: 1px; background: var(--rule); }
+/* inner pages: on very wide screens the header lines up with the 1240px content column instead of the window edges */
+.shell:not([data-immersive]) .header { padding-inline: max(var(--gutter), calc(50% - 620px + var(--gutter))); }
+.shell:not([data-immersive]) .header::after { left: max(var(--gutter), calc(50% - 620px + var(--gutter))); right: max(var(--gutter), calc(50% - 620px + var(--gutter))); }
+.logo { color: var(--bone); letter-spacing: .3em; }
+.nav { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px 28px; }
+.nav a { position: relative; color: var(--ash-text); transition: color 0.3s ease; }
+.nav a:hover, .nav a[aria-current="page"] { color: var(--bone); }
+.nav a[aria-current="page"]::before { /* current item: a 3×3 bone square, no underline, no box */
+  content: ""; position: absolute; left: -9px; top: 50%; width: 3px; height: 3px; margin-top: -1px; background: var(--bone);
+}
+.menuBtn { display: none; margin-left: auto; color: var(--bone); font-size: 13px; }
+@media (max-width: 760px) {
+  .nav { display: none; }
+  .menuBtn { display: block; }
+}
+/* no JS: the dialog can't open, so keep the nav visible (wrapped) and drop the Menu word */
+:global(html:not(.js)) .nav { display: flex; }
+:global(html:not(.js)) .menuBtn { display: none; }
+@media (max-width: 760px) { :global(html:not(.js)) .header { flex-wrap: wrap; } }
+
+/* ---------- full-screen menu (phones) ---------- */
+.menu {
+  width: 100%; max-width: none; height: 100%; max-height: none; margin: 0; padding: 22px var(--gutter) 40px; border: 0;
+  background: var(--ink); color: var(--bone);
+  flex-direction: column; opacity: 0; transition: opacity 0.4s ease, display 0.4s allow-discrete, overlay 0.4s allow-discrete;
+}
+.menu[open] { display: flex; opacity: 1; }
+@starting-style { .menu[open] { opacity: 0; } }
+.menu::backdrop { background: var(--ink); }
+.menuTop { display: flex; align-items: baseline; padding-bottom: 18px; border-bottom: 1px solid var(--rule); font-size: 13px; }
+.menuTop .menuBtn { display: block; }
+.menuNav { display: grid; gap: 4px; margin-top: auto; }
+.menuNav a { font: 400 44px/1.15 var(--karrik); text-transform: uppercase; color: var(--ash-text); transition: color 0.3s ease; }
+.menuNav a:hover, .menuNav a[aria-current="page"] { color: var(--bone); }
+.menuX { margin-top: 40px; font-size: 13px; color: var(--ash-text); }
+:global(html:has(dialog[open])) { overflow: hidden; }
+
+/* ---------- footer ---------- */
+.footer {
+  display: flex; flex-wrap: wrap; align-items: baseline; gap: 10px 28px;
+  margin-top: 112px; padding: 28px max(var(--gutter), calc(50% - 620px + var(--gutter))) 40px; border-top: 1px solid var(--rule);
+  font-size: 13px; line-height: 1.5; color: var(--ash-text);
+}
+.link { color: var(--bone); text-decoration: underline; text-decoration-color: var(--ash); text-underline-offset: 4px; transition: text-decoration-color 0.3s ease; }
+.link:hover { text-decoration-color: var(--bone); }
+.ca, .sound { display: inline-flex; align-items: center; gap: 8px; color: var(--ash-text); transition: color 0.3s ease; }
+.ca:hover, .sound:hover { color: var(--bone); }
+.sound { margin-left: auto; }
+.stale::before { content: ""; display: inline-block; width: 6px; height: 6px; margin-right: 8px; background: var(--blood); }
+
+/* ---------- immersive (homepage): header floats over the canvas, no footer ---------- */
+.shell[data-immersive] { display: block; }
+.shell[data-immersive] .header { background: none; pointer-events: none; }
+.shell[data-immersive] .header > * { pointer-events: auto; }
+
+/* ---------- intro: chrome waits for the homepage specimen (current homepage only) ---------- */
+.header { transition: opacity 1.2s ease, visibility 0s; }
+:global(.js) .shell[data-intro]:not([data-revealed]) .header { opacity: 0; visibility: hidden; } /* hidden chrome is not focusable */

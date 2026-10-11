@@ -1,0 +1,11 @@
+{
+  "name": "dev-reverting-fee",
+  "version": "v0",
+  "kind": "FeePolicy",
+  "author": "DNA",
+  "review": "internal",
+  "risk": "high",
+  "summary": "Local-only test module that always reverts; exercises the breaker and the permissionless rollback.",
+  "killConditions": ["3 failures within 300 blocks (hook breaker)"],
+  "params": []
+}

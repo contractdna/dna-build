@@ -1,0 +1,9 @@
+[
+  {
+    "id": "2026-10-11-live",
+    "at": "2026-10-11T19:20:00Z",
+    "title": "The site is fully live",
+    "summary": "Every page shows real data from the chain and the AI's signed log, the proof button checks the live enclave in your browser, and the Sequencer page shows what it is doing right now.",
+    "url": "/proof"
+  }
+]

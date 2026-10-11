@@ -1,0 +1,36 @@
+{
+  "about": "Public model registry: role -> model, backup, route and USD per 1M tokens (priceCached = cache read, priceWrite = 5-minute cache write; longPrompt = the rate card for prompts over overTokens input tokens). via: the role's declared route, checked at boot (an xai role must run grok; an openrouter role's model and backup need an OpenRouter id). The route follows the model: every grok call goes to xAI direct (server-side search, web_search / x_search, exists only there), every Claude call through OpenRouter, pinned to Anthropic with no provider fallback; while xAI is down (3 failures in a row, for 10 min) or keyless, a grok call without search goes through OpenRouter pinned to xAI, the same model id. openrouter: our model id -> its OpenRouter id. The backup is the model a swap falls back to; there is no automatic failover. Sources: docs.x.ai/docs/models (grok, checked 2026-10-07), platform.claude.com/docs/en/about-claude/pricing (Claude, checked 2026-10-08), openrouter.ai/api/v1/models (ids, prices and the grok long-prompt rate, checked 2026-10-09). A model with no price, or not listed here, is charged the priciest listed rate. Changes go through a public tryout and a model-change record (docs/MODELS.md).",
+  "openrouter": {
+    "claude-fable-5-1": "anthropic/claude-fable-5.1",
+    "claude-opus-5-5": "anthropic/claude-opus-5.5",
+    "claude-sonnet-5-5": "anthropic/claude-sonnet-5.5",
+    "claude-haiku-5-5": "anthropic/claude-haiku-5.5",
+    "grok-4.7": "x-ai/grok-4.7",
+    "grok-4.3": "x-ai/grok-4.3"
+  },
+  "roles": {
+    "brain": { "model": "claude-fable-5-1", "backup": "claude-opus-5-5", "via": "openrouter", "priceIn": 10, "priceOut": 50, "priceCached": 0.25, "priceWrite": 12.5 },
+    "main": { "model": "grok-4.7", "backup": "grok-4.3", "via": "openrouter", "priceIn": 2, "priceOut": 6, "priceCached": 0.5,
+      "longPrompt": { "overTokens": 200000, "priceIn": 4, "priceOut": 12, "priceCached": 1 } },
+    "research": { "model": "grok-4.7", "backup": "grok-4.3", "via": "xai", "priceIn": 2, "priceOut": 6, "priceCached": 0.5,
+      "longPrompt": { "overTokens": 200000, "priceIn": 4, "priceOut": 12, "priceCached": 1 } },
+    "intake": { "model": "grok-4.7", "backup": "grok-4.3", "via": "openrouter", "priceIn": 2, "priceOut": 6, "priceCached": 0.5,
+      "longPrompt": { "overTokens": 200000, "priceIn": 4, "priceOut": 12, "priceCached": 1 } },
+    "x-voice": { "model": "grok-4.7", "backup": "grok-4.3", "via": "openrouter", "priceIn": 2, "priceOut": 6, "priceCached": 0.5,
+      "longPrompt": { "overTokens": 200000, "priceIn": 4, "priceOut": 12, "priceCached": 1 } },
+    "x-scout": { "model": "grok-4.7", "backup": "grok-4.3", "via": "xai", "priceIn": 2, "priceOut": 6, "priceCached": 0.5,
+      "longPrompt": { "overTokens": 200000, "priceIn": 4, "priceOut": 12, "priceCached": 1 } },
+    "x-audit": { "model": "claude-sonnet-5-5", "backup": "claude-opus-5-5", "via": "openrouter", "priceIn": 2, "priceOut": 10, "priceCached": 0.1, "priceWrite": 2.5 },
+    "redteam": { "model": "claude-opus-5-5", "backup": "claude-fable-5-1", "via": "openrouter", "priceIn": 4, "priceOut": 20, "priceCached": 0.2, "priceWrite": 5 },
+    "gate": { "model": "claude-fable-5-1", "backup": "claude-opus-5-5", "via": "openrouter", "priceIn": 10, "priceOut": 50, "priceCached": 0.25, "priceWrite": 12.5 },
+    "narrate": { "model": "grok-4.3", "backup": "grok-4.7", "via": "openrouter", "priceIn": 1.25, "priceOut": 2.5, "priceCached": 0.2,
+      "longPrompt": { "overTokens": 200000, "priceIn": 2.5, "priceOut": 5, "priceCached": 0.4 } },
+    "vision": { "model": "claude-opus-5-5", "backup": "claude-sonnet-5-5", "via": "openrouter", "priceIn": 4, "priceOut": 20, "priceCached": 0.2, "priceWrite": 5 },
+    "dev-lead": { "model": "claude-opus-5-5", "backup": "claude-sonnet-5-5", "via": "openrouter", "priceIn": 4, "priceOut": 20, "priceCached": 0.2, "priceWrite": 5 },
+    "dev-worker": { "model": "claude-haiku-5-5", "backup": "claude-sonnet-5-5", "via": "openrouter", "priceIn": 0.1, "priceOut": 0.5, "priceCached": 0.01, "priceWrite": 0.125,
+      "longPrompt": { "overTokens": 100000, "priceIn": 0.5, "priceOut": 2.5, "priceCached": 0.05, "priceWrite": 0.625 } },
+    "dev-tester": { "model": "claude-sonnet-5-5", "backup": "claude-opus-5-5", "via": "openrouter", "priceIn": 2, "priceOut": 10, "priceCached": 0.1, "priceWrite": 2.5 },
+    "dev-fixer": { "model": "claude-sonnet-5-5", "backup": "claude-opus-5-5", "via": "openrouter", "priceIn": 2, "priceOut": 10, "priceCached": 0.1, "priceWrite": 2.5 },
+    "dev-review": { "model": "claude-opus-5-5", "backup": "claude-fable-5-1", "via": "openrouter", "priceIn": 4, "priceOut": 20, "priceCached": 0.2, "priceWrite": 5 }
+  }
+}

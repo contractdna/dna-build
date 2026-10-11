@@ -1,0 +1,73 @@
+{
+  "via": "openrouter",
+  "request": {
+    "model": "x-ai/grok-4.3",
+    "max_tokens": 800,
+    "messages": [
+      {
+        "role": "system",
+        "content": "sha256:6343b0a3ea91b4493d0061a560379f8f757edadaab4f3931a227d42ef5d6c2f8"
+      },
+      {
+        "role": "user",
+        "content": "{\"canaries\":0,\"date\":\"2026-10-05\",\"ideas\":0,\"level\":5,\"projectEth\":0.12,\"redTeam\":0,\"rejected\":0,\"simulated\":0,\"swaps\":6,\"volumeEth\":6}"
+      }
+    ],
+    "response_format": {
+      "type": "json_schema",
+      "json_schema": {
+        "name": "output",
+        "strict": true,
+        "schema": {
+          "type": "object",
+          "properties": {
+            "summary": {
+              "type": "string"
+            },
+            "learned": {
+              "type": "string"
+            },
+            "tomorrow": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "summary",
+            "learned",
+            "tomorrow"
+          ],
+          "additionalProperties": false
+        }
+      }
+    },
+    "reasoning": {
+      "effort": "low"
+    },
+    "provider": {
+      "order": [
+        "xai"
+      ],
+      "allow_fallbacks": false
+    }
+  },
+  "response": {
+    "synthetic": true,
+    "provider": "xAI",
+    "model": "x-ai/grok-4.3",
+    "object": "chat.completion",
+    "choices": [
+      {
+        "index": 0,
+        "finish_reason": "stop",
+        "message": {
+          "role": "assistant",
+          "content": "{\"summary\":\"Synthetic journal summary.\",\"learned\":\"Synthetic: nothing beyond the counts.\",\"tomorrow\":\"Synthetic: observe, then hypothesize.\"}"
+        }
+      }
+    ],
+    "usage": {
+      "prompt_tokens": 100,
+      "completion_tokens": 50
+    }
+  }
+}

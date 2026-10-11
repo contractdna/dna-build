@@ -1,0 +1,33 @@
+# Sequencer modules: the profile a fee or split module is built and tested with (forge --root modules).
+# Separate from foundry.toml so nothing here moves a launch address. The enclave builds with its own copy of this file,
+# of src/interfaces/IPolicies.sol and of test/modules/ModuleConformance.sol; a module's PR can't change any of them.
+# No ffi, no file access, no metadata tail (the codehash proposed to the Safe is computed from these bytes).
+[profile.default]
+src = "../src/modules"
+test = "../test/modules"
+out = "out"
+cache_path = "cache"
+libs = ["../lib"]
+remappings = ["forge-std/=../lib/forge-std/src/"]
+solc_version = "0.8.26"
+evm_version = "cancun"
+optimizer = true
+optimizer_runs = 800
+bytecode_hash = "none"
+cbor_metadata = false
+ffi = false
+fs_permissions = []
+# forge compiles tests as written: with dynamic test linking it rewrites `new <source contract>(...)` in a test into a
+# cheatcode call, and the gates would then read that rewrite (its cheatcode address, shifted lines) as the author's code
+dynamic_test_linking = false
+
+[fuzz]
+runs = 1000
+
+[invariant]
+runs = 64
+depth = 64
+fail_on_revert = true
+
+[lint]
+lint_on_build = false

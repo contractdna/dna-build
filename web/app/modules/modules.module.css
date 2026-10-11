@@ -1,0 +1,74 @@
+/* /modules: page-specific layout on top of _ui/ui.module.css. */
+
+.stats { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 32px; }
+
+/* lifecycle: four hairline-ruled columns left to right */
+.pipeline { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 32px; }
+.stage { position: relative; min-width: 0; padding-top: 16px; border-top: 1px solid var(--ash); }
+.stageHead { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
+.stageName { margin: 0; font: 400 28px/1.1 var(--karrik); color: var(--silver); }
+.stage[data-filled] .stageName { color: var(--bone); }
+.arrow { position: absolute; right: -21px; top: -5px; width: 10px; height: 10px; color: var(--ash-text); }
+.stageNote { margin: 10px 0 16px; font-size: 15px; line-height: 1.6; color: var(--silver); text-wrap: pretty; }
+.stageList { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; justify-items: start; }
+.empty { margin: 0; font-size: 13px; color: var(--ash-text); }
+
+/* module link: underlined word; the selected one gets the bone square */
+.modLink {
+  position: relative; display: inline-flex; gap: 6px; align-items: baseline; font-size: 15px; color: var(--bone);
+  text-decoration: underline; text-decoration-color: var(--ash); text-underline-offset: 4px; transition: text-decoration-color 0.3s ease;
+}
+.modLink:hover { text-decoration-color: var(--bone); }
+.modLink[aria-current="true"]::before { content: ""; position: absolute; left: -9px; top: 50%; width: 3px; height: 3px; margin-top: -1px; background: var(--bone); }
+.stageList .modLink, .laneList .modLink { margin-left: 10px; }
+.registry td { vertical-align: top; }
+.registry .modLink { margin-left: 10px; font-size: 14px; }
+
+/* rejected / rolled back: separate lane, first-class */
+.lane { margin-top: 32px; padding-top: 16px; border-top: 1px dashed var(--ash); }
+.laneList { list-style: none; margin: 14px 0 0; padding: 0; display: grid; gap: 12px; }
+.laneList > li { display: grid; justify-items: start; grid-template-columns: 12px auto auto minmax(0, 1fr); align-items: baseline; gap: 12px; }
+.laneNote { font-size: 15px; color: var(--silver); line-height: 1.5; }
+.x { color: var(--ash-text); }
+
+.wide { min-width: 220px; }
+.plain { list-style: none; margin: 0; padding: 0; display: grid; gap: 4px; }
+
+.copy { display: inline-flex; align-items: center; gap: 8px; color: var(--silver); font-size: 14px; text-align: left; word-break: break-all; transition: color 0.3s ease; }
+.copy svg { flex: none; }
+.copy:hover { color: var(--bone); }
+
+/* selected module */
+.detail { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 48px; }
+.detailTitle { margin: 0 0 12px; font: 400 44px/1.05 var(--karrik); color: var(--bone); }
+.chips { display: flex; flex-wrap: wrap; align-items: baseline; gap: 10px 18px; margin-bottom: 16px; font-size: 13px; }
+.facts { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 10px 20px; margin: 24px 0 0; font-size: 14px; }
+.facts dt { font-size: 13px; color: var(--ash-text); }
+.facts dd { margin: 0; min-width: 0; color: var(--silver); }
+.subhead { margin: 0 0 12px; font-weight: 400; font-size: 13px; color: var(--ash-text); }
+.params { list-style: none; margin: 0 0 32px; padding: 0; display: grid; gap: 16px; font-size: 14px; }
+.params > li { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; gap: 6px 16px; align-items: baseline; color: var(--silver); }
+.bound { grid-column: 1 / -1; width: 100%; height: 10px; overflow: visible; }
+.track { stroke: var(--ash); stroke-width: 1; }
+.marker { stroke: var(--bone); stroke-width: 2; }
+.kills { margin: 0; padding-left: 18px; display: grid; gap: 6px; font-size: 15px; color: var(--silver); }
+
+/* store */
+.store { display: grid; grid-template-columns: minmax(0, 5fr) minmax(0, 7fr); gap: 48px; align-items: start; }
+.storeCopy { display: grid; gap: 14px; }
+.storeCopy p { margin: 0; }
+
+@media (max-width: 1100px) {
+  .pipeline { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .arrow { display: none; }
+  .store { grid-template-columns: 1fr; }
+}
+@media (max-width: 900px) {
+  .stats { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .detail { grid-template-columns: 1fr; gap: 32px; }
+  .laneList > li { grid-template-columns: 12px auto auto; }
+  .laneNote { grid-column: 2 / -1; }
+}
+@media (max-width: 560px) { .pipeline { grid-template-columns: 1fr; } }
+
+.subhead + .empty { margin-bottom: 32px; }

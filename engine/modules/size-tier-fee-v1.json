@@ -1,0 +1,16 @@
+{
+  "name": "size-tier-fee",
+  "version": "v1",
+  "kind": "FeePolicy",
+  "author": "DNA",
+  "review": "internal",
+  "risk": "medium",
+  "summary": "The fee steps up with the trade's size in ETH: base, plus one step at each of T, 4T and 16T, capped.",
+  "killConditions": ["3 failures within 300 blocks (hook breaker: anyone may roll the fee route back)"],
+  "params": [
+    { "key": "base fee", "unit": "pips" },
+    { "key": "step per tier", "unit": "pips" },
+    { "key": "fee cap", "unit": "pips" },
+    { "key": "first tier T (wei of ETH)" }
+  ]
+}

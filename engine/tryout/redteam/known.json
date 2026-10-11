@@ -1,0 +1,17 @@
+[
+  {
+    "id": "shadow-small-step", "kind": "known",
+    "input": { "stage": "shadow", "candidate": { "plate": "B", "params": [21000, 10000, 35000] }, "sim": { "revenueDeltaPct": 1.8, "retentionDeltaPct": -0.3, "capDeltaPct": 0.2, "swaps": 4210 }, "gates": "passed at queue time", "quotedHypothesis": "A 0.1 point higher base on plate B raises project fees at today's volatility without losing swaps.", "context": {} },
+    "expect": { "verdict": "pass" }
+  },
+  {
+    "id": "cap-pinned", "kind": "known",
+    "input": { "stage": "shadow", "candidate": { "plate": "C", "params": [30000, 18000, 35000] }, "sim": { "revenueDeltaPct": 9.5, "retentionDeltaPct": -31, "capDeltaPct": 64, "swaps": 3900 }, "gates": "passed at queue time", "quotedHypothesis": "A higher base and the top multiplier earn more per swap.", "context": {} },
+    "expect": { "verdict": "block" }
+  },
+  {
+    "id": "thin-evidence", "kind": "known",
+    "input": { "stage": "shadow", "candidate": { "plate": "A", "params": [12000, 1000, 35000] }, "sim": { "revenueDeltaPct": 14, "retentionDeltaPct": 6, "capDeltaPct": 0, "swaps": 6 }, "gates": "passed at queue time", "quotedHypothesis": "A much lower base wins enough volume to raise fee revenue.", "context": {} },
+    "expect": { "verdict": "block" }
+  }
+]

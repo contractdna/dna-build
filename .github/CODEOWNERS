@@ -1,0 +1,68 @@
+# Every path is owned by the project account (its review is required) except what the AI dev team's pull requests may
+# change: a game's own folders, a module's own folders, the site's pages and components, and the public docs. The
+# enclave refuses any build that reaches further (docs/sequencer.md); an engine change is always the owners' to merge.
+# The last matching line wins.
+* @contractdna
+
+# games
+/contracts/src/games/*/
+/contracts/test/games/*/
+/web/app/g/*/
+
+# modules
+/contracts/src/modules/*/
+/contracts/test/modules/*/
+
+# site changes: pages, components, CSS modules and plain modules under web/app/, and the public docs
+/web/app/**/*.tsx
+/web/app/**/*.ts
+/web/app/**/*.module.css
+/docs/*.md
+
+# re-owned inside the unowned paths: the reference game, the game templates and the page template, the shared shell and scene, the data
+# layer, the API, the proof, security and Sequencer pages, the play origin's own files, every layout and other Next
+# special file, the docs on verifying, security, operations and the Sequencer
+/contracts/src/games/example/ @contractdna
+/contracts/test/games/example/ @contractdna
+/web/app/g/_template/ @contractdna
+/contracts/src/games/daily-checkin/ @contractdna
+/contracts/test/games/daily-checkin/ @contractdna
+/web/app/g/_template-daily-checkin/ @contractdna
+/contracts/src/games/last-buyer/ @contractdna
+/contracts/test/games/last-buyer/ @contractdna
+/web/app/g/_template-last-buyer/ @contractdna
+/contracts/src/games/raffle/ @contractdna
+/contracts/test/games/raffle/ @contractdna
+/web/app/g/_template-raffle/ @contractdna
+/web/app/g/*.ts @contractdna
+/web/app/g/*.tsx @contractdna
+/web/app/_ui/ @contractdna
+/web/app/_dna/ @contractdna
+/web/app/_data/ @contractdna
+/web/app/_live/ @contractdna
+/web/app/api/ @contractdna
+/web/app/proof/ @contractdna
+/web/app/security/ @contractdna
+/web/app/sequencer/ @contractdna
+/web/app/**/layout.tsx @contractdna
+/web/app/**/template.tsx @contractdna
+/web/app/**/loading.tsx @contractdna
+/web/app/**/error.tsx @contractdna
+/web/app/**/not-found.tsx @contractdna
+/web/app/**/global-error.tsx @contractdna
+/web/app/**/default.tsx @contractdna
+/web/app/**/route.ts @contractdna
+/web/app/**/middleware.ts @contractdna
+/web/app/**/proxy.ts @contractdna
+/web/app/**/instrumentation.ts @contractdna
+/web/app/**/opengraph-image.tsx @contractdna
+/web/app/**/twitter-image.tsx @contractdna
+/web/app/**/icon.tsx @contractdna
+/web/app/**/apple-icon.tsx @contractdna
+/web/app/**/sitemap.ts @contractdna
+/web/app/**/robots.ts @contractdna
+/web/app/**/manifest.ts @contractdna
+/docs/VERIFY.md @contractdna
+/docs/SECURITY-MODEL.md @contractdna
+/docs/OPERATIONS.md @contractdna
+/docs/sequencer.md @contractdna

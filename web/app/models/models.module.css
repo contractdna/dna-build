@@ -1,0 +1,7 @@
+/* /models: the model table. Ids in mono, the provider as a quiet label under each. */
+
+.id { display: block; font: 13px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace; color: var(--bone); white-space: nowrap; }
+.provider { display: block; margin-top: 2px; font-size: 12px; color: var(--ash-text); }
+.none { color: var(--ash-text); }
+.job { min-width: 22ch; max-width: 48ch; }
+.source { margin: 20px 0 0; font-size: 13px; line-height: 1.6; color: var(--ash-text); max-width: 66ch; }

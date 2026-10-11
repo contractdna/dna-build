@@ -1,0 +1,16 @@
+{
+  "about": "SYNTHETIC OpenRouter chat completion (POST /api/v1/chat/completions, header X-OpenRouter-Metadata: enabled), shaped per openrouter.ai/docs api-reference chat (ChatResult, ChatUsage.cost, OpenRouterMetadata), checked 2026-10-09. No real call was made.",
+  "response": {
+    "id": "gen-synthetic-chat",
+    "object": "chat.completion",
+    "created": 1791504000,
+    "model": "x-ai/grok-4.7-20260916",
+    "system_fingerprint": null,
+    "choices": [{ "index": 0, "finish_reason": "stop", "native_finish_reason": "stop", "message": { "role": "assistant", "content": "{\"verdict\":\"block\",\"reason\":\"synthetic\"}", "refusal": null } }],
+    "usage": { "prompt_tokens": 1000, "completion_tokens": 200, "total_tokens": 1200, "prompt_tokens_details": { "cached_tokens": 400 }, "completion_tokens_details": { "reasoning_tokens": 150 }, "cost": 0.0027 },
+    "openrouter_metadata": {
+      "requested": "x-ai/grok-4.7", "strategy": "direct", "region": "iad", "summary": "available=1, selected=xAI", "attempt": 1, "is_byok": false,
+      "endpoints": { "total": 1, "available": [{ "model": "x-ai/grok-4.7", "provider": "xAI", "selected": true }] }
+    }
+  }
+}

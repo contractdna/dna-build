@@ -1,0 +1,33 @@
+/* /treasury: fee explainer, split bars (authored SVG), copyable addresses, limits. */
+
+.explain { margin: 28px 0 0; }
+
+.split { list-style: none; margin: 0; padding: 0; display: grid; gap: 22px; max-width: 880px; }
+.shareHead { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 16px; margin-bottom: 8px; font-size: 15px; }
+.sharePct { font: 400 28px/1 var(--karrik); letter-spacing: -0.02em; color: var(--bone); }
+.bounds { margin-left: auto; font-size: 13px; color: var(--ash-text); }
+.bar { display: block; width: 100%; height: 28px; overflow: visible; }
+.track { stroke: var(--ash); stroke-width: 1; vector-effect: non-scaling-stroke; }
+.range { fill: var(--rule); }
+.now { fill: var(--c, var(--silver)); filter: drop-shadow(0 0 6px var(--c, transparent)); }
+.bracket { fill: none; stroke: var(--ash); stroke-width: 1.2; vector-effect: non-scaling-stroke; }
+.axis { display: flex; justify-content: space-between; max-width: 880px; margin-top: 10px; font-size: 13px; color: var(--ash-text); }
+
+.copy {
+  position: relative; /* contains its sr-only live region, which would otherwise widen the page */
+  display: inline-flex; align-items: center; gap: 8px; min-height: 28px; margin: -7px 0; padding: 0 2px;
+  font-size: 14px; color: var(--silver); transition: color 0.3s ease;
+}
+.copy svg { color: var(--ash-text); transition: color 0.3s ease; }
+.copy:hover, .copy:hover svg { color: var(--bone); }
+
+.limits { margin: 0; display: grid; }
+.limits div { display: flex; justify-content: space-between; gap: 16px; padding: 14px 0; border-bottom: 1px solid var(--rule); font-size: 14px; }
+.limits div:first-child { padding-top: 0; }
+.limits dt { color: var(--silver); }
+.limits dd { margin: 0; color: var(--bone); text-align: right; }
+
+/* flows + limits side by side; minmax(0) so the flows table scrolls in its wrapper instead of widening the track */
+.pair { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 48px; }
+.flat { min-width: 0; }
+@media (max-width: 900px) { .pair { grid-template-columns: minmax(0, 1fr); gap: 0; } }

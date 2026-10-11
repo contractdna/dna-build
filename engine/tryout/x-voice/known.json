@@ -1,0 +1,22 @@
+[
+  {
+    "id": "queued-params", "kind": "known",
+    "input": { "event": { "event": "queued", "op": "SetParams", "plate": "B", "fee": { "basePct": 2.1, "multiplier": 1, "capPct": 3.5 }, "opId": 41 }, "tone": ["quiet confidence", "receipts over vibes"] },
+    "expect": { "postable": true }
+  },
+  {
+    "id": "canary-live", "kind": "known",
+    "input": { "event": { "event": "test_live", "op": "SetCanary", "plate": "A", "fee": { "basePct": 1.6, "multiplier": 0.3, "capPct": 3.5 } }, "tone": ["no theatrics", "dry as usual"] },
+    "expect": { "postable": true }
+  },
+  {
+    "id": "outcome-rolled-back", "kind": "known",
+    "input": { "event": { "event": "outcome", "outcome": "rolled back", "plate": "C", "fee": { "basePct": 2.5, "multiplier": 1.8, "capPct": 3.5 }, "samples": 412, "reason": "a kill condition fired" }, "tone": ["owning the miss"] },
+    "expect": { "postable": true }
+  },
+  {
+    "id": "reply-rules", "kind": "known",
+    "input": { "event": { "event": "reply", "category": "rules_question", "state": { "level": 3, "liveFee": { "basePct": 2, "multiplier": 1, "capPct": 3.5 } } }, "tone": [] },
+    "expect": { "postable": true }
+  }
+]

@@ -1,0 +1,70 @@
+/* /memory: notebook archive + lesson graph rail. */
+
+.layout { display: grid; grid-template-columns: minmax(0, 1fr) 360px; gap: 64px; align-items: start; }
+.rail { position: sticky; top: 24px; }
+
+/* filter: plain words, the current one marked with a bone square */
+.filter { display: grid; gap: 16px; margin-bottom: 28px; }
+.search { position: relative; display: block; }
+.searchIcon { position: absolute; left: 14px; top: 50%; translate: 0 -50%; color: var(--ash-text); pointer-events: none; }
+.searchInput { min-height: 46px; padding-left: 40px; }
+.tabs { display: flex; flex-wrap: wrap; gap: 6px 28px; padding-left: 10px; }
+.tab { position: relative; display: inline-flex; align-items: baseline; gap: 6px; font-size: 13px; color: var(--ash-text); transition: color 0.3s ease; }
+.tab[aria-current] { color: var(--bone); }
+.tab[aria-current]::before { content: ""; position: absolute; left: -9px; top: 50%; width: 3px; height: 3px; margin-top: -1px; background: var(--bone); }
+.tab:hover { color: var(--bone); }
+.count { color: var(--ash-text); }
+
+/* entries */
+.entries { list-style: none; margin: 0; padding: 0; border-top: 1px solid var(--ash); }
+.entry { border-bottom: 1px solid var(--rule); scroll-margin-top: 80px; /* below the fixed header */ }
+.body { padding: 28px 0 32px; min-width: 0; }
+.body[data-fig] { display: grid; grid-template-columns: minmax(0, 1fr) minmax(220px, 300px); gap: 32px; }
+.meta { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px 16px; font-size: 13px; color: var(--silver); }
+.entryTitle { margin: 12px 0 18px; font: 400 clamp(28px, 2.6vw, 36px)/1.1 var(--karrik); color: var(--bone); }
+.fields { display: grid; grid-template-columns: 100px minmax(0, 1fr); gap: 10px 20px; margin: 0; }
+.fields dt { padding-top: 2px; font-size: 13px; color: var(--ash-text); }
+.fields dd { margin: 0; max-width: 62ch; font-size: 16px; line-height: 1.6; color: var(--silver); text-wrap: pretty; }
+.rule { margin-top: 22px; padding: 2px 0 2px 18px; border-left: 1px solid var(--bone); }
+.ruleLabel { font-size: 13px; color: var(--ash-text); }
+.ruleText { margin: 6px 0 0; max-width: 52ch; font: 400 italic 24px/1.3 var(--karrik); color: var(--bone); text-wrap: pretty; }
+.refs { display: flex; flex-wrap: wrap; gap: 6px 18px; margin: 16px 0 0; padding: 0; list-style: none; font-size: 13px; color: var(--ash-text); }
+
+.empty { padding: 32px 0; border-top: 1px solid var(--rule); display: grid; gap: 8px; }
+
+/* figure plate */
+.fig { margin: 0; align-self: start; }
+.figSvg { display: block; width: 100%; height: auto; border: 1px solid var(--rule); }
+.grid { stroke: var(--rule); stroke-width: 1; vector-effect: non-scaling-stroke; }
+.tick { fill: var(--ash-text); font-size: 8px; font-family: var(--karrik); }
+.baseline, .candidate { fill: none; stroke-linejoin: round; vector-effect: non-scaling-stroke; }
+.baseline { stroke: var(--ash); stroke-width: 1; stroke-dasharray: 3 3; }
+.candidate { stroke: var(--bone); stroke-width: 1.4; }
+.figcap { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 14px; margin-top: 10px; font-size: 13px; color: var(--silver); }
+.figNo { color: var(--bone); }
+.key { display: inline-flex; align-items: center; gap: 6px; }
+.keyC, .keyB { display: inline-block; width: 16px; border-top: 1px solid var(--bone); }
+.keyB { border-top: 1px dashed var(--ash); }
+
+/* lesson graph */
+.graph { display: block; width: 100%; height: auto; margin-bottom: 8px; font-family: var(--karrik); }
+.node { fill: var(--ink); stroke: var(--ash); stroke-width: 1; }
+.node[data-failed] { stroke-dasharray: 3 3; }
+.nodeId { fill: var(--bone); font-size: 11px; }
+.nodeTag { fill: var(--ash-text); font-size: 8px; }
+.ruleLine { fill: var(--silver); font-size: 10.5px; }
+.edge { fill: none; stroke: var(--ash); stroke-width: 1; }
+.nextNode { fill: var(--bone); stroke: none; }
+.nextLabel { fill: var(--ink); font-size: 10px; }
+.nextNode ~ .ruleLine { fill: var(--ink); }
+
+@media (max-width: 1100px) {
+  .layout { grid-template-columns: minmax(0, 1fr); gap: 0; }
+  .rail { position: static; }
+  .rail .graph { max-width: 460px; }
+}
+@media (max-width: 760px) { .body[data-fig] { grid-template-columns: minmax(0, 1fr); } }
+@media (max-width: 560px) {
+  .fields { grid-template-columns: minmax(0, 1fr); gap: 2px; }
+  .fields dd { margin-bottom: 12px; }
+}

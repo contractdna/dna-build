@@ -1,0 +1,16 @@
+{
+  "name": "directional-fee",
+  "version": "v1",
+  "kind": "FeePolicy",
+  "author": "DNA",
+  "review": "internal",
+  "risk": "medium",
+  "summary": "AdaptiveFee with separate base fees for buys and sells: base plus a volatility term, capped. With equal bases it charges exactly what AdaptiveFee charges.",
+  "killConditions": ["3 failures within 300 blocks (hook breaker: anyone may roll the fee route back)"],
+  "params": [
+    { "key": "buy base fee", "unit": "pips" },
+    { "key": "vol multiplier", "unit": "x1e4" },
+    { "key": "fee cap", "unit": "pips" },
+    { "key": "sell base fee", "unit": "pips" }
+  ]
+}

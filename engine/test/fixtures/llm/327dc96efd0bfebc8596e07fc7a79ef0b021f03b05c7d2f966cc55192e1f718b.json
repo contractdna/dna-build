@@ -1,0 +1,102 @@
+{
+  "via": "openrouter",
+  "request": {
+    "model": "x-ai/grok-4.7",
+    "max_tokens": 4000,
+    "messages": [
+      {
+        "role": "system",
+        "content": "sha256:a79e7e0d279e70e18b2b334e074c06eddafbb9803a992f4f4ac73ed680cb4246"
+      },
+      {
+        "role": "user",
+        "content": "{\"analytic\":[{\"feePct\":1,\"revenueVsBaseline\":{\"eps0.5\":0.63,\"eps1\":0.874,\"eps2\":1.681}},{\"feePct\":1.5,\"revenueVsBaseline\":{\"eps0.5\":0.804,\"eps1\":0.947,\"eps2\":1.315}},{\"feePct\":2,\"revenueVsBaseline\":{\"eps0.5\":0.948,\"eps1\":0.988,\"eps2\":1.074}},{\"feePct\":2.2,\"revenueVsBaseline\":{\"eps0.5\":1,\"eps1\":1,\"eps2\":1}},{\"feePct\":2.5,\"revenueVsBaseline\":{\"eps0.5\":1.074,\"eps1\":1.015,\"eps2\":0.906}},{\"feePct\":3.5,\"revenueVsBaseline\":{\"eps0.5\":1.29,\"eps1\":1.047,\"eps2\":0.689}}],\"claims\":{\"claims\":[\"Synthetic claim: dynamic-fee hooks raise fees during volatility.\"],\"untrusted\":true},\"pools\":[\"Claus (ETH/CLAUS, Programmable launchpad)\",\"1234 (ETH/1234, EntityHook, same deployer as Claus' agent)\",\"Angstrom USDC/WETH (Sorella Labs)\",\"Angstrom USDT/WETH (Sorella Labs)\"]}"
+      }
+    ],
+    "response_format": {
+      "type": "json_schema",
+      "json_schema": {
+        "name": "output",
+        "strict": true,
+        "schema": {
+          "type": "object",
+          "properties": {
+            "entries": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "title": {
+                    "type": "string"
+                  },
+                  "hypothesis": {
+                    "type": "string"
+                  },
+                  "method": {
+                    "type": "string"
+                  },
+                  "result": {
+                    "type": "string"
+                  },
+                  "futureRule": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "title",
+                  "hypothesis",
+                  "method",
+                  "result",
+                  "futureRule"
+                ],
+                "additionalProperties": false
+              }
+            },
+            "summary": {
+              "type": "string"
+            },
+            "learned": {
+              "type": "string"
+            },
+            "tomorrow": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "entries",
+            "summary",
+            "learned",
+            "tomorrow"
+          ],
+          "additionalProperties": false
+        }
+      }
+    },
+    "provider": {
+      "order": [
+        "xai"
+      ],
+      "allow_fallbacks": false
+    }
+  },
+  "response": {
+    "synthetic": true,
+    "provider": "xAI",
+    "model": "x-ai/grok-4.7",
+    "object": "chat.completion",
+    "choices": [
+      {
+        "index": 0,
+        "finish_reason": "stop",
+        "message": {
+          "role": "assistant",
+          "content": "{\"entries\":[{\"title\":\"Synthetic: dynamic fees on launchpad pools\",\"hypothesis\":\"Synthetic genesis hypothesis.\",\"method\":\"Synthetic: research claims and the analytic table only.\",\"result\":\"Synthetic result: nothing ran on DNA's pool.\",\"futureRule\":\"Observe before any experiment.\"}],\"summary\":\"Synthetic genesis summary.\",\"learned\":\"Synthetic: elasticity is unknown before launch.\",\"tomorrow\":\"Synthetic: launch, then observe.\"}"
+        }
+      }
+    ],
+    "usage": {
+      "prompt_tokens": 100,
+      "completion_tokens": 50
+    }
+  }
+}

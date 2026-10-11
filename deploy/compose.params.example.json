@@ -1,0 +1,18 @@
+{
+  "commit": "TODO: the tagged commit the image was built from (40 hex)",
+  "image": "ghcr.io/contractdna/dna-engine",
+  "imageDigest": "sha256:TODO from the image workflow's engine-image-digest.json",
+  "pagecheckImage": "ghcr.io/contractdna/dna-pagecheck",
+  "pagecheckDigest": "sha256:TODO from the image workflow's pagecheck-image-digest.json",
+  "githubRepo": "TODO: <owner>/<name> of the Sequencer's repository",
+  "seqBot": "TODO: the Sequencer App's bot login, <name>[bot]",
+  "xClientId": "TODO",
+  "xUserId": "TODO",
+  "policyThresholdsSha256": "",
+  "xAiRepliesApproved": true,
+  "llmLaunchAt": "TODO: launch time (ISO, UTC): the LLM spend schedule allows $200/day for 7 days from here, then $100/day",
+  "dstackApp": null,
+  "attestationUrl": null,
+  "measurements": null,
+  "logSigner": null
+}

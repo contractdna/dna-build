@@ -1,0 +1,2 @@
+# hashed byte for byte (specHash = keccak256 of the file): the same bytes on every checkout
+*.json text eol=lf

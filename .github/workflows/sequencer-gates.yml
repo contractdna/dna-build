@@ -1,0 +1,59 @@
+# The Sequencer's gates on a build's pull request (branches seq/*): advice only. The enclave runs the same gates again
+# from its own image on the exact commit and its result decides. This job holds no secret and can't write: the PR's
+# code runs only inside forge (Solidity), the gate code comes from the base commit (trusted/), never from the PR (pr/).
+# No caches (a cache this job wrote could poison a later run).
+name: sequencer-gates
+on:
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  gates:
+    if: startsWith(github.head_ref, 'seq/')
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      # solc 0.8.26+commit.8a97fa7a, linux-amd64 (binaries.soliditylang.org/linux-amd64/list.json)
+      SOLC_SHA256: d5f23436f443edb85d8e76906d12f0a86ce0490e7663a9e608efeb7a93f149ef
+    steps:
+      - name: the gate code, from the base commit
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with: { ref: "${{ github.event.pull_request.base.sha }}", path: trusted, submodules: true, persist-credentials: false }
+      - name: the build, as data
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with: { ref: "${{ github.event.pull_request.head.sha }}", path: pr, fetch-depth: 0, persist-credentials: false }
+      - uses: foundry-rs/foundry-toolchain@908c540300062bd5a7e473851cdb4282204cee09 # v1.9.1
+        with: { version: v1.8.3, cache: false }
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with: { node-version-file: trusted/.nvmrc }
+      - name: solc 0.8.26 (pinned by sha256)
+        run: |
+          curl -fsSL -o "$RUNNER_TEMP/solc" "https://binaries.soliditylang.org/linux-amd64/solc-linux-amd64-v0.8.26+commit.8a97fa7a"
+          echo "$SOLC_SHA256  $RUNNER_TEMP/solc" | sha256sum -c -
+          chmod +x "$RUNNER_TEMP/solc"
+      - run: npm ci --prefix trusted/engine --no-audit --no-fund
+      - name: gates (G1 to G12 here; the enclave adds G13 to G15)
+        env:
+          BODY: ${{ github.event.pull_request.body }}
+          BASE: ${{ github.event.pull_request.base.sha }}
+        run: |
+          printf '%s' "$BODY" > "$RUNNER_TEMP/body.txt"
+          SEQ_SOLC="$RUNNER_TEMP/solc" node trusted/engine/scripts/seq-gate.ts --pr pr --base "$BASE" --kit trusted/contracts \
+            --body-file "$RUNNER_TEMP/body.txt" --out "$RUNNER_TEMP/gates.json"
+      - name: slither (advisory; the findings go to the brain as data)
+        if: always()
+        continue-on-error: true
+        run: |
+          slug="$(jq -r .slug "$RUNNER_TEMP/gates.json")"
+          for f in pr/contracts/src/games/"$slug"/*.sol; do
+            pipx run --spec slither-analyzer==0.11.6 slither "$f" --solc "$RUNNER_TEMP/solc" --json "$RUNNER_TEMP/slither-$(basename "$f" .sol).json" || true
+          done
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: always()
+        with:
+          name: sequencer-gates
+          path: ${{ runner.temp }}/*.json
+          retention-days: 30

@@ -1,0 +1,91 @@
+# DNA engine on a Phala CVM. Rendered by `node engine/scripts/compose.ts` into deploy/app-compose.json, whose sha256
+# (the compose hash) goes on the DstackApp allow-list: the first one when the DstackApp is created, later ones through
+# its 1 h timelock. {{NAME}} = a literal filled at render time (part of the hash); ${NAME} = an allowed env, set
+# encrypted by the operator at runtime (NOT part of the hash).
+# Untrusted code never runs in the engine's container: game pages run in `pagecheck` (Chromium; only the engine can
+# reach it, on an internal network) and the gates' forge/anvil runs in `forge` (the engine's own image, a network
+# namespace with nothing but loopback). Neither gets an environment, the dstack socket (the keys) or a published port.
+# pagecheck can reach the engine's :8080 over `checks` (the engine calls it there): every route on 8080, now and
+# later, must assume an untrusted caller. /tmp is a tmpfs counted in the memory limit: 3 GB of files (a copy of the web
+# app and its build per check) plus the build and Chromium stay under it.
+# One uid per container (the engine 1000, forge 1001, pagecheck 1002): a process limit (forge's prlimit --nproc) counts
+# every thread of a uid across containers, so Chromium's threads never fail a gate. forge keeps the engine's group
+# (1000) to share the work volume.
+services:
+  engine:
+    image: {{IMAGE}}@{{IMAGE_DIGEST}}
+    restart: always
+    environment:
+      ENCLAVE: "1"
+      CHAIN_ID: "1"
+      X_CLIENT_ID: "{{X_CLIENT_ID}}"
+      X_USER_ID: "{{X_USER_ID}}"
+      POLICY_THRESHOLDS_SHA256: "{{POLICY_THRESHOLDS_SHA256}}"
+      STUDIO_URL: "{{STUDIO_URL}}"
+      LLM_LAUNCH_AT: "{{LLM_LAUNCH_AT}}"
+      GITHUB_REPO: "{{GITHUB_REPO}}"
+      SEQ_BOT: "{{SEQ_BOT}}"
+      X_AI_REPLIES_APPROVED: "{{X_AI_REPLIES_APPROVED}}"
+      DATABASE_URL: ${DATABASE_URL}
+      ALCHEMY_KEY: ${ALCHEMY_KEY}
+      DRPC_KEY: ${DRPC_KEY}
+      XAI_API_KEY: ${XAI_API_KEY}
+      OPENROUTER_API_KEY_ENGINE: ${OPENROUTER_API_KEY_ENGINE}
+      KEEPER_PRIVATE_KEY: ${KEEPER_PRIVATE_KEY}
+      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN}
+      TELEGRAM_GROUP_ID: ${TELEGRAM_GROUP_ID}
+      TELEGRAM_ALLOWED_USER_IDS: ${TELEGRAM_ALLOWED_USER_IDS}
+      X_CLIENT_SECRET: ${X_CLIENT_SECRET}
+      X_REFRESH_TOKEN: ${X_REFRESH_TOKEN}
+      ENGINE_MODE: ${ENGINE_MODE}
+      POLICY_THRESHOLDS: ${POLICY_THRESHOLDS}
+      STUDIO_TOKEN: ${STUDIO_TOKEN}
+      GITHUB_TOKEN: ${GITHUB_TOKEN}
+      DNA_PERSONA: ${DNA_PERSONA}
+    volumes:
+      - /var/run/dstack.sock:/var/run/dstack.sock
+      - dna-data:/data/dna
+      - seq-work:/work
+    networks:
+      - default
+      - checks
+    ports:
+      - "8080:8080"
+  pagecheck:
+    image: {{PAGECHECK_IMAGE}}@{{PAGECHECK_DIGEST}}
+    restart: always
+    user: "1002:1002"
+    networks:
+      - checks
+    read_only: true
+    tmpfs:
+      - /tmp:size=3g
+    mem_limit: 8g
+    pids_limit: 2048
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+  forge:
+    image: {{IMAGE}}@{{IMAGE_DIGEST}}
+    restart: always
+    command: ["node", "src/sandbox.ts"]
+    user: "1001:1000"
+    network_mode: none
+    volumes:
+      - seq-work:/work
+    read_only: true
+    tmpfs:
+      - /tmp:size=2g
+    mem_limit: 6g
+    pids_limit: 1024
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+volumes:
+  dna-data:
+  seq-work:
+networks:
+  checks:
+    internal: true

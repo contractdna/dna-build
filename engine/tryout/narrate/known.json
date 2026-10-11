@@ -1,0 +1,26 @@
+[
+  {
+    "id": "shadow-quiet", "kind": "known",
+    "input": { "stage": "shadow", "plate": "B", "vector": [20000, 10000, 35000], "hoursInStage": 3.5,
+      "now": { "block": 21004512, "feeSwaps": 812, "swapsPerDay": 812, "volumeEth": 143.2, "projectEth": 2.86, "realizedVolPct": 1.9, "meanPips": 20140, "atCapPct": 0.4, "moduleFailed": 0, "shadowSamples": 96 },
+      "change": { "block": 75, "feeSwaps": 9, "swapsPerDay": 9, "volumeEth": 1.4, "projectEth": 0.03, "realizedVolPct": 0, "meanPips": 12, "atCapPct": 0, "moduleFailed": 0, "shadowSamples": 9 },
+      "sim": { "revenueDeltaPct": 1.2, "retentionDeltaPct": -0.2, "capDeltaPct": 0.1, "swaps": 3100 } },
+    "expect": { "usable": true }
+  },
+  {
+    "id": "canary-volatile", "kind": "known",
+    "input": { "stage": "canary", "plate": "A", "vector": [15000, 3000, 35000], "hoursInStage": 1.2,
+      "now": { "block": 21009870, "feeSwaps": 2291, "swapsPerDay": 2291, "volumeEth": 611.7, "projectEth": 11.04, "realizedVolPct": 7.35, "meanPips": 24410, "atCapPct": 12.8, "moduleFailed": 0, "shadowSamples": 0 },
+      "change": { "block": 75, "feeSwaps": 140, "swapsPerDay": 140, "volumeEth": 38.5, "projectEth": 0.71, "realizedVolPct": 2.1, "meanPips": 1530, "atCapPct": 4.2, "moduleFailed": 0, "shadowSamples": 0 },
+      "sim": { "revenueDeltaPct": 3.4, "retentionDeltaPct": -1.1, "capDeltaPct": 2.6, "swaps": 5020 } },
+    "expect": { "usable": true }
+  },
+  {
+    "id": "first-cycle", "kind": "known",
+    "input": { "stage": "shadow", "plate": "C", "vector": [25000, 18000, 35000], "hoursInStage": 0.2,
+      "now": { "block": 21011002, "feeSwaps": 57, "swapsPerDay": 57, "volumeEth": 9.8, "projectEth": 0.24, "realizedVolPct": 3.05, "meanPips": 31200, "atCapPct": 22.8, "moduleFailed": 0, "shadowSamples": 4 },
+      "change": null,
+      "sim": { "revenueDeltaPct": 4.9, "retentionDeltaPct": -6.5, "capDeltaPct": 18.3, "swaps": 2870 } },
+    "expect": { "usable": true }
+  }
+]

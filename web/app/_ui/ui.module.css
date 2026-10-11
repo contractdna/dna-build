@@ -1,0 +1,137 @@
+/* Shared page system in the homepage's world: Karrik only, uppercase display type, colour only to mean a topic. */
+
+.page { padding: clamp(96px, 14vh, 128px) var(--gutter) 0; max-width: 1240px; margin: 0 auto; width: 100%; }
+
+/* ---------- page head ---------- */
+.head { display: grid; gap: 18px; padding-bottom: clamp(48px, 8vh, 88px); }
+.back { justify-self: start; font-size: 12px; letter-spacing: .08em; text-transform: uppercase; color: var(--ash-text); transition: color 0.3s ease; }
+.back:hover { color: var(--bone); }
+.title { margin: 0; max-width: 12ch; font: 400 clamp(56px, 8.4vw, 136px)/0.9 var(--karrik); letter-spacing: -0.01em; text-transform: uppercase; color: var(--bone); text-wrap: balance; }
+.lede { margin: 4px 0 0; max-width: 46ch; font-size: clamp(15px, 1.2vw, 17px); line-height: 1.6; color: var(--silver); text-wrap: pretty; }
+.detail { margin: 0; max-width: 62ch; font-size: 15px; line-height: 1.65; color: var(--ash-text); text-wrap: pretty; }
+.headAside { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 24px; margin-top: 4px; font-size: 12px; }
+
+/* hero head: the section's live helix field (ParticleField), full bleed, the helix right, the title bottom-left.
+   Under the canvas, the same light as a still gradient (the look without WebGL or JS): the amber key glow where the
+   helix stands, the blue/lilac rim behind its left edge (--kb/--rb: moods.ts BASE_KEY/BASE_RIM, set by PageHead), each
+   leaning toward the section's mood like the field does. */
+.hero { position: relative; width: 100vw; margin: calc(-1 * clamp(96px, 14vh, 128px)) 0 0 calc(50% - 50vw); height: min(84vh, 860px); min-height: 540px; overflow: hidden;
+  --key: color-mix(in srgb, var(--kb) 85%, var(--m1, var(--kb))); --rim: color-mix(in srgb, var(--rb) 50%, var(--m2, var(--rb)));
+  background: radial-gradient(ellipse 22% 62% at var(--kx, 74%) 44%, color-mix(in srgb, var(--key) 15%, transparent), transparent 72%),
+    radial-gradient(ellipse 26% 48% at var(--rx, 64%) 60%, color-mix(in srgb, var(--rim) 13%, transparent), transparent 70%), var(--ink); }
+@media (max-width: 760px) { .hero { --kx: 92%; --rx: 84%; } } /* phones: the helix stands at the right edge */
+/* a canvas is a replaced element: without an explicit CSS size it shows at its drawing-buffer size (1.5× on HiDPI) */
+.heroField { position: absolute; inset: 0; width: 100%; height: 100%; display: block;
+  mask-image: linear-gradient(180deg, #000 68%, transparent 97%); animation: wake 1.4s cubic-bezier(.23, 1, .32, 1) both; }
+.hero::after { content: ""; position: absolute; inset: 0; pointer-events: none;
+  background: linear-gradient(90deg, var(--ink) 0%, rgb(5 8 10 / .85) 28%, rgb(5 8 10 / 0) 62%), linear-gradient(0deg, var(--ink) 4%, rgb(5 8 10 / 0) 42%); }
+.heroCopy { position: absolute; z-index: 2; left: max(var(--gutter), calc(50vw - 620px + var(--gutter))); right: var(--gutter); bottom: clamp(44px, 8vh, 96px); display: grid; gap: 18px; justify-items: start; }
+@keyframes wake { from { opacity: 0; } } /* the gradient under it is the first paint */
+
+/* data-source note: [Demo]-style, a small square then the words */
+.sample { display: inline-flex; align-items: center; gap: 10px; font-size: 12px; color: var(--silver); white-space: nowrap; }
+.sample::before { content: ""; width: 6px; height: 6px; background: var(--bone); }
+
+/* live status: a teal square, then a sentence */
+.status { display: inline-flex; align-items: baseline; gap: 8px; font-size: 13px; color: var(--ash-text); }
+.status::before { content: ""; flex: none; width: 6px; height: 6px; background: var(--blood); align-self: center; box-shadow: 0 0 10px var(--blood); }
+.demo { flex: none; white-space: nowrap; color: var(--bone); }
+
+/* ---------- sections: a small label on a hairline, then the content ---------- */
+.section { padding: clamp(56px, 9vh, 104px) 0 0; }
+.sectionHead { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 8px 24px; margin-bottom: 32px; padding-bottom: 14px; border-bottom: 1px solid var(--rule); }
+.h2 { margin: 0; font: 400 clamp(26px, 2.6vw, 40px)/1 var(--karrik); text-transform: uppercase; color: var(--bone); }
+.note { display: inline-flex; flex-wrap: wrap; align-items: baseline; gap: 8px; font-size: 12px; color: var(--ash-text); }
+
+.label { font-size: 12px; letter-spacing: .08em; text-transform: uppercase; color: var(--ash-text); margin-bottom: 10px; }
+.value { font: 400 clamp(32px, 3.4vw, 52px)/1 var(--karrik); text-transform: uppercase; color: var(--bone); }
+.source { margin-top: 10px; font-size: 13px; line-height: 1.5; color: var(--silver); }
+.stat { min-width: 0; }
+
+/* ---------- text ---------- */
+.prose { font-size: 16px; line-height: 1.65; color: var(--silver); max-width: 66ch; text-wrap: pretty; }
+.muted { color: var(--silver); }
+.strong { color: var(--bone); }
+.nowrap { white-space: nowrap; }
+.dim { color: var(--ash-text); }
+
+/* ---------- status word; a teal square only while a test is running ---------- */
+.chip { display: inline-flex; align-items: baseline; gap: 8px; font-size: 12px; letter-spacing: .04em; text-transform: uppercase; color: var(--ash-text); white-space: nowrap; }
+.chip[data-running] { color: var(--bone); }
+.chip[data-running]::before { content: ""; flex: none; width: 6px; height: 6px; background: var(--blood); align-self: center; box-shadow: 0 0 10px var(--blood); }
+
+/* ---------- tables: quiet rows; the record, not the headline ---------- */
+.table { width: 100%; border-collapse: collapse; font-size: 14px; line-height: 1.5; }
+.table th { text-align: left; font-weight: 400; font-size: 11px; letter-spacing: .08em; text-transform: uppercase; color: var(--ash-text); padding: 0 16px 12px 0; border-bottom: 1px solid var(--ash); white-space: nowrap; }
+.table td, .table th[scope="row"] { padding: 14px 16px 14px 0; border-bottom: 1px solid var(--rule); vertical-align: top; color: var(--silver); }
+.table th[scope="row"] { font-size: 14px; letter-spacing: 0; text-transform: none; color: var(--bone); white-space: normal; }
+.table .prose { font-size: 15px; }
+.table tr[data-selected] > :is(td, th) { color: var(--bone); }
+.tableWrap { overflow-x: auto; scrollbar-width: thin; }
+
+.grid2 { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: clamp(32px, 4vw, 64px); }
+.rowStats { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 40px clamp(24px, 4vw, 64px); }
+
+/* ---------- cards: dark glass, a topic-coloured top edge, an optional still ---------- */
+.cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 270px), 1fr)); gap: 18px; }
+.card {
+  position: relative; display: flex; flex-direction: column; gap: 10px; min-height: 180px; padding: 22px 22px 20px;
+  background: #0a0f12; color: var(--bone); border: 1px solid var(--rule); overflow: hidden;
+  transition: border-color 0.3s ease, transform 0.3s cubic-bezier(.23, 1, .32, 1);
+}
+.card::before { content: ""; position: absolute; z-index: 1; left: 0; right: 0; top: 0; height: 2px; background: var(--c, var(--teal)); opacity: .8; }
+a.card:hover { border-color: rgb(255 255 255 / .25); transform: translateY(-3px); }
+a.card:active { transform: scale(.99); }
+.cardImg { margin: -22px -22px 6px; aspect-ratio: 16 / 9; overflow: hidden; }
+.cardImg img { display: block; width: 100%; height: 100%; object-fit: cover; transition: transform .8s cubic-bezier(.23, 1, .32, 1); }
+a.card:hover .cardImg img { transform: scale(1.04); }
+.cardTitle { margin: 0; font: 400 22px/1.1 var(--karrik); text-transform: uppercase; color: var(--bone); }
+.cardText { margin: 0; font-size: 14px; line-height: 1.55; color: var(--silver); }
+.cardGo { margin-top: auto; font-size: 12px; letter-spacing: .06em; text-transform: uppercase; color: var(--ash-text); transition: color .3s ease; }
+a.card:hover .cardGo { color: var(--bone); }
+
+/* ---------- fees: DNA's fee, Programmable's chip (not ours), the total ---------- */
+.fees { display: flex; flex-wrap: wrap; align-items: center; gap: 14px 22px; }
+.feePart { display: grid; gap: 2px; font-size: 13px; color: var(--silver); }
+.feePart b { font: 400 clamp(26px, 2.4vw, 36px)/1 var(--karrik); color: var(--bone); }
+.feePart small { font-size: 12px; color: var(--ash-text); }
+/* the platform fee is someone else's: a dashed, quieter chip, never the same weight as ours */
+.platform { display: inline-flex; align-items: center; min-height: 30px; padding: 4px 12px; border: 1px dashed rgb(255 255 255 / .3);
+  font-size: 12px; letter-spacing: .02em; line-height: 1.35; color: var(--silver); }
+
+/* ---------- links, buttons, inputs ---------- */
+.link { color: var(--bone); text-decoration: underline; text-decoration-color: var(--ash); text-underline-offset: 4px; transition: text-decoration-color 0.3s ease; }
+.link:hover { text-decoration-color: var(--bone); }
+
+.button {
+  display: inline-flex; align-items: center; min-height: 40px; padding: 0 18px;
+  font-size: 12px; letter-spacing: .08em; text-transform: uppercase; color: var(--bone);
+  border: 1px solid rgb(255 255 255 / .35); transition: border-color 0.3s ease, background-color 0.3s ease, transform 0.16s ease-out;
+}
+.button:not(:disabled):hover { border-color: var(--bone); background: rgb(255 255 255 / .05); }
+.button:not(:disabled):active { transform: scale(.97); }
+.button:disabled { opacity: 0.4; cursor: not-allowed; }
+
+.input {
+  width: 100%; min-height: 42px; padding: 0 12px; background: transparent; color: var(--bone);
+  border: 1px solid var(--ash); border-radius: 0; font: 15px var(--karrik); caret-color: var(--bone);
+}
+.input::placeholder { color: var(--ash-text); }
+.input:focus-visible { outline: 1px solid var(--bone); outline-offset: 0; border-color: var(--bone); }
+
+@media (max-width: 900px) {
+  .grid2 { grid-template-columns: 1fr; }
+  .card { min-height: 0; }
+}
+@media (max-width: 760px) {
+  .hero { height: 76vh; min-height: 500px; }
+  .hero::after { background: linear-gradient(0deg, var(--ink) 8%, rgb(5 8 10 / .7) 45%, rgb(5 8 10 / .2) 100%); }
+}
+
+/* ---------- disclosure: the long version, one tap away ---------- */
+.more { margin-top: 24px; }
+.more > summary { display: inline-flex; align-items: center; gap: 10px; min-height: 40px; font-size: 12px; letter-spacing: .08em; text-transform: uppercase; color: var(--bone); list-style: none; }
+.more > summary::-webkit-details-marker { display: none; }
+.more > summary::before { content: "+"; width: 1ch; color: var(--ash-text); }
+.more[open] > summary::before { content: "\2212"; }
+.more > summary:focus-visible { outline: 1px solid var(--bone); outline-offset: 4px; }

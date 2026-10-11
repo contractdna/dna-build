@@ -1,0 +1,15 @@
+# pagecheck/Dockerfile's build context is the repository root: the web app's sources (the check builds a copy with the
+# game's page) and the page check itself; no dependencies, builds or tests from the checkout
+*
+!web
+web/node_modules
+web/.next
+web/test
+web/next-env.d.ts
+# never local secrets or deploy state
+web/.env*
+web/.vercel
+web/**/*.pem
+!pagecheck/package.json
+!pagecheck/package-lock.json
+!pagecheck/src

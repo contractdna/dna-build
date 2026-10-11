@@ -1,0 +1,194 @@
+[
+  {
+    "part": "brain",
+    "model": {
+      "id": "claude-fable-5-1",
+      "provider": "Anthropic"
+    },
+    "backup": {
+      "id": "claude-opus-5-5",
+      "provider": "Anthropic"
+    }
+  },
+  {
+    "part": "main",
+    "model": {
+      "id": "grok-4.7",
+      "provider": "xAI"
+    },
+    "backup": {
+      "id": "grok-4.3",
+      "provider": "xAI"
+    }
+  },
+  {
+    "part": "research",
+    "model": {
+      "id": "grok-4.7",
+      "provider": "xAI"
+    },
+    "backup": {
+      "id": "grok-4.3",
+      "provider": "xAI"
+    }
+  },
+  {
+    "part": "intake",
+    "model": {
+      "id": "grok-4.7",
+      "provider": "xAI"
+    },
+    "backup": {
+      "id": "grok-4.3",
+      "provider": "xAI"
+    }
+  },
+  {
+    "part": "x-voice",
+    "model": {
+      "id": "grok-4.7",
+      "provider": "xAI"
+    },
+    "backup": {
+      "id": "grok-4.3",
+      "provider": "xAI"
+    }
+  },
+  {
+    "part": "x-scout",
+    "model": {
+      "id": "grok-4.7",
+      "provider": "xAI"
+    },
+    "backup": {
+      "id": "grok-4.3",
+      "provider": "xAI"
+    }
+  },
+  {
+    "part": "x-audit",
+    "model": {
+      "id": "claude-sonnet-5-5",
+      "provider": "Anthropic"
+    },
+    "backup": {
+      "id": "claude-opus-5-5",
+      "provider": "Anthropic"
+    }
+  },
+  {
+    "part": "redteam",
+    "model": {
+      "id": "claude-opus-5-5",
+      "provider": "Anthropic"
+    },
+    "backup": {
+      "id": "claude-fable-5-1",
+      "provider": "Anthropic"
+    }
+  },
+  {
+    "part": "gate",
+    "model": {
+      "id": "claude-fable-5-1",
+      "provider": "Anthropic"
+    },
+    "backup": {
+      "id": "claude-opus-5-5",
+      "provider": "Anthropic"
+    }
+  },
+  {
+    "part": "narrate",
+    "model": {
+      "id": "grok-4.3",
+      "provider": "xAI"
+    },
+    "backup": {
+      "id": "grok-4.7",
+      "provider": "xAI"
+    }
+  },
+  {
+    "part": "vision",
+    "model": {
+      "id": "claude-opus-5-5",
+      "provider": "Anthropic"
+    },
+    "backup": {
+      "id": "claude-sonnet-5-5",
+      "provider": "Anthropic"
+    }
+  },
+  {
+    "part": "dev-lead",
+    "model": {
+      "id": "claude-opus-5-5",
+      "provider": "Anthropic"
+    },
+    "backup": {
+      "id": "claude-sonnet-5-5",
+      "provider": "Anthropic"
+    }
+  },
+  {
+    "part": "dev-worker",
+    "model": {
+      "id": "claude-haiku-5-5",
+      "provider": "Anthropic"
+    },
+    "backup": {
+      "id": "claude-sonnet-5-5",
+      "provider": "Anthropic"
+    }
+  },
+  {
+    "part": "dev-tester",
+    "model": {
+      "id": "claude-sonnet-5-5",
+      "provider": "Anthropic"
+    },
+    "backup": {
+      "id": "claude-opus-5-5",
+      "provider": "Anthropic"
+    }
+  },
+  {
+    "part": "dev-fixer",
+    "model": {
+      "id": "claude-sonnet-5-5",
+      "provider": "Anthropic"
+    },
+    "backup": {
+      "id": "claude-opus-5-5",
+      "provider": "Anthropic"
+    }
+  },
+  {
+    "part": "dev-review",
+    "model": {
+      "id": "claude-opus-5-5",
+      "provider": "Anthropic"
+    },
+    "backup": {
+      "id": "claude-fable-5-1",
+      "provider": "Anthropic"
+    }
+  },
+  {
+    "part": "studio-image",
+    "model": {
+      "id": "gpt-image-2.5-sunburst",
+      "provider": "OpenAI"
+    },
+    "backup": null
+  },
+  {
+    "part": "studio-rubric",
+    "model": {
+      "id": "gpt-5.5",
+      "provider": "OpenAI"
+    },
+    "backup": null
+  }
+]

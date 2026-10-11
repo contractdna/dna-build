@@ -1,0 +1,11 @@
+{
+  "name": "split-baseline",
+  "version": "v1",
+  "kind": "SplitPolicy",
+  "author": "DNA",
+  "review": "internal",
+  "risk": "low",
+  "summary": "Routes project fees 35% buyback-burn, 30% auto-liquidity, 25% treasury, 10% games (GamePot). A rollback falls back to FeeVault's immutable 35/35/30/0: games off.",
+  "killConditions": ["any destination outside its bounds"],
+  "params": []
+}
