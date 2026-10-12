@@ -38,9 +38,10 @@
     "at most 3 games from the sequencer run at once, and a game nobody plays gets retired with its funds sent back"
   ],
   "vaults": [
+    "what a vault is for: its owner gets an equal share of every fund the Safe sends to the vaults after the vault joins, collected at any time, and the 200,000 DNA back on a burn; nothing is promised about how much or how often",
     "the genome vaults are an NFT: at most 50 live at once, and minting a vault locks exactly 200,000 DNA in the vaults contract; a free slot goes to the next mint, first come first served",
-    "the owner burns a vault at any time and gets the 200,000 DNA back with the vault's unclaimed ETH in the same transaction; nobody else can touch the DNA, and the Safe can pause new mints only, never a burn",
     "only the Safe funds the vaults, over an exact block window of fee inflows, with whatever amount the signers send (their script proposes 50% of the treasury's fee share in that window), split equally across every eligible vault; a new vault joins at the next fund and earns from every fund after that",
+    "the owner burns a vault at any time and gets the 200,000 DNA back with the vault's unclaimed ETH in the same transaction; nobody else can touch the DNA, and the Safe can pause new mints only, never a burn",
     "a vault's unclaimed ETH stays with it when it is sold, so a buyer gets it; a sale pays a 2.5% royalty to the Safe; every vault is equal, and nothing is promised about what a vault earns",
     "mint, collect and burn on the site's vaults page or on the contract itself: a mint approves exactly 200,000 DNA to the vaults, nothing more"
   ],

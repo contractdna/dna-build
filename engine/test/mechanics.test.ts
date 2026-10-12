@@ -95,3 +95,14 @@ test("staking: a reply that denies it is refused and redrafted; a plain no about
   }
   assert.ok(!voiceIssues({ ...reply, state: { note: "no staking yet" } }, "No staking yet.", { linked: false }).includes(STAKING_DENIED), "the facts' own denial may be said back");
 });
+
+test("vaults: what a vault is for comes first, and a plain answer from it passes the voice", () => {
+  assert.match(MECHANICS.vaults[0], /^what a vault is for: its owner gets an equal share of every fund the Safe sends to the vaults after the vault joins/);
+  assert.doesNotMatch(MECHANICS.vaults[0], /all a vault does/, "the art, a sale and the royalty are vault facts too: nothing says it does nothing else");
+  assert.match(MECHANICS.vaults[0], /nothing is promised/);
+  const facts = { event: "reply", category: "rules_question", topic: "vaults", question: "What utility will the NFT have?", mechanics: MECHANICS.vaults };
+  for (const t of ["A vault's owner gets an equal share of every fund the Safe sends to the vaults, and the 200,000 DNA back on a burn. Nothing is promised.", "It shares equally in any ETH the Safe sends to the vaults, and burning it returns your 200,000 DNA."]) {
+    assert.deepEqual(postFilter(t, factNumbers(facts)), [], t);
+    assert.deepEqual(voiceIssues(facts, t, { linked: false }), [], t);
+  }
+});

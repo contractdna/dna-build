@@ -167,9 +167,10 @@ export function mechanics(): Record<string, string[]> {
     // the Genome Vaults NFT: every figure the contract's own; no earnings figure (a reply reads nothing but the chain) and
     // no promise ("claim" is a banned word: "unclaimed" and "collects" say it)
     vaults: [
+      `what a vault is for: its owner gets an equal share of every fund the Safe sends to the vaults after the vault joins, collected at any time, and the ${big(N("DEPOSIT"))} DNA back on a burn; nothing is promised about how much or how often`,
       `the genome vaults are an NFT: at most ${N("MAX_LIVE")} live at once, and minting a vault locks exactly ${big(N("DEPOSIT"))} DNA in the vaults contract; a free slot goes to the next mint, first come first served`,
-      `the owner burns a vault at any time and gets the ${big(N("DEPOSIT"))} DNA back with the vault's unclaimed ETH in the same transaction; nobody else can touch the DNA, and the Safe can pause new mints only, never a burn`,
       `only the Safe funds the vaults, over an exact block window of fee inflows, with whatever amount the signers send (their script proposes 50% of the treasury's fee share in that window), split equally across every eligible vault; a new vault joins at the next fund and earns from every fund after that`,
+      `the owner burns a vault at any time and gets the ${big(N("DEPOSIT"))} DNA back with the vault's unclaimed ETH in the same transaction; nobody else can touch the DNA, and the Safe can pause new mints only, never a burn`,
       `a vault's unclaimed ETH stays with it when it is sold, so a buyer gets it; a sale pays a ${pctBps(N("ROYALTY_BPS"))} royalty to the Safe; every vault is equal, and nothing is promised about what a vault earns`,
       `mint, collect and burn on the site's vaults page or on the contract itself: a mint approves exactly ${big(N("DEPOSIT"))} DNA to the vaults, nothing more`,
     ],
