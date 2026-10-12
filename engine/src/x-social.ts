@@ -197,15 +197,20 @@ async function threadTurn(c: { conv: string; mention: string }, posts: Found[], 
       continue;
     }
     const relationship = isAlly(p.author_id) ? "ally" : tier === "competitor" ? "competitor" : undefined;
-    if (r.kind === "bait" && !relationship && linksOut(p.text, urls)) { // link spam: recorded like a hard line
-      await sql`insert into x_outbox (type, event_key, event, status, error) values ('reply', ${`thread:${p.id}`}, '{}', 'skipped', 'bait with a link') on conflict do nothing`;
+    // bait (shilling, collab asks), a friendly word with a link off X, and an idea or a contract ask (a thread turn never
+    // takes an idea in or gives the fixed line) get nothing: recorded like a hard line
+    const linked = linksOut(p.text, urls);
+    const none = relationship ? null : r.kind === "bait" ? (linked ? "bait with a link" : "bait") : r.kind === "thanks" && linked ? "bait with a link" : null;
+    const skip = none ?? (["idea", "official_contract"].includes(r.kind) ? "an idea or a contract ask in a thread" : null);
+    if (skip) {
+      await sql`insert into x_outbox (type, event_key, event, status, error) values ('reply', ${`thread:${p.id}`}, '{}', 'skipped', ${skip}) on conflict do nothing`;
       continue;
     }
     const rival = relationship === "competitor" ? COMPETITOR_NAMES[p.author_id] : undefined;
-    const kind = r.kind === "bait" && relationship ? "greeting" : ["idea", "official_contract"].includes(r.kind) ? "bait" : r.kind; // a thread turn never takes an idea in or gives the fixed line
+    const kind = (r.kind === "bait" || r.kind === "thanks") && relationship ? "greeting" : r.kind;
     const lang = r.lang in SCRIPTS ? r.lang : undefined;
     const question = questionOf(r.question);
-    const id = await enqueueX(`thread:${p.id}`, "reply", { event: "reply", category: kind, topic: r.topic, ...(question ? { question } : {}), tier, ...(relationship ? { relationship } : {}), ...(rival ? { rival } : {}),
+    const id = await enqueueX(`thread:${p.id}`, "reply", { event: "reply", category: kind, topic: kind === "thanks" ? "other" : r.topic, ...(question && kind !== "thanks" ? { question } : {}), tier, ...(relationship ? { relationship } : {}), ...(rival ? { rival } : {}),
       ...(lang ? { lang } : {}), self: true, mention: c.mention, conv: c.conv, author: p.author_id, lead: `@${handle}` }, { replyTo });
     if (id) return `${tier} @${handle}: ${kind}`;
   }

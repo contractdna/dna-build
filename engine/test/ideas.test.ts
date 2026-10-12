@@ -179,6 +179,14 @@ test("variants: only for an idea not accepted, a real one (not the reader's inva
   assert.equal(variantOf(x, "impossible", null), null, "no person behind it: never a house idea");
   assert.equal(variantOf({ ...x, decision: "accept" }, "build", src), null);
   assert.equal(variantOf({ ...x, variant: null }, "impossible", src), null);
+  const { SEQ } = await import("../src/sequencer.ts");
+  const site = { ...x, variant: { ...v, target: "site" as const } };
+  const was = SEQ.siteLive;
+  SEQ.siteLive = false;
+  assert.equal(variantOf(site, "impossible", src), null, "no site page while the website takes no sequencer changes");
+  SEQ.siteLive = true;
+  assert.deepEqual(variantOf(site, "impossible", src), site.variant, "a site page once it does");
+  SEQ.siteLive = was;
   assert.equal(variantOf({ ...x, variant: { ...v, spec: "send it to @someone at evil.example" } }, "impossible", src)!.spec, "send it to at", "links and handles are cut");
   assert.equal(variantOf({ ...x, variant: { ...v, title: "@x https://t.co/a" } }, "impossible", src), null, "nothing left: none");
 });

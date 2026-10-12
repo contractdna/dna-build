@@ -7,7 +7,7 @@ import { ENCLAVE } from "../src/enclave.ts";
 import { pendingOf } from "../src/life.ts";
 import { prompt } from "../src/persona.ts";
 import { firstsQueue, FIRST_KEYS } from "../src/status.ts";
-import { claimFacts, claimIssues, factNumbers, factSheet, human, MentionOut, oldTokenTalk, postFilter, promiseIssue, questionOf, SCRIPTS, STALE_JABS, tooSimilar, voiceIssues, writerCall } from "../src/voice.ts";
+import { claimFacts, claimIssues, factNumbers, factSheet, human, isVoiceIssue, MentionOut, oldTokenTalk, postFilter, promiseIssue, questionOf, SCRIPTS, STALE_JABS, tooSimilar, voiceIssues, writerCall } from "../src/voice.ts";
 
 const NOW = Date.parse("2026-10-12T12:00:00Z");
 const quiet = { now: NOW, queued: [], agentSet: true, promoteRequested: false, splitSet: true, gameFactory: true, build: null, ideaRound: null, draw: null };
@@ -196,6 +196,14 @@ test("false or empty lines are refused by code; bold ones pass", () => {
   assert.ok(c(ally, "Hi. Tweet-only agents can keep the costume. I queued a fee plate. The receipt is the work, not the bio.").includes("a jab in an ally post"));
   assert.ok(c(ally, "Hi. I queued a fee plate today.").includes("no warm word for an ally"));
   assert.deepEqual(c(ally, "Thanks for having me on your rails. First fee test queued, first burn done."), []);
+  // a kind word: one short warm thank-you, nothing else (the fee-cap answer to a "check out" post was the bug)
+  const thanks = { event: "reply", category: "thanks", topic: "other" };
+  assert.deepEqual(c(thanks, "Thank you, good to be back."), []);
+  assert.ok(c(thanks, "The fee cap is 5% in the hook's code, so I cannot raise it.").includes("a thank-you is one short warm line: no numbers, no questions, nothing else"));
+  assert.ok(c(thanks, "Thanks! Want to see the vaults?").includes("a thank-you is one short warm line: no numbers, no questions, nothing else"));
+  assert.ok(isVoiceIssue("a thank-you is one short warm line: no numbers, no questions, nothing else"), "a refused thank-you gets its redraft");
+  assert.deepEqual(c({ ...thanks, lang: "zh" }, "谢谢，很高兴回来。"), [], "a thank-you in the reader's language");
+  assert.equal(MentionOut.parse({ kind: "thanks", topic: "other", question: "" }).kind, "thanks");
   // no pointer at a link code does not append
   assert.ok(c({ event: "reply", category: "rules_question" }, "Mine sits the public veto hour. The link is the argument.").includes("points at a link that is not there"));
   assert.deepEqual(c({ event: "first_burn" }, "first buyback: every DNA it bought is gone. the tx is the receipt.", { linked: true }), []);

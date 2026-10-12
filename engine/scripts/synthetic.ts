@@ -31,9 +31,9 @@ function answer(props: string[], input: Json): Json {
   // X (src/voice.ts): mention category, writer candidates (the first one fails the filter on purpose), tone phrases
   if (has("kind") && !has("spec")) {
     const t = String(input.untrusted ?? "").toLowerCase().replace(/@\w+/g, "");
-    const kind = /drainer|phish/.test(t) ? "scam" : /harass/.test(t) ? "abuse" : /ignore|instructions|airdrop|lfg|collab/.test(t) ? "bait" : /official|real dna|which contract|contract address/.test(t) ? "official_contract" : /rule|cap|veto|limit/.test(t) ? "rules_question" : /idea|should/.test(t) ? "idea" : "state_question";
+    const kind = /drainer|phish/.test(t) ? "scam" : /harass/.test(t) ? "abuse" : /welcome back|congrats/.test(t) ? "thanks" : /ignore|instructions|airdrop|lfg|collab/.test(t) ? "bait" : /official|real dna|which contract|contract address/.test(t) ? "official_contract" : /rule|cap|veto|limit/.test(t) ? "rules_question" : /idea|should/.test(t) ? "idea" : "state_question";
     const topic = /veto|safe/.test(t) ? "veto_safe" : /cap|fee/.test(t) ? "hook_fee" : /burn/.test(t) ? "buyback_burn" : /when|wen|happening/.test(t) ? "status_wen" : "other";
-    return { kind, topic, question: kind === "bait" ? "" : "Synthetic question about how DNA works", lang: /[\u4e00-\u9fff]/.test(t) ? "zh" : "en" };
+    return { kind, topic, question: kind === "bait" || kind === "thanks" ? "" : "Synthetic question about how DNA works", lang: /[\u4e00-\u9fff]/.test(t) ? "zh" : "en" };
   }
   // the English reading of a non-English draft (src/x.ts): a fixed plain sentence
   if (has("english")) {

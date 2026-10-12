@@ -549,6 +549,9 @@ async function start(now: number): Promise<string> {
   if (kind === "site" && !SEQ.siteLive) {
     await SEQ_DEPS.alert(`Sequencer: the brain picked a site change for idea ${idea.id}, but the website does not deploy from the build repository's release branch; the idea is not built.`, `alert:seq:nosite:${idea.id}`);
     await q.setBuildStatus(idea.id, "queued", "killed", `${NO_SITE} the sequencer's changes yet`);
+    // live idea mode: the idea was queued in public, so its end is public too (never a silent drop)
+    if (IDEAS_LIVE) await SEQ_DEPS.announce({ event: "seq_declined", idea: idea.id, title: idea.title, reason: "the website does not take the sequencer's changes yet, so a site page is not built for now", record: String(b.seq) })
+      .catch((e) => SEQ_DEPS.alert(`Sequencer: the no-build of ${idea.id} was not announced: ${(e as Error).message.slice(0, 200)}`, `alert:seq:declined:${idea.id}`));
     return `no-build: ${idea.id} (the website does not take site changes yet)`;
   }
   // a module needs the module kit in this image (it ships with the image before the brain can pick one): else no-build

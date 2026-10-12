@@ -4,13 +4,16 @@ import { Suspense } from "react";
 import { LIVE } from "../_data/flags";
 import { FEE } from "../_data/launchFee";
 import type { PlayLive } from "../_data/live";
-import { getContracts, getPlay, getTreasury } from "../_data/source";
+import { getPlay, getTreasury } from "../_data/source";
 import { Shell, X_URL } from "../_ui/Shell";
+import { PoisonNote, WalletBar, WalletProvider } from "../_ui/Wallet";
 import { fmtDate, fmtTime, PageHead, Section, short, ui } from "../_ui/ui";
 import { Countdown } from "./Countdown";
 import { MysteryCheck } from "./MysteryCheck";
 import { NewGames } from "./NewGames";
 import s from "./play.module.css";
+import { DNA, STAKE_VAULT } from "./stake";
+import { StakePanel } from "./StakePanel";
 
 export const metadata: Metadata = {
   title: "Play · DNA",
@@ -19,7 +22,7 @@ export const metadata: Metadata = {
 
 const STEPS = [
   { n: "01", title: "Hold DNA", text: "Hold 1,000+ DNA. Your tickets follow your average balance over the window, so buying a minute before the draw gets you almost nothing." },
-  { n: "02", title: "Stake for more", text: "Stake 10,000+ DNA for 12 hours (×2), 3 days (×2.5) or 7 days (×3). After the term it counts ×2 until you withdraw, any time you like. A stake can vote once it's 12 hours old." },
+  { n: "02", title: "Stake for more", text: "Stake 10,000+ DNA for 12 hours (×2), 3 days (×2.5) or 7 days (×3). After the term it counts at least ×2 until you withdraw, any time you like. A stake can vote once it's 12 hours old." },
   { n: "03", title: "Your streak grows", text: "×1.25 after 2 days, ×1.5 after 5, ×2 after 10, on top of the term. Never above ×4. Tickets and votes use the same weight." },
 ];
 
@@ -160,7 +163,7 @@ function Panel({ g }: { g: Game }) {
 }
 
 export default async function PlayPage() {
-  const [live, { convictionVault }, { split }] = await Promise.all([getPlay(), getContracts(), getTreasury()]);
+  const [live, { split }] = await Promise.all([getPlay(), getTreasury()]);
   const games = [jackpot(live, split.find((x) => x.dest === "games")?.bps ?? 0), vote(live), mystery(live)];
   const last = live?.jackpot.lastWin; // the latest draw's winners (up to 10)
   const winners = last ? last.winners : [];
@@ -213,13 +216,23 @@ export default async function PlayPage() {
               <li key={x.n}><span className={s.n}>{x.n}</span><h3 className={ui.cardTitle}>{x.title}</h3><p className={ui.prose}>{x.text}</p></li>
             ))}
           </ol>
-          {LIVE
-            // the page has no wallet connection: staking is a call to ConvictionVault itself
-            ? convictionVault && <p className={`${ui.prose} ${ui.muted}`}>Stake through the <a className={ui.link} href={`https://etherscan.io/address/${convictionVault}`} target="_blank" rel="noopener noreferrer">ConvictionVault contract</a>; this page reads stakes but does not take them.</p>
-            : <p className={s.cta}><button className={ui.button} type="button" disabled>Staking opens at launch</button></p>}
         </Section>
 
-        <Suspense fallback={null}><NewGames /></Suspense>
+        {/* one wallet for the stake panel and the Sequencer's games below it */}
+        <WalletProvider>
+          <div id="stake">
+            <Section title="Stake" note={LIVE ? <a className={ui.link} href={`https://etherscan.io/address/${STAKE_VAULT}`} target="_blank" rel="noopener noreferrer">ConvictionVault on Etherscan</a> : "pre-launch"}>
+              <WalletBar token={DNA} />
+              <StakePanel />
+              <p className={`${ui.prose} ${ui.muted}`}>
+                Staked DNA stays in the ConvictionVault contract until you withdraw it. It raises your jackpot tickets and your vote weight; it pays nothing by itself.
+                Every button here sends a transaction with no ETH, to the vault or the exact DNA approval a stake needs. No signature, and never an approval beyond the amount you stake.
+              </p>
+              <PoisonNote />
+            </Section>
+          </div>
+          <Suspense fallback={null}><NewGames /></Suspense>
+        </WalletProvider>
 
         <Section title="The rules" note={<Link className={ui.link} href="/constitution">Hard limits →</Link>}>
           <dl className={s.rules}>

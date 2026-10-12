@@ -562,7 +562,7 @@ export async function resolve(ev: Record<string, unknown>): Promise<Record<strin
       // the vaults' lines only once the vaults are deployed (the deployment names them): never a live claim before
       const mechanics = topic ? mechanicsFor(topic, await hasLaunchGuard(HOOK_READ.launchGuard), !!d.genomeVaults) : [];
       // lang: the reader's (SCRIPTS); lead: code's "@handle" before a reply in our own thread (a thread presence turn)
-      return { event: "reply", category: ev.category, topic, question: ev.question, state: await stateFacts(), relationship: ev.relationship, ...(mechanics.length ? { mechanics } : {}), ...(typeof ev.rival === "string" ? { rival: ev.rival } : {}),
+      return { event: "reply", category: ev.category, topic, question: ev.question, ...(ev.category === "thanks" ? {} : { state: await stateFacts() }), relationship: ev.relationship, ...(mechanics.length ? { mechanics } : {}), ...(typeof ev.rival === "string" ? { rival: ev.rival } : {}),
         ...(typeof ev.lang === "string" && ev.lang in SCRIPTS ? { lang: ev.lang } : {}), ...(typeof ev.lead === "string" ? { lead: ev.lead } : {}) };
     }
     case "game": {
@@ -738,7 +738,7 @@ async function sendOne(item: Outbox, m: string): Promise<unknown> {
   if (item.type === "reply" && raw.category === "idea" && item.reply_to && Date.now() - new Date(item.created_at).getTime() < IDEA_READ_WAIT_MS
     && !(await sql`select 1 from intake where mention_id = ${item.reply_to}`).length) return WAIT;
   const facts = factSheet({
-    ...raw, day: await dayOfLife(), ...(await storyNow(item.event_key, ev)), ...(MIND_EVENTS.has(ev) ? { mind: await mindNow() } : {}), ...(PENDING_EVENTS.has(ev) ? { pending: await pendingNow(Date.now(), ev) } : {}),
+    ...raw, day: await dayOfLife(), ...(await storyNow(item.event_key, ev)), ...(MIND_EVENTS.has(ev) ? { mind: await mindNow() } : {}), ...(PENDING_EVENTS.has(ev) && raw.category !== "thanks" ? { pending: await pendingNow(Date.now(), ev) } : {}),
     ...(FIRST_EVENTS.has(ev) && !(await sql`select 1 from log where kind = 'announce' and doc->>'type' = ${ev} and ref <> ${item.event_key} limit 1`).length ? { first: true } : {}),
     // an idea the intake took in: the reply says it is logged (live idea mode: where its verdict stands)
     ...(item.type === "reply" && raw.category === "idea" && item.reply_to ? await intakeFact(item.reply_to) : {}),
@@ -1132,11 +1132,12 @@ async function decide(m: MentionRow, tier: Tier, idea: boolean): Promise<Decisio
     if (r.kind === "scam") return { skip: "scam or phishing" };
     if (r.kind === "abuse") return { skip: "slurs or harassment" };
     // an ally's hello and a competitor's jab are answered as greetings; anyone else's bait (hype, lfg, collab asks,
-    // shilling) gets a short in-voice line (the writer never sees their links, tickers or handles), unless it carries
-    // a link off X: link spam gets nothing
+    // shilling, however big the account) gets nothing: a line to a shill reads as a bot talking to itself. A plain
+    // friendly word (gm, congrats, welcome back) gets a short thank-you, no facts: unless it carries a link off X
     const lang = r.lang in SCRIPTS ? r.lang : undefined;
-    if (r.kind === "bait" && (isAlly(m.author_id) || tier === "competitor")) return { kind: "greeting", topic: r.topic, lang };
-    if (r.kind === "bait" && !idea && linksOut(m.text, m.raw.entities ? (m.raw.entities.urls ?? []).map((u) => u.expanded_url) : undefined)) return { skip: "bait with a link" };
+    if ((r.kind === "bait" || r.kind === "thanks") && (isAlly(m.author_id) || tier === "competitor")) return { kind: "greeting", topic: r.topic, lang };
+    if (r.kind === "bait" && !idea) return { skip: "bait" };
+    if (r.kind === "thanks" && !idea) return linksOut(m.text, m.raw.entities ? (m.raw.entities.urls ?? []).map((u) => u.expanded_url) : undefined) ? { skip: "bait with a link" } : { kind: "thanks", topic: "other", lang };
     return oldTokenTalk(r.question) ? { kind: "official_contract", topic: r.topic } : { kind: r.kind, topic: r.topic, question: questionOf(r.question), lang };
   } catch (e) {
     if (e instanceof Defer) return { wait: `the reader: ${e.message.slice(0, 120)}` }; // the LLM cap or provider trouble: next run
@@ -1170,7 +1171,7 @@ function alertMention(m: MentionRow, tier: Tier, plan: string, key?: string) {
 /** Mentions → replies (src/tiers.ts). Only to a post that @mentions or quotes us, from any author (no age, follower or
  *  badge gate); every tier a turn per new post of theirs in a thread (no daily cap per person; X.repliesPerAuthorHour an hour to one account)
  *  until a stop rule fires; all under ceilings of X.dailyReplies a day and X.hourlyReplies an hour. One reply per
- *  mention id (x_outbox unique reply_to); bait gets a short in-voice line, bait with a link off X nothing. Never to spam
+ *  mention id (x_outbox unique reply_to); bait gets nothing (an ally's or a competitor's is a greeting), a friendly word a short thank-you. Never to spam
  *  by its shape (tiers.ts spamShape: tickers, tags, links or emoji only; a ticker beside a link), our own posts, an opted-out author,
  *  an impersonator, phishing, slurs or harassment, injection, or the same post again within the hour. Until X approves AI replies, only important
  *  accounts get one, held for a Send tap; approved, every tier's reply is sent without a tap (X_HOLD_IMPORTANT=1 holds

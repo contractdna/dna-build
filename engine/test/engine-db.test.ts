@@ -1230,7 +1230,7 @@ test("X: 'which contract is the real DNA?' gets the one fixed answer (code text,
   }
 });
 
-test("X replies: bait gets a line (an ally's hello and a competitor's jab a greeting); impersonators, loose addresses, phishing and abuse get nothing", { skip }, async () => {
+test("X replies: bait gets nothing (an ally's hello and a competitor's jab a greeting); impersonators, loose addresses, phishing and abuse get nothing", { skip }, async () => {
   await liveMode();
   fakes.llm.xai = (b) => synthetic("xai", b);
   const { ALLIES, COMPETITORS } = await import("../src/tiers.ts");
@@ -1253,6 +1253,9 @@ test("X replies: bait gets a line (an ally's hello and a competitor's jab a gree
     await put("9508", "9508", "@contractdna new drainer kit, works on any hook");
     await put("9509", "9509", "@contractdna i will harass you and your devs");
     await put("9510", "9510", "@contractdna lfg ser, collab?");
+    // a kind word gets a short thank-you (no topic, no question); the same with a link off X gets nothing
+    await put("9511", "9511", "@contractdna welcome back");
+    await put("9512", "9512", "@contractdna congrats, see mine https://example.com/x");
     const r = await xM.repliesHandler.run(job()) as Record<string, string>;
     assert.deepEqual([r["9501"], r["9502"], r["9503"], r["9504"], r["9505"], r["9506"]], ["greeting", "greeting", "bait", "an address outside the binding format", "an author shaped like this account", "official_contract"]);
     assert.deepEqual([r["9507"], r["9508"], r["9509"], r["9510"]], ["scam or phishing", "scam or phishing", "slurs or harassment", "bait"]);
@@ -1261,7 +1264,9 @@ test("X replies: bait gets a line (an ally's hello and a competitor's jab a gree
     assert.deepEqual([(await ev("9501")).category, (await ev("9501")).relationship], ["greeting", "ally"]);
     assert.deepEqual([(await ev("9502")).category, (await ev("9502")).relationship, (await ev("9502")).rival], ["greeting", "competitor", "CLAUS"]);
     assert.equal((await ev("9506")).event, "official_reply");
-    for (const id of ["9503", "9510"]) assert.deepEqual([(await outbox(`reply:${id}`)).status, (await ev(id)).category], ["queued", "bait"], `${id}: bait is answered`);
+    assert.deepEqual([r["9511"], (await ev("9511")).category, (await ev("9511")).topic, (await ev("9511")).question], ["thanks", "thanks", "other", undefined]);
+    assert.deepEqual([r["9512"], (await outbox("reply:9512")).status], ["bait with a link", "skipped"]);
+    for (const id of ["9503", "9510"]) assert.deepEqual([(await outbox(`reply:${id}`)).status, (await outbox(`reply:${id}`)).error], ["skipped", "bait"], `${id}: bait gets no reply`);
   } finally {
     Object.assign(X, saved);
   }
@@ -1289,11 +1294,12 @@ test("X replies: spam by its shape and bait with a link off X get no reply (a sk
     await put("98507", "@contractdna what is the veto rule?");
     const r = await xM.repliesHandler.run(job()) as Record<string, string>;
     const { SPAM_SHAPE } = await import("../src/tiers.ts");
-    assert.deepEqual(["98501", "98502", "98503", "98504"].map((id) => r[id]), [SPAM_SHAPE, SPAM_SHAPE, SPAM_SHAPE, "bait with a link"]);
+    assert.deepEqual(["98501", "98502", "98503", "98504"].map((id) => r[id]), [SPAM_SHAPE, SPAM_SHAPE, SPAM_SHAPE, "bait"]);
     for (const id of ["98501", "98502", "98503", "98504"]) assert.deepEqual([(await outbox(`reply:${id}`)).status, (await outbox(`reply:${id}`)).error], ["skipped", r[id]], id);
     for (const w of ["deepthoughts8", "lifegoeson4", "Going with the flow"]) assert.ok(!sent.some((s) => s.includes(w)), `${w}: spam by its shape never reaches the reader`);
     assert.deepEqual(["98505", "98506", "98507"].map((id) => r[id]), ["bait", "state_question", "rules_question"]);
-    for (const id of ["98505", "98506", "98507"]) assert.equal((await outbox(`reply:${id}`)).status, "queued", id);
+    assert.equal((await outbox("reply:98505")).status, "skipped", "bait gets no reply, link or not");
+    for (const id of ["98506", "98507"]) assert.equal((await outbox(`reply:${id}`)).status, "queued", id);
   } finally {
     Object.assign(X, saved);
     await sql`update x_outbox set status = 'skipped' where event_key like 'reply:985%' and status = 'queued'`;
@@ -1330,7 +1336,7 @@ test("X replies: the same question from the same person is answered twice, then 
   }
 });
 
-test("X replies: an important account's bait in Chinese and a 3-day-old competitor's compliment are answered; the Chinese reply is read back in English first; the alert's Plan is the reply", { skip }, async () => {
+test("X replies: an important account's question in Chinese and a 3-day-old competitor's compliment are answered; the Chinese reply is read back in English first; the alert's Plan is the reply", { skip }, async () => {
   await liveMode();
   const { COMPETITORS } = await import("../src/tiers.ts");
   const saved = { ...X };
@@ -1339,7 +1345,7 @@ test("X replies: an important account's bait in Chinese and a 3-day-old competit
   const drafts = [ZH, "目标十美元。"]; // the second one's English reading names a number the facts never gave
   fakes.llm.xai = (b) => {
     const u = userOf(b);
-    if (!sysOf(b).startsWith("agent:") && /claus排第一|take the compliment/.test(u)) return xaiOut(JSON.stringify({ kind: "bait", topic: "other", question: "", lang: /claus/.test(u) ? "zh" : "en" }))();
+    if (!sysOf(b).startsWith("agent:") && /claus排第一|take the compliment/.test(u)) return xaiOut(JSON.stringify({ kind: /claus/.test(u) ? "state_question" : "bait", topic: "other", question: "", lang: /claus/.test(u) ? "zh" : "en" }))();
     if (sysOf(b).startsWith("agent: x-writer") && JSON.parse(u).facts?.lang === "zh") return xaiOut(JSON.stringify({ candidates: [drafts.shift()] }))();
     return synthetic("xai", b);
   };
@@ -1352,7 +1358,7 @@ test("X replies: an important account's bait in Chinese and a 3-day-old competit
     await putMention("9702", COMPETITORS[0], "@contractdna I'll take the compliment. Unipeg's NFT mechanics helped inspire mine, so credit to the OG for that.", { user: rival });
     await putMention("9703", "9703", "@contractdna 价格会涨吗", { user: { ...big, username: "bigzh" } });
     const r = await xM.repliesHandler.run(job()) as Record<string, string>;
-    assert.deepEqual([r["9701"], r["9702"], r["9703"]], ["bait", "greeting", "state_question"], "the reader's bait never ends an important or competitor reply; no author gate");
+    assert.deepEqual([r["9701"], r["9702"], r["9703"]], ["state_question", "greeting", "state_question"], "a competitor's bait is a greeting; no author gate");
     const ev = async (id: string) => (await sql<{ e: Record<string, unknown> }[]>`select event as e from x_outbox where event_key = ${`reply:${id}`}`)[0].e;
     assert.deepEqual([(await ev("9701")).lang, (await ev("9701")).tier, (await ev("9702")).relationship, (await ev("9702")).lang], ["zh", "important", "competitor", undefined]);
     // the Chinese reply: its letters pass, its English reading passed every check; the alert's Plan is the reply
@@ -1534,6 +1540,36 @@ test("X ideas: the author is tagged as the idea moves (under our own last reply,
     fakes.llm.xai = savedXai;
     await sql`update x_outbox set status = 'skipped' where status = 'queued' and (event_key like 'idea_%' or event_key like 'shoutout:%')`;
     await sql`delete from seq_build where id in ('b-9801', 'b-9803')`;
+  }
+});
+
+test("X threads: an important account's kind word gets a thank-you (no topic, no question); with a link, an idea or a contract ask, nothing", { skip }, async () => {
+  await liveMode();
+  const social = await import("../src/x-social.ts");
+  const saved = { ...X };
+  const savedXai = fakes.llm.xai;
+  fakes.llm.xai = (b) => synthetic("xai", b);
+  try {
+    Object.assign(X, { aiRepliesApproved: true, holdImportant: false, dailyReplies: 1000, hourlyReplies: 1000 });
+    await sql`update x_outbox set status = 'skipped' where status in ('queued', 'held')`;
+    await putMention("9951", "9951", "@contractdna what is the fee cap?", { conversation_id: "9950", user: { ...GATED_IN, username: "asker2" } });
+    await sql`insert into x_outbox (type, event_key, event, reply_to, status, tweet_id, updated_at) values ('reply', 'reply:9951', '{}', '9951', 'posted', '99501', now() - interval '1 minute')`;
+    await log.append("x_post", "reply:9951", { type: "reply", tweetId: "99501", status: "posted" });
+    // newest first, as X lists them; read oldest first, one turn a run: the skipped ones are recorded on the way
+    fakes.x.search = [
+      { id: "9954", conversation_id: "9950", author_id: "9954", text: "welcome back", user: IMPORTANT },
+      { id: "9953", conversation_id: "9950", author_id: "9953", text: "you should add a burn idea", user: IMPORTANT },
+      { id: "9952", conversation_id: "9950", author_id: "9952", text: "congrats, see mine https://example.com/x", user: IMPORTANT },
+    ];
+    await social.threadsHandler.run(job());
+    assert.deepEqual([(await outbox("thread:9952")).status, (await outbox("thread:9952")).error], ["skipped", "bait with a link"]);
+    assert.deepEqual([(await outbox("thread:9953")).status, (await outbox("thread:9953")).error], ["skipped", "an idea or a contract ask in a thread"]);
+    const [t] = await sql<{ event: Record<string, unknown> }[]>`select event from x_outbox where event_key = 'thread:9954'`;
+    assert.deepEqual([t.event.category, t.event.topic, t.event.question], ["thanks", "other", undefined]);
+  } finally {
+    Object.assign(X, saved);
+    fakes.llm.xai = savedXai;
+    await sql`update x_outbox set status = 'skipped' where status in ('queued', 'held')`;
   }
 });
 

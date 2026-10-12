@@ -1,9 +1,9 @@
 // The Sequencer's games on /play (#games): every game the GameFactory deployed, played right here through a panel this
 // site wrote (GamePanel.tsx), never the game's own page. Retired ones are listed apart: their claims stay open.
-// None yet: LIVE says so, mock mode renders nothing.
+// None yet: LIVE says so, mock mode renders nothing. Rendered inside the page's WalletProvider (page.tsx).
 import { LIVE } from "../_data/flags";
 import { getGames } from "../_data/source";
-import { PoisonNote, WalletBar, WalletProvider } from "../_ui/Wallet";
+import { PoisonNote, WalletBar } from "../_ui/Wallet";
 import { Section, ui } from "../_ui/ui";
 import { GamePanel } from "./GamePanel";
 import s from "./play.module.css";
@@ -27,11 +27,9 @@ export async function NewGames() {
   return (
     <div id="games">
       <Section title="New games" note="built by the sequencer">
-        <WalletProvider>
-          <WalletBar token={null} />
-          {live.length > 0 ? <div className={s.games}>{live.map(panel)}</div> : <p className={`${ui.prose} ${ui.muted}`}>No game is live right now.</p>}
-          {retired.length > 0 && <details className={ui.more}><summary>Retired games</summary><div className={s.games}>{retired.map(panel)}</div></details>}
-        </WalletProvider>
+        <WalletBar token={null} />
+        {live.length > 0 ? <div className={s.games}>{live.map(panel)}</div> : <p className={`${ui.prose} ${ui.muted}`}>No game is live right now.</p>}
+        {retired.length > 0 && <details className={ui.more}><summary>Retired games</summary><div className={s.games}>{retired.map(panel)}</div></details>}
         <p className={`${ui.prose} ${ui.muted}`}>Each game is a contract the sequencer wrote, checked and shipped in public. Games never take deposits, and never need an approval or a signed message: every button here sends a transaction with no ETH, to the game only.</p>
         <PoisonNote />
       </Section>

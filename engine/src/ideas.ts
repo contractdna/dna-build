@@ -34,6 +34,7 @@ import { analytic } from "./sim.ts";
 import { bind } from "./bindings.ts";
 import { parseBinding } from "./rewards.ts";
 import { reopenReply, skipReply } from "./x.ts";
+import { SEQ } from "./sequencer.ts";
 import { alert } from "./telegram.ts";
 import { addressOf, pub, send } from "./tx.ts";
 
@@ -672,6 +673,8 @@ export function settled(judged: BrainIdea | undefined, x: BrainIdea | undefined,
  *  person behind it, and a rubric. null = none. */
 export function variantOf(x: BrainIdea | undefined, readerKind: string, source: IdeaSource | null): z.infer<typeof brain.Variant> | null {
   if (!x?.variant || x.decision === "accept" || readerKind === "invalid" || !source) return null;
+  // a site page while the website takes no sequencer changes would be queued in public and never built: no version
+  if (x.variant.target === "site" && !SEQ.siteLive) return null;
   const title = agents.sanitize(x.variant.title).slice(0, 120), spec = agents.sanitize(x.variant.spec).slice(0, 900);
   if (title.startsWith("(withheld") || spec.startsWith("(withheld") || publicTextIssues(`${title} ${spec}`).length) return null;
   return { ...x.variant, title, spec };

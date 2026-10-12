@@ -33,7 +33,7 @@ const LINK_WEIGHT = 24;
 
 /** greeting: code's, never the reader's: what an ally or a competitor said that the reader took for bait (a hello, a
  *  jab); they are answered, the text still never reaches the writer. */
-export type Category = "rules_question" | "state_question" | "idea" | "official_contract" | "price_fud" | "airdrop_ask" | "bait" | "greeting";
+export type Category = "rules_question" | "state_question" | "idea" | "official_contract" | "price_fud" | "airdrop_ask" | "bait" | "greeting" | "thanks";
 /** What a fee vector means for a trader (pips → %; the multiplier as a plain factor). */
 export const feeFacts = (v: Vector) => ({ basePct: v[0] / 1e4, multiplier: v[1] / 1e4, capPct: v[2] / 1e4 });
 const CHANGE: Record<string, string> = {
@@ -259,11 +259,14 @@ function valuesOf(v: unknown, key = "", out = { pct: new Set<number>(), mult: ne
  *  ally gets no jab (and a greeting gets a warm word); no pointer at a link code does not append; an idea reply says
  *  the idea is logged; a reply never opens by echoing the question; a status states a figure of what moved; a percent
  *  carries %, a multiplier its x. */
+const THANKS_ISSUE = "a thank-you is one short warm line: no numbers, no questions, nothing else";
+// a thank-you in the reader's language (zh, ja, ko, ru, es, pt, fr, de, tr, vi, id) counts as warm too
+const THANKS_RE = /谢|感谢|ありがと|感謝|감사|고마|спасибо|gracias|obrigad|merci|danke|teşekkür|cảm ơn|terima kasih/iu;
 /** voiceIssues' reasons: a draft refused for one of them gets a redraft with the reason (draftInCharacter). */
 const VOICE_ISSUES = new Set(["the online post does not say it is live", "a jab in an ally post", "no warm word for an ally", "points at a link that is not there",
   "does not say the idea is logged", "opens by echoing the question", "does not state what moved", "implies demand or price support", "does not say who got it", "calls a transfer a sale", "does not say it was a sale",
   "does not say it was simulated", "does not say what is built instead", "says the idea is in when it is not", "a jab at unnamed others",
-  "starts a sentence in lower case", "lower-case i", "talks about its own mood", "says dev team"]);
+  "starts a sentence in lower case", "lower-case i", "talks about its own mood", "says dev team", THANKS_ISSUE]);
 /** The model-written texts held to the plain register (replyIssues): every reply, an idea's update in its thread, a take
  *  on crypto Twitter and the nightly reflection. */
 export const PLAIN_EVENTS = new Set(["reply", "idea_update", "ct", "reflection"]);
@@ -285,6 +288,7 @@ export function voiceIssues(facts: Record<string, unknown>, text: string, o: { l
   // the stale jabs are refused in every draft (tooSimilar); these near an ally (to one, about one, or naming one)
   if ((allyContext(facts) || namesAlly(t)) && JAB_RE.test(t)) out.push("a jab in an ally post");
   if (facts.category === "greeting" && facts.relationship === "ally" && !WARM_RE.test(t)) out.push("no warm word for an ally");
+  if (facts.category === "thanks" && (!(WARM_RE.test(t) || THANKS_RE.test(t)) || t.length > 100 || /\d|[?？]/.test(t))) out.push(THANKS_ISSUE);
   if (!o.linked && LINK_POINTER.test(t)) out.push("points at a link that is not there");
   // an idea reply states its verdict and never contradicts it: in (queued, or logged for a round) says so; a buildable
   // version says what is built instead; out, held back or not an idea never says it is in
@@ -1142,7 +1146,7 @@ export async function draftInCharacter(facts: FactSheet, tone: string[], filter:
 /** The reader's verdict: the kind, the topic (a closed enum: src/mechanics.ts TOPICS) and the question restated
  *  neutrally ("" when there is none). code checks the question again (questionOf) before any writer sees it. scam
  *  (phishing, drainers, fake claims, posing as DNA or an ally) and abuse (slurs, harassment) get no reply. */
-export const MentionOut = z.object({ kind: z.enum(["rules_question", "state_question", "idea", "official_contract", "price_fud", "airdrop_ask", "bait", "scam", "abuse"]), topic: z.enum(TOPICS), question: z.string().max(140),
+export const MentionOut = z.object({ kind: z.enum(["rules_question", "state_question", "idea", "official_contract", "price_fud", "airdrop_ask", "thanks", "bait", "scam", "abuse"]), topic: z.enum(TOPICS), question: z.string().max(140),
   lang: z.enum(["en", "zh", "ja", "ko", "ru", "es", "pt", "fr", "de", "tr", "vi", "id", "other"]).default("en") });
 /** Reply languages besides English (the reader's `lang`) → the letters a draft in it may use beyond ASCII (postFilter
  *  `script`). Code's lexicon is English: a draft that uses them is read back in English by another call and that
