@@ -1,0 +1,30 @@
+{
+  "spec": "TimeOfDayFee: a standalone fee module implementing the hook's fee-module interface. Constructor takes 24 hourly fee rates in pips (UTC hours 0-23), stored immutable; each must be within the policy bounds [10000, 30000] or the constructor reverts. The fee function reads , computes (timestamp / 3600) % 24 and returns that hour's rate; no storage writes, no external calls. A view schedule() returns all 24 rates so traders can read the full cycle. No owner, no setters, no payable code, no receive(). Gas per fee call stays well under DNAHook.MODULE_GAS_CAP 40_000. Tests: fuzz timestamps so every hour is hit and every fee is within bounds; gas cap test; constructor reverts on an out-of-bound rate; schedule() matches constructor input. Only proposed to the Safe, which alone may approve it. (a module build)",
+  "specSha256": "262a54b9aff50fc63119556e9f4aadb1532389f01e9cd803e937052c42890029",
+  "module": "fee",
+  "interface": [],
+  "bounds": {
+    "min": [
+      "10000",
+      "10000",
+      "10000",
+      "10000"
+    ],
+    "max": [
+      "30000",
+      "30000",
+      "30000",
+      "30000"
+    ],
+    "start": [
+      "20000",
+      "20000",
+      "20000",
+      "20000"
+    ]
+  },
+  "files": [
+    "contracts/src/modules/time-of-day-fee-modu-1000007/TimeOfDayFee.sol",
+    "contracts/test/modules/time-of-day-fee-modu-1000007/TimeOfDayFee.t.sol"
+  ]
+}
