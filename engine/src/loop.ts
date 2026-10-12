@@ -981,7 +981,7 @@ export async function journalNumbers(day: string) {
     // ideas that came in that day: holders' on-chain submissions and ideas from X the intake took in (the agent's own
     // submissions are those X ideas going on-chain: not counted twice)
     sql<{ n: number }[]>`select ((select count(*) from chain_log where event = 'IdeaSubmitted' and at >= ${new Date(from)} and at < ${new Date(to)} and lower(args->>'author') <> ${addressOf("agent")?.toLowerCase() ?? ""})
-      + (select count(*) from intake where at >= ${new Date(from)} and at < ${new Date(to)} and status in ('candidate', 'picked', 'submitted', 'not_picked')))::int as n`,
+      + (select count(*) from intake where at >= ${new Date(from)} and at < ${new Date(to)} and status in ('candidate', 'picked', 'submitted', 'not_picked', 'queued', 'rejected')))::int as n`,
     sql<{ sims: number; rejected: number; redteam: number; canaries: number }[]>`select
       count(*) filter (where kind = 'sim')::int as sims,
       count(*) filter (where kind = 'memory' and doc->>'decision' <> 'accepted')::int as rejected,

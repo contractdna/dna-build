@@ -137,7 +137,7 @@ test("halted: no model call is sent or booked (dry_run calls as before); a halte
   assert.equal(sent.length, 1);
 
   // the job layer: the cycle, the journal and the scout (every MODEL_JOBS kind) wait while halted; others run
-  for (const k of ["x:scout", "cycle", "journal", "genesis", "x:mentions", "x:replies", "voice:audit", "ideas:rounds"]) assert.ok(MODEL_JOBS.includes(k), k);
+  for (const k of ["x:scout", "cycle", "journal", "genesis", "x:mentions", "x:replies", "voice:audit", "ideas:rounds", "x:ct"]) assert.ok(MODEL_JOBS.includes(k), k);
   const ran: string[] = [];
   const h = (kind: string): Handler => ({ lane: "x", run: async () => ran.push(kind) });
   let m = "halted";

@@ -39,7 +39,20 @@ const { edb: sql, migrate } = await import("../src/db.ts");
 const status = await import("../src/status.ts");
 const xM = await import("../src/x.ts");
 const modeM = await import("../src/mode.ts");
-const { d, LLM } = await import("../src/config.ts");
+const { d, LLM, MEDIA } = await import("../src/config.ts");
+const card = await import("../src/card.ts");
+/** What `f` returns, and the art requests a studio (stubbed: it accepts every request) got meanwhile, as "key scene". */
+async function artAsked(f: () => Promise<unknown>) {
+  const asked: string[] = [];
+  const [url, fetch0] = [MEDIA.studioUrl, card.STUDIO.fetch];
+  MEDIA.studioUrl = "https://studio.test";
+  card.STUDIO.fetch = async (_u: string, init?: RequestInit) => {
+    const b = JSON.parse(String(init!.body)) as { eventKey: string; slots: { event: string } };
+    asked.push(`${b.eventKey} ${b.slots.event}`);
+    return new Response("{}", { status: 202 });
+  };
+  try { return { r: await f(), asked: asked.sort() }; } finally { MEDIA.studioUrl = url; card.STUDIO.fetch = fetch0; }
+}
 const { announce, recordUrl } = await import("../src/announce.ts");
 
 before(async () => { if (ADMIN) { await migrate(); await modeM.initMode(); } });
@@ -216,7 +229,9 @@ test("chain progress: one post per kind that happened in the 2 h window (DNA's o
   const launchAt = LLM.launchAt;
   LLM.launchAt = Date.now() - 12 * 3600_000; // inside the launch window: every 2 h
   const window = new Date(Date.parse(due) - 30 * 60_000 - 2 * 3600_000).toISOString().slice(0, 13);
-  assert.deepEqual(await run(), { [`fees_distributed:${window}`]: true, [`burn_summary:${window}`]: true });
+  const first = await artAsked(() => run());
+  assert.deepEqual(first.r, { [`fees_distributed:${window}`]: true, [`burn_summary:${window}`]: true });
+  assert.deepEqual(first.asked, [`burn_summary:${window} digest`, `fees_distributed:${window} jackpot_drawn`], "studio art asked for at enqueue, under the borrowed scenes");
   assert.deepEqual(await run(), { [`fees_distributed:${window}`]: false, [`burn_summary:${window}`]: false }, "a retried run queues nothing twice");
   const [f] = await outbox("fees_distributed:%");
   assert.deepEqual(f.event, { event: "fees_distributed", hours: 2, distributions: 2, totalEth: 0.5, buybackEth: 0.175, liquidityEth: 0.15, treasuryEth: 0.125, gamesEth: 0.05 });
@@ -262,7 +277,9 @@ test("site changes: each one posted once, oldest first, linking the changed page
   const saved = status.SITE.changes;
   try {
     status.SITE.changes = async () => list;
-    assert.deepEqual(await status.siteChangesHandler.run(job("site:changes")), { "site:c2": true }, "the oldest new one first");
+    const first = await artAsked(() => status.siteChangesHandler.run(job("site:changes")));
+    assert.deepEqual(first.r, { "site:c2": true }, "the oldest new one first");
+    assert.deepEqual(first.asked, ["site:c2 outcome"], "studio art asked for at enqueue, under the experiment's scene");
     const [row] = await sql<{ link: string; event: Record<string, unknown> }[]>`select link, event from x_outbox where event_key = 'site:c2'`;
     assert.equal(row.link, "https://genomedna.xyz/play");
     assert.equal(row.event.event, "site_changed");

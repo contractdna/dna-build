@@ -18,7 +18,7 @@
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { type Address, type Hex } from "viem";
-import { d, LOG_BASE_URL, MEDIA, X } from "./config.ts";
+import { d, IDEAS_LIVE, LOG_BASE_URL, MEDIA, X } from "./config.ts";
 import { edb as sql } from "./db.ts";
 import { Defer, type Handler } from "./jobs.ts";
 import { decodeOp, OPS } from "./lib.ts";
@@ -44,7 +44,7 @@ import { type Card, cardFor, mediaRecord, requestArtFor } from "./card.ts";
 import { jsonSafe } from "./lib.ts";
 import { dayOfLife, mindNow, pendingNow, storyNow } from "./life.ts";
 import { GUARD_ABI, hasLaunchGuard, mechanicsFor, type Topic } from "./mechanics.ts";
-import { intentOf, MIND_EVENTS, oldTokenTalk, questionOf } from "./voice.ts";
+import { flatTake, intentOf, MIND_EVENTS, oldTokenTalk, questionOf, writerSystem } from "./voice.ts";
 
 export { weightedLength };
 const sha = (s: string) => createHash("sha256").update(s).digest("hex");
@@ -205,27 +205,52 @@ type Mention = { id: string; text: string; author_id?: string; created_at?: stri
   entities?: { mentions?: { id?: string | null; username?: string | null }[] } };
 type Mentions = { data?: Mention[]; includes?: { users?: (XUser & { id: string; username: string })[] }; meta?: { newest_id?: string } };
 
+/** Mentions (or quotes) as X returned them, each stored once. Signed in the enclave: a mention row the DB made up (to
+ *  steer a reply at any tweet id) is never answered; the author's profile is part of it (a DB can't hand a gate-failing
+ *  author a badge). */
+async function storeMentions(b: Mentions) {
+  const users = new Map((b.includes?.users ?? []).map((u) => [u.id, u]));
+  for (const m of b.data ?? []) {
+    const u = m.author_id ? users.get(m.author_id) : undefined;
+    const raw = JSON.parse(JSON.stringify({ ...m, user: u ?? null })) as Mention;
+    await sql`insert into x_mention (id, author_id, author_username, text, created_at, raw, sig)
+      values (${m.id}, ${m.author_id ?? null}, ${u?.username ?? null}, ${m.text}, ${m.created_at ?? null}, ${sql.json(raw as never)}, ${await stateSig("x_mention", m.id, { author: m.author_id ?? null, text: m.text, raw })})
+      on conflict (id) do nothing`;
+  }
+}
+const MENTION_FIELDS = { expansions: "author_id", "user.fields": "username,created_at,public_metrics,verified,verified_type", "tweet.fields": "created_at,referenced_tweets,conversation_id,entities" };
+/** Quotes of our own posts of the last 2 days that do not @mention us (X's mentions list misses them): stored like
+ *  mentions, so an idea posted as a quote goes through the same gate and screen (and the same reply rules: a quote of
+ *  our post summons us, isSummoned). One call per post, hourly, in live idea mode. */
+export const quotesHandler: Handler = {
+  lane: "x",
+  run: async () => {
+    if (!X.userId) return "X_USER_ID unset";
+    const ours = await sql<{ id: string }[]>`select distinct doc->>'tweetId' as id from log where kind = 'x_post' and doc->>'status' = 'posted'
+      and at >= now() - interval '2 days' and doc->>'tweetId' ~ '^[0-9]{1,20}$' order by 1 desc limit 40`;
+    let n = 0;
+    for (const p of ours) {
+      const r = await x<Mentions>("GET", `/2/tweets/${p.id}/quote_tweets?${new URLSearchParams({ max_results: "100", ...MENTION_FIELDS })}`);
+      if (r.status !== 200) throw new Error(`X quotes of ${p.id}: ${r.status}`);
+      await storeMentions(r.body);
+      n += r.body.data?.length ?? 0;
+    }
+    return `${n} quotes of ${ours.length} posts`;
+  },
+};
+
 export const mentionsHandler: Handler = {
   lane: "x",
   run: async () => {
     if (!X.userId) return "X_USER_ID unset";
     const [s] = await sql<{ value: { sinceId?: string } }[]>`select value from state where key = 'engine_x'`;
     // the author's profile feeds the idea gate (src/ideas.ts authorIssue) and the reply gate (accountIssue)
-    const q = new URLSearchParams({ max_results: "100", expansions: "author_id", "user.fields": "username,created_at,public_metrics,verified,verified_type", "tweet.fields": "created_at,referenced_tweets,conversation_id,entities" });
+    const q = new URLSearchParams({ max_results: "100", ...MENTION_FIELDS });
     if (s?.value.sinceId) q.set("since_id", s.value.sinceId);
     // simplification: one page per poll (≤ 100 mentions a minute); follow meta.next_token if the bot gets busier
     const r = await x<Mentions>("GET", `/2/users/${X.userId}/mentions?${q}`);
     if (r.status !== 200) throw new Error(`X mentions ${r.status}`);
-    const users = new Map((r.body.includes?.users ?? []).map((u) => [u.id, u]));
-    for (const m of r.body.data ?? []) {
-      // signed in the enclave: a mention row the DB made up (to steer a reply at any tweet id) is never answered; the
-      // author's profile is part of it (a DB can't hand a gate-failing author a badge)
-      const u = m.author_id ? users.get(m.author_id) : undefined;
-      const raw = JSON.parse(JSON.stringify({ ...m, user: u ?? null })) as Mention;
-      await sql`insert into x_mention (id, author_id, author_username, text, created_at, raw, sig)
-        values (${m.id}, ${m.author_id ?? null}, ${u?.username ?? null}, ${m.text}, ${m.created_at ?? null}, ${sql.json(raw as never)}, ${await stateSig("x_mention", m.id, { author: m.author_id ?? null, text: m.text, raw })})
-        on conflict (id) do nothing`;
-    }
+    await storeMentions(r.body);
     if (r.body.meta?.newest_id) {
       await sql`insert into state (key, block, value) values ('engine_x', 0, ${sql.json({ sinceId: r.body.meta.newest_id })})
         on conflict (key) do update set value = excluded.value, updated_at = now()`;
@@ -336,6 +361,18 @@ export async function deletePost(id: string | undefined, by: string) {
   if (r.status !== 200 || !r.body.data?.deleted) return `X refused to delete ${id}: ${r.status}`;
   await append("x_post", posted.ref, { status: "deleted", tweetId: id, by });
   return `deleted post ${id}`;
+}
+
+/** What a reply to an idea may say about it (code's words): logged for the round, or in live idea mode its verdict. */
+export async function intakeFact(mention: string): Promise<{ intake?: string }> {
+  const [r] = await sql<{ status: string }[]>`select status from intake where mention_id = ${mention}`;
+  if (!IDEAS_LIVE) return r && ["candidate", "picked"].includes(r.status) ? { intake: "their idea is logged for the open round; when it closes the top ideas go on-chain to be staked on" } : {};
+  const say: Record<string, string> = {
+    candidate: "their idea passed the screen and is being judged now; the verdict goes on the site within minutes",
+    queued: "their idea was judged and accepted: it is queued for the AI dev team, which builds the best queued idea whenever it is free",
+    rejected: "their idea was judged and not taken this time; the reason is on the site",
+  };
+  return r && say[r.status] ? { intake: say[r.status] } : {};
 }
 
 // ---------------------------------------------------------------- the outbox
@@ -529,7 +566,7 @@ export const sendHandler: Handler = {
     // a post queued too long rolls into the daily digest (never dropped); only a stale reply is skipped. Cutoffs on the
     // DB's clock
     const stale = sql`created_at < now() - make_interval(secs => ${X.staleMs / 1000})`;
-    await sql`update x_outbox set status = 'digest', error = 'rolled into the digest: stale', updated_at = now() where status = 'queued' and type = 'post' and ${stale} and event->>'event' <> 'digest'`;
+    await sql`update x_outbox set status = 'digest', error = 'rolled into the digest: stale', updated_at = now() where status = 'queued' and type = 'post' and ${stale} and event->>'event' not in ('digest', 'ct')`;
     await sql`update x_outbox set status = 'skipped', error = 'stale', updated_at = now() where status in ('queued', 'held') and type = 'reply' and ${stale}`;
     // a digest not out within the stale window never takes a slot the next day (the next digest counts anew)
     await sql`update x_outbox set status = 'skipped', error = 'stale digest', updated_at = now() where status = 'queued' and type = 'post' and event->>'event' = 'digest' and ${stale}`;
@@ -582,7 +619,8 @@ export async function onlineAhead() {
 export const rankOf = (i: { type: string; event: Record<string, unknown> }) => (i.type === "reply" ? 4 : priorityOf(i.event));
 /** A post the writer could not produce rolls into the digest (never dropped); a reply or the digest itself fails. */
 async function giveUp(item: Outbox, status: "skipped" | "failed", error: string) {
-  if (item.type === "post" && item.event.event !== "digest") return setStatus(item.id, "digest", { error: `rolled into the digest: ${error}` });
+  // a take on crypto Twitter (src/ct.ts) is of its moment: dropped, never digested
+  if (item.type === "post" && item.event.event !== "digest" && item.event.event !== "ct") return setStatus(item.id, "digest", { error: `rolled into the digest: ${error}` });
   await setStatus(item.id, status, { error });
   if (item.event.event === "digest") await alert(`The daily digest ${item.event_key} was not posted: ${error}.`, `alert:digest:${item.event_key}`);
 }
@@ -596,16 +634,15 @@ async function sendOne(item: Outbox, m: string): Promise<unknown> {
   if (block) { await setStatus(item.id, "skipped", { error: block }); return "skipped"; }
   const raw = await resolve(item.event);
   if (!raw) { await setStatus(item.id, "skipped", { error: "not an agent op" }); return "skipped"; }
-  if (item.type === "post" && raw.event !== "digest") await announce(item.event_key, raw, { raw: item.event, tx: item.link, proof: proofOf(raw.append) }); // if not yet
+  if (item.type === "post" && raw.event !== "digest" && raw.event !== "ct") await announce(item.event_key, raw, { raw: item.event, tx: item.link, proof: proofOf(raw.append) }); // if not yet
   // the run's day on every post; the mind (src/life.ts; screened by factSheet) on the posts about its work; what it
   // waits on where someone may ask; the first of a kind marked
   const ev = String(raw.event);
   const facts = factSheet({
     ...raw, day: await dayOfLife(), ...(await storyNow(item.event_key, ev)), ...(MIND_EVENTS.has(ev) ? { mind: await mindNow() } : {}), ...(PENDING_EVENTS.has(ev) ? { pending: await pendingNow() } : {}),
     ...(FIRST_EVENTS.has(ev) && !(await sql`select 1 from log where kind = 'announce' and doc->>'type' = ${ev} and ref <> ${item.event_key} limit 1`).length ? { first: true } : {}),
-    // an idea the intake took in: the reply says it is logged
-    ...(item.type === "reply" && raw.category === "idea" && item.reply_to && (await sql`select 1 from intake where mention_id = ${item.reply_to} and status in ('candidate', 'picked')`).length
-      ? { intake: "their idea is logged for the open round; when it closes the top ideas go on-chain to be staked on" } : {}),
+    // an idea the intake took in: the reply says it is logged (live idea mode: where its verdict stands)
+    ...(item.type === "reply" && raw.category === "idea" && item.reply_to ? await intakeFact(item.reply_to) : {}),
   });
   // the mention a reply answers (code's check only: the writer never sees it)
   const mention = item.type === "reply" && item.reply_to ? (await sql<{ text: string }[]>`select text from x_mention where id = ${item.reply_to}`)[0]?.text : undefined;
@@ -652,7 +689,8 @@ async function sendOne(item: Outbox, m: string): Promise<unknown> {
   // the judge orders what passed every filter (2 or more); it never decides what is safe: on any failure, the first
   const passing = candidates.filter((c) => !c.issues.length);
   let judged: (JudgeOut & { model: string }) | null = null;
-  if (passing.length >= 2) {
+  // a take on crypto Twitter (src/ct.ts) is judged even alone: the judge decides whether it is worth posting (flatTake)
+  if (passing.length >= 2 || (facts.event === "ct" && passing.length)) {
     try {
       const j = await llm(judgeCall(facts, passing.map((c) => c.text), (memory?.recent ?? []).map((p) => p.text)));
       judged = { ...j.data, model: j.model };
@@ -660,13 +698,15 @@ async function sendOne(item: Outbox, m: string): Promise<unknown> {
       console.error(`x judge ${item.event_key}:`, (e as Error).message.slice(0, 200));
     }
   }
-  const pick = pickBest(candidates, judged);
+  const best = pickBest(candidates, judged);
+  const flat = facts.event === "ct" && best ? flatTake(judged, passing.indexOf(best), passing.length) : null;
+  const pick = flat ? undefined : best;
   // character memory reads these back (src/character.ts): the shape, mood, the running joke, the reader's X id
   const character = memory ? { shape: pick?.shape, mood: mood ?? memory.mood, redraft: w.redraft, ...(author ? { author } : {}) } : {};
-  const rec = { type: item.type, outbox: item.id, event: item.event_key, facts, promptHash: sha(WRITER), personaSha256: PERSONA.sha256, model: w.model, tone, candidates: publicCandidates(candidates), shapes, ...(judged ? { judge: judged } : {}), mode: m, media: mediaRecord(card), ...character };
+  const rec = { type: item.type, outbox: item.id, event: item.event_key, facts, promptHash: sha(writerSystem(facts)), personaSha256: PERSONA.sha256, model: w.model, tone, candidates: publicCandidates(candidates), shapes, ...(judged ? { judge: judged } : {}), mode: m, media: mediaRecord(card), ...character };
   if (!pick) {
-    await append("x_post", item.event_key, { ...rec, status: "miss" });
-    await giveUp(item, "skipped", "no candidate passed the filter");
+    await append("x_post", item.event_key, { ...rec, status: "miss", ...(flat ? { why: flat } : {}) });
+    await giveUp(item, "skipped", flat ?? "no candidate passed the filter");
     return "miss";
   }
   const draft = pick.text.normalize("NFKC").trim();
@@ -1021,7 +1061,7 @@ export async function burnedDna(from: Date, to?: Date) {
   return Math.round(Number(BigInt(String(burned ?? "0").split(".")[0]) / 10n ** 18n));
 }
 
-/** Daily (23:00 UTC), one post that counts as 1 of the 15: the day's numbers (`dayFacts`) and the posts that did not
+/** Daily (23:00 UTC), one post that counts as 1 of the 25: the day's numbers (`dayFacts`) and the posts that did not
  *  fit today (rolled over, or still queued behind the cap) by kind, with the link to the full list; each of those is
  *  on the site already (announced again here if it never resolved before). */
 export const digestHandler: Handler = {
@@ -1032,7 +1072,7 @@ export const digestHandler: Handler = {
     const due = typeof job.payload.due === "string" ? Date.parse(job.payload.due) : NaN;
     if (Date.now() - due > 3600_000) return `missed the digest hour (${job.payload.due}): rolled into the next one`;
     const items = await sql<Outbox[]>`select id::text, type, event_key, event, reply_to, link, created_at, errors, sig from x_outbox
-      where type = 'post' and status in ('queued', 'digest') and event->>'event' <> 'digest' order by id`;
+      where type = 'post' and status in ('queued', 'digest') and event->>'event' not in ('digest', 'ct') order by id`;
     // counts first, then the digest (keyed by its batch: a retry after a crash enqueues the same row, never a second),
     // then the batch is marked in one statement. It posts on every day something happened, with the day's numbers
     const counts: Record<string, number> = { money: 0, games: 0, experiments: 0, other: 0 };

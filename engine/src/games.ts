@@ -15,8 +15,8 @@
 //    now; the winner goes through loop.queueCandidate and the board records ballotRun(…, opId), else ballotSkipped.
 //  - the mystery sealer: payload = a candidate vector, keccak256(salt ‖ payload) sealed REVEAL_MIN + 1 h out; at reveal
 //    the payload is gated like any candidate (mysteryRun / mysteryRejected).
-//  - drawInterval: the interval at which the jackpot inflow reaches DRAW_TARGET_PRIZE, within [12 h, 3 d], proposed
-//    only when it differs from the current one by > 25%.
+//  - drawInterval: the interval at which the jackpot inflow reaches DRAW_TARGET_PRIZE, within [12 h, maxInterval (24 h)],
+//    proposed only when it differs from the current one by > 25%, or the current one is above maxInterval.
 import { HOOK_FEES } from "./hook-fees.ts";
 import { randomBytes } from "node:crypto";
 import { type Abi, type Address, BaseError, ContractFunctionRevertedError, encodePacked, type Hex, keccak256, parseAbi, stringToHex, toHex } from "viem";
@@ -50,6 +50,8 @@ export const C = {
 export const GAME_POLICY = {
   drawTargetPrize: 10n ** 18n, // drawInterval: aim for ~1 ETH a draw
   intervalChange: 0.25, // propose a new interval only when it moves > 25%
+  // draws never wait longer than this (DRAW_MAX_INTERVAL_H, default 24), kept within the contract's [12 h, 3 d]
+  maxInterval: Math.min(C.MAX_INTERVAL, Math.max(C.MIN_INTERVAL, Math.round(Number(process.env.DRAW_MAX_INTERVAL_H) || 24) * H)),
   mysteryEveryS: 7 * DAY, // a new mystery each week (the contract allows one sealed at a time)
   ballotMinStakedBps: 100n, // ballots only while ≥ 1% of DNA is staked
 };
@@ -115,13 +117,15 @@ export const expiredClaims = (prizes: { drawId: number; wonAt: number; claimed: 
 export const brokenDue = (m: { status: number; revealAt: number }, now: number) => m.status === 1 && now >= m.revealAt + C.REVEAL_WINDOW;
 export const revealDue = (m: { status: number; revealAt: number }, now: number) => m.status === 1 && now >= m.revealAt && now < m.revealAt + C.REVEAL_WINDOW;
 
-/** The interval at which the jackpot reaches the target prize, clamped to [12 h, 3 d] and rounded to the hour; null =
- *  keep the current one (no inflow, or within ±25%). */
+/** The interval at which the jackpot reaches the target prize, rounded to the hour and clamped to [12 h, maxInterval];
+ *  null = keep the current one (within ±25%, or no inflow). A current interval above maxInterval is always brought
+ *  down to it, so an interval set before the cap gets undone. */
 export function desiredInterval(jackpotInflowPerDayWei: bigint, current: number, p = GAME_POLICY): number | null {
-  if (jackpotInflowPerDayWei <= 0n) return null;
+  const over = current > p.maxInterval;
+  if (jackpotInflowPerDayWei <= 0n) return over ? p.maxInterval : null;
   const raw = Number((p.drawTargetPrize * BigInt(DAY)) / jackpotInflowPerDayWei);
-  const v = Math.min(C.MAX_INTERVAL, Math.max(C.MIN_INTERVAL, Math.round(raw / H) * H));
-  return Math.abs(v - current) / current > p.intervalChange ? v : null;
+  const v = Math.min(p.maxInterval, Math.max(C.MIN_INTERVAL, Math.round(raw / H) * H));
+  return over || Math.abs(v - current) / current > p.intervalChange ? v : null;
 }
 
 /** Three distinct ballot vectors around a base vector (deterministic), before gating. */

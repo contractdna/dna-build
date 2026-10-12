@@ -11,7 +11,7 @@ export const metadata: Metadata = {
   description: "Every result as it happens: jackpot winners, idea rewards, votes, mysteries, idea rounds and experiments, each with its transaction.",
 };
 
-// The engine writes one record per event the moment it sees it (engine/src/announce.ts); X gets at most 15 posts a day,
+// The engine writes one record per event the moment it sees it (engine/src/announce.ts); X gets at most 25 posts a day,
 // money first, and a daily digest of the rest. This page has all of them.
 const KIND: Record<number, string> = { 1: "money", 2: "vote / mystery", 3: "test", 4: "update" };
 const stamp = (iso: string) => {
@@ -32,7 +32,7 @@ export default async function AnnouncementsPage() {
           back={null}
           title="News"
           lede="Every result, the moment it happens: who won, what passed, what was killed, and the transaction behind each."
-          detail="X gets at most 15 posts a day, money first. This page gets everything."
+          detail="X gets at most 25 posts a day, money first. This page gets everything."
         />
 
         <section className={s.term} aria-labelledby="feed-title">

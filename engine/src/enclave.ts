@@ -39,7 +39,7 @@ export const isoWithZone = (v: string) => /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2}
 /** Literals in the hashed compose file (changing one = a new compose hash). */
 // GITHUB_REPO and SEQ_BOT: the Sequencer's repository and its bot's login (the operator can't point it elsewhere)
 // X_AI_REPLIES_APPROVED: "1" once X has approved AI replies (src/tiers.ts); until then only held replies a signer sends
-export const LITERAL_ENVS = ["ENCLAVE", "CHAIN_ID", "X_CLIENT_ID", "X_USER_ID", "POLICY_THRESHOLDS_SHA256", "STUDIO_URL", "LLM_LAUNCH_AT", "GITHUB_REPO", "SEQ_BOT", "X_AI_REPLIES_APPROVED"] as const;
+export const LITERAL_ENVS = ["ENCLAVE", "CHAIN_ID", "X_CLIENT_ID", "X_USER_ID", "POLICY_THRESHOLDS_SHA256", "STUDIO_URL", "LLM_LAUNCH_AT", "GITHUB_REPO", "SEQ_BOT", "X_AI_REPLIES_APPROVED", "IDEA_MODE", "TELEGRAM_PUBLIC_CHAT"] as const;
 /** The Sequencer's compiler, pinned by sha256 in the image (engine/Dockerfile sets SEQ_SOLC to it). */
 export const IMAGE_SOLC = "/usr/local/bin/solc";
 /** Set by the image (part of its digest) or the container runtime. */
@@ -57,7 +57,8 @@ const sha256 = (s: string) => createHash("sha256").update(s).digest("hex");
 
 /** The prompt sections the enclave requires in DNA_PERSONA (src/persona.ts holds a neutral default for each). */
 export const PROMPT_IDS = ["research", "hypothesize", "redteam", "decide", "narrate", "lesson", "journal", "genesis", "brain",
-  "x-writer", "x-scout", "x-scout-handles", "x-shapes", "x-bits", "x-foils", "x-judge", "x-reader", "x-audit", "game-namer"] as const;
+  "x-writer", "x-scout", "x-scout-handles", "x-shapes", "x-bits", "x-foils", "x-judge", "x-reader", "x-audit", "game-namer",
+  "x-ct", "x-ct-scout", "x-ct-watch"] as const;
 export type PromptId = (typeof PROMPT_IDS)[number];
 const PROMPT_ID = /^[a-z][a-z0-9.-]{0,63}$/;
 
@@ -112,6 +113,7 @@ export function envIssues(env: Record<string, string | undefined>): string[] {
   // the Telegram trio is the kill switch (/halt, /mute): an enclave must not boot without it
   for (const k of ["DATABASE_URL", ...RPC_HOSTS.map((h) => h.key), "TELEGRAM_BOT_TOKEN", "TELEGRAM_GROUP_ID", "TELEGRAM_ALLOWED_USER_IDS"]) if (!env[k]) out.push(`${k} is required`);
   if (env.TELEGRAM_GROUP_ID && !/^-?\d+$/.test(env.TELEGRAM_GROUP_ID)) out.push("TELEGRAM_GROUP_ID must be a numeric chat id");
+  if (env.TELEGRAM_PUBLIC_CHAT && !/^(@[A-Za-z0-9_]{5,32}|-?\d+)$/.test(env.TELEGRAM_PUBLIC_CHAT)) out.push("TELEGRAM_PUBLIC_CHAT must be a channel's @name or a numeric chat id");
   if (env.TELEGRAM_ALLOWED_USER_IDS && !/^\d+(,\d+)*$/.test(env.TELEGRAM_ALLOWED_USER_IDS)) out.push("TELEGRAM_ALLOWED_USER_IDS must be comma-separated numeric user ids");
   // the persona: the brain must not run on the neutral default in the enclave
   if (!env.DNA_PERSONA) out.push("DNA_PERSONA is required");

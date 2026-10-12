@@ -67,7 +67,7 @@ Owners approve or veto by signing (EIP-191) a 32-byte hash of: the action ("dna/
 
 ## Spending limits
 
-- Up to $200 a day for the first 7 days after launch, then up to $100 a day.
+- Up to $300 a day (the AI dev team builds several things a day: up to 3 at once, 5 a day).
 - Up to $3,000 a month.
 - Per-job daily limits: research $20, red team $40, everything else $40.
 
@@ -75,17 +75,16 @@ Owners approve or veto by signing (EIP-191) a 32-byte hash of: the action ("dna/
 
 Each day's limit is split in two, so the Sequencer (the AI dev team) and the rest of the engine can't starve each other:
 
-| Day's limit | Sequencer (48%) | Everything else (52%) | One Sequencer order at most |
+| Day's limit | Sequencer (65%) | Everything else (35%) | One Sequencer order at most |
 |---|---|---|---|
-| $200 (first week) | $96 | $104 | $12 |
-| $100 | $48 | $52 | $12 |
-| $40 (treasury-scaled) | $19.20 | $20.80 | $4.80 |
+| $300 | $195 | $105 | $12 |
+| $40 (treasury-scaled) | $26 | $14 | $6.50 |
 
 - A Sequencer order may cost at most $12, and never more than a quarter of the Sequencer's part, so a whole build (the first try and up to three reworks) always fits the day it starts. At a lower limit builds keep running with smaller budgets.
-- When a build starts, its whole budget (4 orders) is reserved from the Sequencer's part; what it did not spend is released when it ships, is dropped or is skipped. The 70% alerts are per part and count real charges only, so a reservation alone never alerts.
-- Inside the shared part, research stops at 80% of it and everything else at 100%. The per-budget limits (research $20, red team $40, the rest $40) add up to $100, more than the shared $52, so on a $100 day the shared part binds first: the per-budget limits only stop one budget from taking the whole part.
+- When a build starts, its whole budget (4 orders, $48) is reserved from the Sequencer's part; what it did not spend is released when it ships, is dropped or is skipped. Four reservations fit the $195 part, so three builds run at once with room for the day's real charges. The 70% alerts are per part and count real charges only, so a reservation alone never alerts.
+- Inside the shared part, research stops at 80% of it and everything else at 100%. The per-budget limits (research $20, red team $40, the rest $40) add up to $100, just under the shared $105, so they are what binds.
 - A build's reservation, each round's charge and the release are rows of the day the build started: a build still running at midnight never takes from the next day's part. While a build runs its day counts the reservation and the rounds charged so far; once it ends it counts exactly what its rounds cost.
-- The monthly limit bounds the total. As the month's spend nears it, work stops in a fixed order: the Sequencer first (at 60% of the month's limit), then research (at 80%), then everything else (at 100%). A full month of $100 days is $3,100, more than $3,000, so in a long month the monthly limit is the one that binds: expected, and the Sequencer pauses first. The launch month binds harder: 7 days at $200 and 24 at $100 come to $3,800, so the monthly limit stops the Sequencer once the month reaches $1,800, research at $2,400 and everything else at $3,000. Keepers never call a model.
+- The monthly limit bounds the total. As the month's spend nears it, work stops in a fixed order: the Sequencer first (at 60% of the month's limit, once the month's total spend reaches $1,800), then research (at 80%, $2,400), then everything else (at 100%, $3,000). A month of full $300 days would be far above it, so the monthly limit is the real ceiling; expected spend is well under it (docs/CAPACITY.md). Keepers never call a model.
 - A build round is charged what its run reports (`report.json`, written by the workflow's own code from the model calls; the dev team can't touch it), never more than the order's ceiling, and the whole ceiling when the report is missing. A forged report could only lower a charge, and forging one takes a GitHub compromise. The real backstop for the Sequencer's spend is the hard limit on its own OpenRouter key.
 - The engine has a rule to hold the daily limit to a share of what the treasury earns (never above the limits above); it is not switched on yet.
 - Each call is checked against these limits before it is made, assuming its most expensive outcome. The provider accounts have their own hard limits as well.

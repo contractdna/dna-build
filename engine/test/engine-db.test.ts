@@ -241,8 +241,8 @@ test("LLM: record → replay from the fixture, zod rejects bad output, cost reco
   await sql`insert into llm_call (agent, budget, mode, requested_model, prompt_hash, schema_hash, input_hash, cost_usd, ok) values ('t', 'rest', 'live', 'grok-4.7', '', '', '', 39.99, true)`;
   await assert.rejects(llmM.llm({ ...call, input: { q: 4 } }), (e) => e instanceof jobs.Defer && /rest LLM cap/.test(e.message));
   assert.equal((await sql`select count(*)::int as n from job where kind = 'alert' and dedupe_key like 'alert:llmcap:%'`)[0].n, 1);
-  // 70% of the shared part ($52 of the $100 day: $36.40) → one alert per part per day; a dev reservation never alerts
-  await sql`insert into llm_call (agent, budget, mode, requested_model, prompt_hash, schema_hash, input_hash, cost_usd, ok) values ('t', 'research', 'live', 'grok-4.7', '', '', '', 5, true), ('t', 'redteam', 'live', 'x', '', '', '', 2, true),
+  // 70% of the shared part ($105 of the $300 day: $73.50) → one alert per part per day; a dev reservation never alerts
+  await sql`insert into llm_call (agent, budget, mode, requested_model, prompt_hash, schema_hash, input_hash, cost_usd, ok) values ('t', 'research', 'live', 'grok-4.7', '', '', '', 30, true), ('t', 'redteam', 'live', 'x', '', '', '', 5, true),
     (${llmM.RESERVE_AGENT}, 'dev', 'live', 'sequencer', '', '', '', 48, true)`;
   fakes.llm.anthropic = () => ({ model: "claude-opus-5-5", stop_reason: "end_turn", content: [{ type: "text", text: '{"verdict":"pass","reason":"r"}' }], usage: { input_tokens: 10, output_tokens: 10 } });
   await llmM.llm({ ...call, agent: "redteam", provider: "anthropic", model: "claude-opus-5-5", tools: undefined, input: { q: 5 }, maxOutputTokens: 1000 });
@@ -491,10 +491,10 @@ test("X pipeline: chain event → fact sheet → writer (no tools) → filter �
     // spacing: the next post waits X_POST_SPACING_MIN; the daily cap; stale items drop
     await xM.onChainEvent({ eventName: "RolledBack", args: { kind: 0 }, transactionHash: H(2), logIndex: 3 });
     X.spacingMs = 20 * 60_000;
-    assert.match(String(await xM.sendHandler.run(job())), /^waiting: posts \d+\/15 \(spacing 20 min\)/);
+    assert.match(String(await xM.sendHandler.run(job())), new RegExp(`^waiting: posts \\d+/${X.dailyPosts} \\(spacing 20 min\\)`));
     X.spacingMs = 0; X.dailyPosts = (await xM.usedToday()).post;
     assert.match(String(await xM.sendHandler.run(job())), /^waiting: posts (\d+)\/\1 /);
-    X.dailyPosts = 15;
+    X.dailyPosts = 25;
     // dry_run: written and filtered, never posted
     await modeM.setOverride("dry_run", "test");
     const t = tweets().length;

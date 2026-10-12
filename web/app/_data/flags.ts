@@ -14,4 +14,4 @@ export const SOURCE_COMMIT = "bc96d653421bf414e6849e20d4697306269e659a";
 // The running engine's public source (engine/, contracts/SPEC.md, docs/) and the commit its enclave image is built from
 // (the same commit /proof pins). LIVE only, like SOURCE_REPO.
 export const ENGINE_REPO = LIVE ? "https://github.com/contractdna/dna-build" : null;
-export const ENGINE_COMMIT = "6a8d8b44d68d3cad7596f2d8a4b696d76961fcda";
+export const ENGINE_COMMIT = "fcec127e8dfe99d9d1802b44701a1024386a5e49";

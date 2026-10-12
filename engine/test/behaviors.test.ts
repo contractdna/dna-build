@@ -116,6 +116,14 @@ test("facts that can always post: a negated ship word, a public reason, a prize'
   assert.deepEqual(claimIssues({ event: "seq_started" }, "building started. nothing has shipped yet, the workshop is loud."), []);
   assert.deepEqual(claimIssues({ event: "seq_killed" }, "dropped it. it never shipped and it isn't live anywhere."), []);
   assert.deepEqual(claimIssues({ event: "seq_started" }, "nothing broke, and it shipped."), ["claims it shipped"]);
+  // live idea mode: an approved build may say approved, never live; a pull request or an idea verdict claims neither
+  assert.deepEqual(claimIssues({ event: "seq_verdict", verdict: "ship" }, "approved. it goes out after the public hour."), []);
+  assert.deepEqual(claimIssues({ event: "seq_verdict", verdict: "ship" }, "approved and it is live."), ["claims it shipped"]);
+  assert.deepEqual(claimIssues({ event: "seq_pr" }, "the pull request is up and approved"), ["claims it was approved"]);
+  assert.deepEqual(claimIssues({ event: "idea_judged", verdict: "queued" }, "your idea shipped"), ["claims it shipped"]);
+  assert.equal(factSheet({ event: "seq_started", title: "Coin Flip", reason: "simple, testable and fun", build: "b1", record: "9" }).why, "simple, testable and fun");
+  assert.equal(factSheet({ event: "seq_pr", title: "Coin Flip", round: 1, pr: 4, failed: ["G4"], record: "9" }).checksFailed, 1);
+  assert.match(String(factSheet({ event: "seq_verdict", title: "Coin Flip", round: 1, verdict: "ship", reason: "every gate passed", record: "9" }).stage), /nothing is live yet/);
   assert.deepEqual(claimIssues({ event: "seq_started" }, "not only shipped, it's live."), ["claims it shipped"], "only auxiliaries sit inside a negation");
   assert.deepEqual(claimIssues({ event: "seq_started" }, "it's live."), ["claims it shipped"]);
   assert.deepEqual([human(25_106_443), human(999_499_999), human(999_500_000), human(1_250_000_000)], ["25.1M", "999M", "1B", "1.25B"]);

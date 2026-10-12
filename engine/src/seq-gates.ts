@@ -66,14 +66,14 @@ export const NEVER: [RegExp, string][] = [
   [/^engine\/src\/(tx|keepers|lib)\.ts$/, "the transaction guards"],
   // what the engine says in public and to its owners, the chain reads it judges, GitHub (merges, releases) and the brain
   [/^engine\/src\/(x|voice|telegram|chainref|github|brain)\.ts$/, "the engine's voice, its owners' channel, chain reads, GitHub and the brain"],
-  // every file that loads or holds a model prompt: the bundle's ids and their neutral defaults
-  [/^engine\/src\/(agents|character|card|studio|games|persona)\.ts$/, "the model prompts and the persona"],
+  // every file that loads or holds a model prompt: the bundle's ids and their neutral defaults (ct: the CT takes' scout)
+  [/^engine\/src\/(agents|character|card|studio|games|persona|ct)\.ts$/, "the model prompts and the persona"],
   [/^engine\/src\/(seq-[a-z]+|sequencer|pages|limited|sandbox)\.ts$|^sequencer\/|^pagecheck\//, "the Sequencer's own gates"],
   [/^engine\/src\/(llm|policy|funding|rewards|anonymity|attest|proof)\.ts$/, "spend caps, money and what may be published"],
   [/^web\/(security|proxy|next\.config)\.ts$|^web\/app\/_ui\/(guard|tx)\.ts$|^web\/app\/(layout\.tsx|g\/layout\.tsx|api\/|proof\/)/, "the site's security layer"],
   [/(^|\/)(package(-lock)?\.json|\.npmrc|\.gitattributes|\.gitmodules)$/, "dependencies and repository settings"],
   // the tests that hold all of the above in place: weakening them would hide the next change that breaks it
-  [/^engine\/test\/((seq-[a-z-]+|sequencer[a-z-]*|pages|anonymity|approve|owner-approve|enclave[a-z-]*|sandbox|caps|image|workflow-lint|funding|rewards|llm-limits|lib|github|brain|brain-db|proof|voice|persona|swap|live-x|records\.typecheck)(\.test)?\.ts|fixtures\/seq\/)/, "the tests of what no order reaches"],
+  [/^engine\/test\/((seq-[a-z-]+|sequencer[a-z-]*|pages|anonymity|approve|owner-approve|enclave[a-z-]*|sandbox|caps|image|workflow-lint|funding|rewards|llm-limits|lib|github|brain|brain-db|proof|voice|persona|ct|ct-db|swap|live-x|records\.typecheck)(\.test)?\.ts|fixtures\/seq\/)/, "the tests of what no order reaches"],
 ];
 const neverIssue = (path: string) => NEVER.find(([re]) => re.test(path))?.[1];
 

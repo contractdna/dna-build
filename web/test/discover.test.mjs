@@ -35,7 +35,9 @@ test("no announcement: window.ethereum, else nothing", async () => {
 
 test("wallet-app links reopen this page; accounts must be addresses", () => {
   const l = openIn("https://genomedna.xyz/trade");
+  assert.equal(openIn("https://genomedna.xyz/trade?x=1")[0].href, "https://link." + "meta" + "mask.io/dapp/genomedna.xyz/trade?x=1");
   assert.deepEqual(l.map((x) => x.href), [
+    "https://link." + "meta" + "mask.io/dapp/genomedna.xyz/trade", // split: the publish scan lets the name through only in discover.ts
     "https://go.cb-w.com/dapp?cb_url=https%3A%2F%2Fgenomedna.xyz%2Ftrade",
     "https://link.trustwallet.com/open_url?coin_id=60&url=https%3A%2F%2Fgenomedna.xyz%2Ftrade",
   ]);

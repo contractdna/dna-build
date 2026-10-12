@@ -19,8 +19,9 @@ import { chainRows, launchTax, observeNow } from "./observe.ts";
 import { trustedDocs } from "./records.ts";
 import { stateSig, trusted } from "./log.ts";
 import { alert } from "./telegram.ts";
-import { TX_URL } from "./voice.ts";
+import { factSheet, TX_URL } from "./voice.ts";
 import { addressOf, pub } from "./tx.ts";
+import { requestArtFor } from "./card.ts";
 import { burnedDna, enqueueX, stateFacts, stopped } from "./x.ts";
 
 const HOUR = 3600_000;
@@ -203,7 +204,9 @@ async function announcedSince(types: string[], fromMs: number): Promise<Doc[]> {
 export async function post(key: string, facts: Record<string, unknown>) {
   await announce(key, facts);
   const [r] = await sql<{ seq: string }[]>`select seq::text from log where kind = 'announce' and ref = ${key} order by seq limit 1`;
-  return enqueueX(key, "post", facts, { link: recordUrl(r.seq) });
+  const id = await enqueueX(key, "post", facts, { link: recordUrl(r.seq) });
+  if (id) await requestArtFor(key, factSheet(facts)); // a post with studio art (the status, the recap): asked for now
+  return id;
 }
 /** A scheduled run's hour; null when it runs over an hour late (caught up at boot: a stale status never posts). */
 function dueAt(job: Job) {
@@ -329,6 +332,7 @@ export const progressHandler: Handler = {
       const link = `${TX_URL}${p.tx}`;
       await announce(p.key, p.facts, { tx: link });
       out[p.key] = !!(await enqueueX(p.key, "post", p.facts, { link })); // false: queued by an earlier run
+      if (out[p.key]) await requestArtFor(p.key, factSheet(p.facts)); // a fee split, a buyback: studio art, asked for now
     }
     return out;
   },
@@ -379,6 +383,7 @@ export const siteChangesHandler: Handler = {
     // the outbox row first: a crash before the site record leaves the id open, and the next run's insert is a no-op
     const queued = !!(await enqueueX(key, "post", facts, { link }));
     await announce(key, facts, { proof: link });
+    if (queued) await requestArtFor(key, factSheet(facts));
     return { [key]: queued };
   },
 };

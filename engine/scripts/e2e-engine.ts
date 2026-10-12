@@ -546,7 +546,7 @@ async function money() {
   const events = (eventName: string) => pub.getContractEvents({ address: gp, abi: abi.gamePotAbi, eventName: eventName as never, fromBlock: 0n }) as unknown as Promise<{ args: Record<string, unknown>; transactionHash: Hex; blockNumber: bigint }[]>;
   const safe = wallet(KEY.safe);
   let wd: ReturnType<typeof watchdog> | undefined;
-  await startEngine("live", { X_DAILY_POSTS: "100" }, "money"); // earlier phases spent today's 15 posts
+  await startEngine("live", { X_DAILY_POSTS: "100" }, "money"); // earlier phases spent today's 25 posts
   try {
     // params for the next window that can still be announced: recorded, anchored and mined before it starts
     await engineCli("enqueue", "games:agent", "{}");

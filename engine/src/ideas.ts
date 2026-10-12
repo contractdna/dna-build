@@ -7,6 +7,9 @@
 //    unless 2 Safe owners vetoed it or the agent is paused (M1, src/approve.ts) → agent proposeOutcome → Safe 24 h veto
 //    → keeper finalize. Rounds the engine never researched, or did not research within UNJUDGED_VOID_DAYS of closing,
 //    get an all-void report.
+//  - live mode (config.ts IDEA_MODE): no waiting on rounds. An X idea past the screen and a site submit are each judged
+//    at once (judgeLive: the reader's spec and the brain's signed outcome for that one idea) and an accepted fee or build
+//    idea queues for the Sequencer right away; every closed round gets an all-void report (every stake refunded).
 //  - idea status records are written only for closed rounds; accepted ideas of FINAL rounds feed the idea queue
 //    (src/idea-queue.ts: fee ideas → experiments, build ideas → the Sequencer).
 import { createHash } from "node:crypto";
@@ -17,11 +20,12 @@ import * as agents from "./agents.ts";
 import { type Deps, effective, live, type Row, trustedRows, vetoed } from "./approve.ts";
 import * as brain from "./brain.ts";
 import type { Rubric } from "./brain.ts";
-import { d, IDEA_OUTCOME_DELAY_MS, LOG_BASE_URL, X } from "./config.ts";
+import { d, IDEA_OUTCOME_DELAY_MS, IDEAS_LIVE, LOG_BASE_URL, X } from "./config.ts";
 import { edb as sql } from "./db.ts";
+import { ideaOnChain, type IdeaSource, queuedRow, queueLive, xSourceOf } from "./idea-queue.ts";
 import type { Handler } from "./jobs.ts";
 import { publicTextIssues, utf8Cut } from "./llm.ts";
-import { isRolledBack, trusted } from "./log.ts";
+import { isRolledBack, stateSig, trusted } from "./log.ts";
 import { mode } from "./mode.ts";
 import { chainRows, pair, stats } from "./observe.ts";
 import { LIMITS, POLICY, type Vector } from "./policy.ts";
@@ -98,14 +102,15 @@ export function overlap(a: string, b: string) {
   for (const w of x) if (y.has(w)) n++;
   return n / (x.size + y.size - n);
 }
-/** The whole gate for one mention. `round`: the author's earlier ideas this round and the texts already in it. */
-export function ideaGate(m: { text: string; user: XUser | null | undefined }, round: { authorIdeas: number; texts: string[] }, nowMs: number): string | null {
-  const who = authorIssue(m.user, nowMs);
+/** The whole gate for one mention. `round`: the author's earlier ideas this round and the texts already in it. `live`
+ *  (IDEA_MODE=live): no author bar beyond a profile, and `round` is the author's UTC day and the recent live ideas. */
+export function ideaGate(m: { text: string; user: XUser | null | undefined }, round: { authorIdeas: number; texts: string[] }, nowMs: number, live = false): string | null {
+  const who = live ? (m.user ? null : "no author profile") : authorIssue(m.user, nowMs);
   if (who) return who;
-  if (round.authorIdeas >= GATE.ideasPerAuthor) return `already ${GATE.ideasPerAuthor} idea from this author this round`;
+  if (round.authorIdeas >= GATE.ideasPerAuthor) return `already ${GATE.ideasPerAuthor} idea from this author ${live ? "today (UTC)" : "this round"}`;
   // X rewrites every real link to https://t.co/…: a scheme or www. is a link; "0.05 ETH" or "dna.vault" is not
   if (/https?:\/\/|www\./i.test(m.text.replace(/@\w+/g, ""))) return "links are not allowed in ideas";
-  if (round.texts.some((t) => overlap(t, m.text) >= GATE.overlap)) return "near-duplicate of an idea already in this round";
+  if (round.texts.some((t) => overlap(t, m.text) >= GATE.overlap)) return `near-duplicate of an idea ${live ? "received in the last 7 days" : "already in this round"}`;
   return null;
 }
 /** PICK: the top `n` candidates by score (ties: the earlier mention), and the rest. */
@@ -147,8 +152,8 @@ export const instructionMarkers = (text: string) => {
 type MentionIn = { id: string; text: string; author_id: string | null; raw: { user?: XUser } & Record<string, unknown>; sig: string | null };
 type Cand = { mention_id: string; round: number; score: number; title: string; body: string };
 /** Statuses of mentions that were ideas (they use the author's slot and are near-duplicate targets). */
-const IDEA_STATUSES = ["candidate", "picked", "submitted", "not_picked", "duplicate"];
-type IntakeRec = { mention: string; round: number; status: string; reason?: string; score?: number; title?: string; body?: string; idea?: number | null; submitRound?: number };
+const IDEA_STATUSES = ["candidate", "picked", "submitted", "not_picked", "duplicate", "queued", "rejected"];
+type IntakeRec = { mention: string; round: number; status: string; reason?: string; score?: number; title?: string; body?: string; idea?: number | null; submitRound?: number; live?: boolean };
 /** A mention's signed `intake` records: the newest one (and its status) and its candidate record (title, body, score). */
 async function signedIntake(id: string) {
   const docs = await trustedDocs<IntakeRec>("intake", id, 10).catch((e) => (isRolledBack(e) ? [] : Promise.reject(e)));
@@ -161,6 +166,8 @@ async function syncIndex(id: string, r: IntakeRec) {
   else await sql`update intake set status = ${r.status}, reason = ${r.reason ?? null} where mention_id = ${id}`;
 }
 const SETTLED = new Set(["picked", "not_picked", "submitted", "skipped"]);
+/** Live mode's window for near-duplicates and same titles. */
+export const LIVE_BACKFILL_DAYS = 7;
 
 export const intakeHandler: Handler = {
   lane: "ideas",
@@ -170,7 +177,7 @@ export const intakeHandler: Handler = {
     const current = Number(await read<bigint>("currentRound"));
     const out: Record<string, unknown> = {};
     const decide = async (id: string, round: number, status: string, reason: string, extra: Record<string, unknown> = {}) => {
-      await record("intake", id, { mention: id, round, status, reason, ...extra, at: nowIso() });
+      await record("intake", id, { mention: id, round, status, reason, ...extra, ...(IDEAS_LIVE ? { live: true } : {}), at: nowIso() });
       out[id] = status;
     };
 
@@ -185,7 +192,7 @@ export const intakeHandler: Handler = {
 
     // PICK: candidates of closed rounds, top 16 by score per round (16 minus those already picked or submitted from it,
     // so a crash between the two loops never picks more than 16)
-    for (const { round } of await sql<{ round: number }[]>`select distinct round from intake where status = 'candidate' and round < ${current} order by round`) {
+    for (const { round } of IDEAS_LIVE ? [] : await sql<{ round: number }[]>`select distinct round from intake where status = 'candidate' and round < ${current} order by round`) {
       const cands: Cand[] = [];
       for (const row of await sql<{ mention_id: string }[]>`select mention_id from intake where status = 'candidate' and round = ${round}`) {
         const s = await signedIntake(row.mention_id);
@@ -207,7 +214,7 @@ export const intakeHandler: Handler = {
     // SUBMIT: picked ideas into the current round, the oldest round's backlog first, then by signed score; a full round
     // leaves them picked for the next one
     const queue: { mention_id: string; round: number; c: NonNullable<Awaited<ReturnType<typeof signedIntake>>["cand"]> }[] = [];
-    for (const row of await sql<{ mention_id: string; round: number }[]>`select mention_id, round from intake where status = 'picked'`) {
+    for (const row of IDEAS_LIVE ? [] : await sql<{ mention_id: string; round: number }[]>`select mention_id, round from intake where status = 'picked'`) {
       const s = await signedIntake(row.mention_id);
       if (s.last && (s.last.status === "submitted" || s.last.status === "skipped")) { await syncIndex(row.mention_id, s.last); continue; } // recorded before a crash
       if (s.status !== "picked" || !s.cand) { await forged(row.mention_id, row.round, "has no signed pick record"); continue; }
@@ -241,15 +248,27 @@ export const intakeHandler: Handler = {
     }
 
     // GATE + SCREEN: new mentions become candidates of the current round
+    // live mode, once per mention: every stored mention (the table starts at launch) that an earlier gate or screen turned
+    // away (the author bar, a round's cap, a screen) is gated and screened again from its signed row, under the live
+    // rules; nothing of the old verdict is used. Each new intake record says `live`, so a mention is taken again at most
+    // once (the signed records decide; the query only narrows).
+    const again = IDEAS_LIVE ? await sql<MentionIn[]>`select m.id, m.text, m.author_id, m.raw, m.sig from x_mention m join intake i on i.mention_id = m.id
+      where i.status in ('gated', 'screened', 'duplicate', 'not_picked', 'skipped') and coalesce(i.reason, '') not like 'binding%'
+        and not exists (select 1 from log l where l.kind = 'intake' and l.ref = m.id and l.doc->>'live' = 'true')
+      order by coalesce(m.created_at, m.fetched_at), m.id limit 20` : [];
     const todo = await sql<MentionIn[]>`select id, text, author_id, raw, sig from x_mention m where not exists (select 1 from intake i where i.mention_id = m.id) order by created_at nulls first, id limit 20`;
-    for (const m of todo) {
+    for (const m of [...again.map((x) => ({ ...x, again: true })), ...todo]) {
       const reject = async (status: "skipped" | "gated" | "screened" | "duplicate", reason: string, extra: Record<string, unknown> = {}) => {
-        await sql`insert into intake (mention_id, round, status, reason, author_id, score) values (${m.id}, ${current}, ${status}, ${reason}, ${m.author_id}, ${(extra.score as number) ?? null})`;
+        await sql`insert into intake (mention_id, round, status, reason, author_id, score) values (${m.id}, ${current}, ${status}, ${reason}, ${m.author_id}, ${(extra.score as number) ?? null})
+          on conflict (mention_id) do update set round = excluded.round, status = excluded.status, reason = excluded.reason, score = excluded.score,
+            title = null, body = null, title_key = null, submit_round = null, idea_id = null, at = now()`;
         await decide(m.id, current, status, reason, extra);
       };
       // its index row was lost (a crash between the record and the insert): restore it from the record, never re-screen
       const prior = await signedIntake(m.id);
-      if (prior.last) {
+      if ("again" in m) {
+        if (prior.last?.live) continue; // already taken again (a DB that hid the record gets nothing)
+      } else if (prior.last) {
         const c = prior.cand;
         await sql`insert into intake (mention_id, round, status, reason, author_id, score, title, body, title_key)
           values (${m.id}, ${prior.last.round}, ${prior.last.status}, ${prior.last.status === "candidate" ? null : prior.last.reason ?? null}, ${m.author_id}, ${c?.score ?? null}, ${c?.title ?? null}, ${c?.body ?? null}, ${c ? titleKey(c.title) : null})`;
@@ -275,19 +294,49 @@ export const intakeHandler: Handler = {
         continue;
       }
       // only ideas count (a question or a joke screened out uses no slot and is no duplicate target)
-      const [{ n }] = await sql<{ n: number }[]>`select count(*)::int as n from intake where round = ${current} and author_id = ${m.author_id} and status in ${sql(IDEA_STATUSES)}`;
-      const texts = (await sql<{ text: string }[]>`select x.text from intake i join x_mention x on x.id = i.mention_id where i.round = ${current} and i.status in ${sql(IDEA_STATUSES)}`).map((r) => r.text);
-      const why = ideaGate({ text: m.text, user: m.raw.user }, { authorIdeas: n, texts }, Date.now());
+      // live mode: the author's ideas posted the same UTC day, and the live window's ideas, not a round's
+      const [{ n }] = IDEAS_LIVE
+        ? await sql<{ n: number }[]>`select count(*)::int as n from intake i join x_mention x on x.id = i.mention_id where i.author_id = ${m.author_id} and i.mention_id <> ${m.id}
+            and i.status in ${sql(IDEA_STATUSES)} and (coalesce(x.created_at, x.fetched_at) at time zone 'UTC')::date = (select (coalesce(created_at, fetched_at) at time zone 'UTC')::date from x_mention where id = ${m.id})`
+        : await sql<{ n: number }[]>`select count(*)::int as n from intake where round = ${current} and author_id = ${m.author_id} and status in ${sql(IDEA_STATUSES)}`;
+      const texts = (IDEAS_LIVE
+        ? await sql<{ text: string }[]>`select x.text from intake i join x_mention x on x.id = i.mention_id where i.mention_id <> ${m.id} and i.status in ${sql(IDEA_STATUSES)}
+            and coalesce(x.created_at, x.fetched_at) > now() - make_interval(days => ${LIVE_BACKFILL_DAYS})`
+        : await sql<{ text: string }[]>`select x.text from intake i join x_mention x on x.id = i.mention_id where i.round = ${current} and i.status in ${sql(IDEA_STATUSES)}`).map((r) => r.text);
+      const why = ideaGate({ text: m.text, user: m.raw.user }, { authorIdeas: n, texts }, Date.now(), IDEAS_LIVE);
       if (why) { await reject("gated", why); continue; }
       const s = screenDecision((await agents.screenMention(m.text)).data);
       if (s.status === "screened") { await reject("screened", s.reason); continue; }
       const { title, body, score } = s;
       const key = titleKey(title);
-      const [dup] = await sql`select 1 from intake where round = ${current} and title_key = ${key} and status in ('candidate', 'picked', 'submitted')`;
-      if (dup) { await reject("duplicate", "same title as an idea already in this round", { score }); continue; }
-      await decide(m.id, current, "candidate", `${s.reason}; picked or not when round ${current} closes`, { score, title, body, class: s.class });
-      await sql`insert into intake (mention_id, round, status, title_key, author_id, score, title, body) values (${m.id}, ${current}, 'candidate', ${key}, ${m.author_id}, ${score}, ${title}, ${body})`;
+      const [dup] = IDEAS_LIVE
+        ? await sql`select 1 from intake i join x_mention x on x.id = i.mention_id where i.mention_id <> ${m.id} and i.title_key = ${key} and i.status in ('candidate', 'picked', 'submitted', 'queued', 'rejected')
+            and coalesce(x.created_at, x.fetched_at) > now() - make_interval(days => ${LIVE_BACKFILL_DAYS})`
+        : await sql`select 1 from intake where round = ${current} and title_key = ${key} and status in ('candidate', 'picked', 'submitted', 'queued')`;
+      if (dup) { await reject("duplicate", IDEAS_LIVE ? "same title as an idea received in the last 7 days" : "same title as an idea already in this round", { score }); continue; }
+      await decide(m.id, current, "candidate", IDEAS_LIVE ? `${s.reason}; judged now` : `${s.reason}; picked or not when round ${current} closes`, { score, title, body, class: s.class });
+      await sql`insert into intake (mention_id, round, status, title_key, author_id, score, title, body) values (${m.id}, ${current}, 'candidate', ${key}, ${m.author_id}, ${score}, ${title}, ${body})
+        on conflict (mention_id) do update set round = excluded.round, status = 'candidate', reason = null, title_key = excluded.title_key, score = excluded.score, title = excluded.title, body = excluded.body,
+          submit_round = null, idea_id = null, at = now()`;
     }
+    // live mode: every candidate is judged now (no pick, no on-chain submit); a crash between its candidate record and its
+    // verdict leaves it a candidate, judged on the next run. Switching from rounds mode, the X ideas the rounds mode took
+    // in and has not judged yet (candidates, picks, and submits whose round has no report) are judged the same way.
+    if (IDEAS_LIVE) {
+      for (const row of await sql<{ mention_id: string; round: number }[]>`select mention_id, round from intake where status in ('candidate', 'picked', 'submitted')
+          and (status <> 'submitted' or not exists (select 1 from log where kind = 'report' and ref = 'round:' || intake.submit_round))
+          order by mention_id limit 5`) {
+        const s = await signedIntake(row.mention_id);
+        if (s.last && (s.last.status === "queued" || s.last.status === "rejected")) { await syncIndex(row.mention_id, s.last); continue; } // recorded before a crash
+        if (!s.cand || !["candidate", "picked", "submitted"].includes(s.status ?? "")) { await forged(row.mention_id, row.round, "has no signed candidate record"); continue; }
+        // a submit whose round was researched (the DB hid its report from the query above) keeps the round's outcome
+        if (s.status === "submitted" && (await trustedRows("report", `round:${s.last?.submitRound}`, 1)).length) continue;
+        const v = await judgeLive(`x:${row.mention_id}`, { round: s.cand.round, index: -1, title: s.cand.title, body: s.cand.body }, await xSourceOf(row.mention_id));
+        await decide(row.mention_id, row.round, v.status, v.reason, { score: s.cand.score, ...(v.idea ? { idea: v.idea } : {}) });
+        await sql`update intake set status = ${v.status}, reason = ${v.reason}, idea_id = ${v.idea ?? null} where mention_id = ${row.mention_id}`;
+      }
+    }
+
     return out;
   },
 };
@@ -353,6 +402,12 @@ async function allVoid(round: number, ideas: IdeaRow[], count: number, reason: s
 }
 
 type BrainIdea = z.infer<typeof brain.BrainOut.outcome>["ideas"][number];
+/** The red team's `gates` input for an outcome: a build idea has nothing to simulate yet (it changes no fee); what checks
+ *  it is still ahead, so the red team judges the acceptance, not the missing numbers. */
+export const outcomeGates = (kinds: string[]) => kinds.includes("build")
+  ? "for a build idea, nothing is simulated at this stage (it changes no fee). Once picked, the dev team writes it and its pull request must pass the gates before it ships, among them: paths, imports, forbidden patterns, banned opcodes and size, one GameKit contract, the kit's conformance tests (and again on a fresh chain), planted-bug tests and the page check; a fee idea's analytic sim is in `sim`"
+  : "n/a (outcome report)";
+
 /** One idea's report row: the brain's decision, overridden where a rule says so. The quarantined reader's impossible or
  *  invalid stands (the brain can't turn it into a fee or build idea); an accepted fee idea needs a vector, a build idea
  *  a rubric; a red-team block voids every acceptance. */
@@ -401,7 +456,7 @@ export async function researchRound(round: number) {
     sims[x.id] = { params: v, ...analytic(swaps, v, len / DAY, 50_000), label: "uncalibrated", analyticOnly: true };
   }
   await status("red-team");
-  const rt = await agents.redTeam(false, { stage: `idea round ${round} outcome`, candidate: out.decision.ideas.map((x) => ({ id: x.id, decision: x.decision, kind: x.kind })), sim: sims, gates: "n/a (outcome report)", quotedHypothesis: out.decision.ideas.map((x) => `#${x.id} ${x.decision}: ${x.reason}`).join(" | ") });
+  const rt = await agents.redTeam(false, { stage: `idea round ${round} outcome`, candidate: out.decision.ideas.map((x) => ({ id: x.id, decision: x.decision, kind: x.kind })), sim: sims, gates: outcomeGates(out.decision.ideas.filter((x) => x.decision === "accept").map((x) => x.kind)), quotedHypothesis: out.decision.ideas.map((x) => `#${x.id} ${x.decision}: ${x.reason}`).join(" | ") });
   const block = rt.data.verdict === "block" ? agents.sanitize(rt.data.findings[0]?.title ?? "see report") : null;
   const rows = ideas.map((i) => ({ ...reportRow(i, byId.get(i.id), reads.get(i.id)!, block), sim: sims[i.id] ?? null }));
   const redTeam = { verdict: rt.data.verdict, findings: rt.data.findings.map((f) => ({ ...f, title: agents.sanitize(f.title), detail: agents.sanitize(f.detail) })) };
@@ -464,9 +519,108 @@ export const roundsHandler: Handler = {
         continue;
       }
       const startedAt = end - (await roundLength());
-      if (engineStart > startedAt) out[r] = { draft: await allVoid(r, ideas, count, "the engine was not running for this whole round") };
+      if (IDEAS_LIVE) out[r] = { draft: await allVoid(r, ideas, count, LIVE_VOID) };
+      else if (engineStart > startedAt) out[r] = { draft: await allVoid(r, ideas, count, "the engine was not running for this whole round") };
       else if (now > end + UNJUDGED_VOID_DAYS * DAY) out[r] = { draft: await allVoid(r, ideas, count, `not researched within ${UNJUDGED_VOID_DAYS} days of the round closing`) };
       else out[r] = { draft: await researchRound(r) };
+    }
+    return out;
+  },
+};
+
+// ---------------------------------------------------------------- live mode: each idea judged as it comes in
+
+/** Why a closed round is all-void in live mode (its ideas were judged, and built, as they came in). */
+export const LIVE_VOID = "ideas are judged and built as they come in (live mode): holder staking has no say, every stake in this round is refunded";
+export type LiveVerdict = { status: "queued" | "rejected"; reason: string; idea?: number };
+/** One idea judged now: the round research's steps for this idea alone (the quarantined reader's spec, the brain's
+ *  signed outcome, the red team on an acceptance; code overrides where a rule says so: reportRow). An accepted fee or build idea is queued
+ *  (`qid` is its queue id: im:<IdeaMarket id> or x:<mention id>); the verdict is a public `idea` record under `ref`. */
+export async function judgeLive(qid: string, i: { idea?: number; round: number; index: number; title: string; body: string }, source: IdeaSource | null, ref = qid): Promise<LiveVerdict> {
+  // judged once: a run cut short after the verdict (before its index or cursor moved) returns that verdict, no model call
+  const q = await queuedRow(qid);
+  if (q) return { status: "queued", reason: `accepted (${q.kind})`, idea: q.data.idea };
+  const prior = await latest<{ live?: boolean; status?: string; resolution?: string }>("idea", ref);
+  if (prior?.live && prior.status === "rejected") return { status: "rejected", reason: String(prior.resolution ?? "not taken").slice(0, 300) };
+  const r = (await agents.readIdea(i.title, i.body)).data;
+  const id = i.idea ?? 0;
+  const read = { id, kind: r.kind, summary: agents.sanitize(r.summary), spec: agents.sanitize(r.spec), untrusted: true as const };
+  const now = Date.now();
+  const swaps = pair(await chainRows(["Swap", "FeeTaken"], now - DAY * 1000)).filter((s) => s.at < now);
+  const out = await brain.decide("outcome", { mode: "live: one idea, judged as it came in", round: i.round, ideas: [read], policyBounds: POLICY, stats: stats(swaps, { fromMs: now - DAY * 1000, toMs: now, capPips: 50_000 }) }, `live:${qid}`);
+  const x = out.decision.ideas.find((y) => y.id === id) ?? out.decision.ideas[0];
+  // an acceptance goes past the red team, as in a round's research (a rejection needs none)
+  let block: string | null = null;
+  let redTeam: { verdict: string; model: string } | null = null;
+  if (x?.decision === "accept") {
+    const sim = x.kind === "fee" && x.params ? { [id]: { params: [x.params.base, x.params.mult, x.params.cap], ...analytic(swaps, [x.params.base, x.params.mult, x.params.cap], 1, 50_000), label: "uncalibrated", analyticOnly: true } } : {};
+    const rt = await agents.redTeam(false, { stage: `live idea ${qid} outcome`, candidate: [{ id, decision: x.decision, kind: x.kind }], sim, gates: outcomeGates([x.kind]), quotedHypothesis: `#${id} ${x.decision}: ${x.reason}` });
+    block = rt.data.verdict === "block" ? agents.sanitize(rt.data.findings[0]?.title ?? "see the red team") : null;
+    redTeam = { verdict: rt.data.verdict, model: rt.model };
+  }
+  const row = reportRow({ id, index: i.index }, x, read, block);
+  let v: LiveVerdict = { status: "rejected", reason: row.decision === "accept" ? `accepted as ${row.kind}, which the dev team does not build` : `${row.decision}: ${row.reason}`.slice(0, 300) };
+  if (row.decision === "accept" && (row.kind === "build" || row.kind === "fee")) {
+    const n = await queueLive(qid, row.kind, { ...(i.idea ? { idea: i.idea } : {}), round: i.round, index: i.index, report: out.seq, title: row.title ?? "", summary: row.summary ?? "", spec: row.spec ?? "", source, ...(row.params ? { params: row.params } : {}), ...(row.rubric ? { rubric: row.rubric } : {}) });
+    v = { status: "queued", reason: `accepted (${row.kind}): ${row.reason}`.slice(0, 300), idea: n };
+  }
+  const rec = await record("idea", ref, {
+    id: i.idea ?? v.idea ?? 0, round: i.round, status: v.status === "queued" ? "accepted" : "rejected", live: true, from: i.idea ? "site" : "x", kind: row.kind, title: row.title, brain: String(out.seq),
+    ...(redTeam ? { redTeam: redTeam.verdict } : {}),
+    // a site idea's stake comes back with its round's all-void outcome (the 1,000 DNA fee was burned at submit)
+    resolution: `${v.status === "queued" ? "Accepted and queued for the AI dev team" : "Not taken"}${i.idea ? " (the stake is refunded once its round closes)" : ""}: ${row.reason}`.slice(0, 400),
+  });
+  // in public: the site's record, and X and the public Telegram chat for a site idea (an X idea gets its reply instead)
+  const facts = { event: "idea_judged", idea: i.idea ?? v.idea ?? 0, title: row.title, verdict: v.status, reason: (row.reason ?? "").slice(0, 300) };
+  const key = `idea:live:${qid}`;
+  const { announce, recordUrl, titleOf } = await import("./announce.ts");
+  await announce(key, facts);
+  if (i.idea) {
+    const link = recordUrl(rec.seq);
+    await (await import("./x.ts")).enqueueX(key, "post", facts, { link });
+    await (await import("./telegram.ts")).publicPost(`${titleOf(facts)}\n${link}`, key);
+  }
+  return v;
+}
+
+/** The live cursor (signed state): the last site submit judged, as (block, log index). */
+async function liveCursor() {
+  const [r] = await sql<{ value: { block: number; logIndex: number }; sig: string | null }[]>`select value, sig from state where key = 'idea_live'`;
+  if (r && (await trusted("state", "idea_live", r.value, r.sig))) return r.value;
+  // none yet (live mode just switched on): from the newest indexed submit on, so ideas of the rounds mode, judged or
+  // staked on already, are never judged again (an idea in the round open at the switch gets the round's all-void refund)
+  const [top] = await sql<{ block: number; log_index: number }[]>`select block::int as block, log_index from chain_log where event = 'IdeaSubmitted' order by block desc, log_index desc limit 1`;
+  const v = top ? { block: top.block, logIndex: top.log_index } : { block: -1, logIndex: -1 };
+  await setLiveCursor(v);
+  return v;
+}
+const setLiveCursor = async (v: { block: number; logIndex: number }) =>
+  sql`insert into state (key, block, value, sig) values ('idea_live', ${v.block}, ${sql.json(v)}, ${await stateSig("state", "idea_live", v)})
+    on conflict (key) do update set block = excluded.block, value = excluded.value, sig = excluded.sig, updated_at = now()`;
+
+/** Live mode: site submits (IdeaSubmitted by anyone but the agent), each judged once, in chain order. The indexer only
+ *  says where to look: the title, body and author are read back on-chain (ideaOnChain). An error stops here and the
+ *  next run retries that idea. */
+export const liveHandler: Handler = {
+  lane: "ideas",
+  run: async () => {
+    if (!IDEAS_LIVE) return "rounds mode";
+    if (!d.ideaMarket) return "no IdeaMarket in the deployment";
+    if ((await mode()) !== "live") return "engine not live: ideas wait";
+    const c = await liveCursor();
+    const agent = (addressOf("agent") ?? "").toLowerCase();
+    const todo = await sql<{ id: number; block: number; log_index: number }[]>`select (args->>'id')::int as id, block::int as block, log_index from chain_log
+      where event = 'IdeaSubmitted' and (block > ${c.block} or (block = ${c.block} and log_index > ${c.logIndex})) and lower(args->>'author') <> ${agent}
+      order by block, log_index limit 5`;
+    const out: Record<number, string> = {};
+    for (const t of todo) {
+      const on = await ideaOnChain(t.id);
+      if (!on) throw new Error(`idea ${t.id}: not in chain_log any more`);
+      // the chain_log row's author is only a hint: the agent's own submit (rounds mode) is never judged here
+      if (on.author.toLowerCase() === agent) { await setLiveCursor({ block: t.block, logIndex: t.log_index }); continue; }
+      const v = await judgeLive(`im:${t.id}`, { idea: t.id, round: on.round, index: on.index, title: on.title, body: on.body }, { source: "ideamarket", author: on.author }, String(t.id));
+      out[t.id] = v.status;
+      await setLiveCursor({ block: t.block, logIndex: t.log_index });
     }
     return out;
   },
@@ -481,7 +635,8 @@ export async function proposeOutcome(p: ReturnType<typeof outcomeOf>) {
   const ideas = await ideasOf(round);
   const acc = BigInt(p.accepted), voi = BigInt(p.voided);
   const rep = await latest<{ ideas?: { id: number; reason: string }[] }>("report", `round:${round}`);
-  for (const i of ideas) {
+  // live mode: each idea's record is its live verdict (judgeLive), never this round's all-void
+  for (const i of IDEAS_LIVE ? [] : ideas) {
     const s = acc & bit(i.index) ? "accepted" : voi & bit(i.index) ? "void" : "rejected";
     const why = rep?.ideas?.find((x) => x.id === i.id)?.reason;
     await record("idea", String(i.id), { id: i.id, round, status: s, resolution: `${s[0].toUpperCase()}${s.slice(1)} (proposed on-chain; final after the Safe's 24 h veto window)${why ? `: ${agents.sanitize(why)}` : ""}`.slice(0, 400) });

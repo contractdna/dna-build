@@ -31,7 +31,8 @@ const PHALA_P: Params = {
   pagecheckImage: "ghcr.io/contractdna/dna-pagecheck", pagecheckDigest: "sha256:13b64b9c2113e9153ff59335b08175668c840f784c90ecd9d6488e4bce3eb814",
   githubRepo: "contractdna/dna", seqBot: "dna-sequencer[bot]", xClientId: "TEST_X_CLIENT_ID", xUserId: "2107869899318018048", studioUrl: "", policyThresholdsSha256: "", xAiRepliesApproved: false, llmLaunchAt: "",
 };
-const PHALA_HASH = "0d00862f9cb927d39268b9dcc55bfb3ba09bd069bbc629030aeb336c7e246360";
+// the template gained IDEA_MODE and TELEGRAM_PUBLIC_CHAT: our render; confirm Phala Cloud returns the same on the next provision
+const PHALA_HASH = "3ddc5db10a094e2f3f0973cfb17a46421cc0b493c9b5b4246186da971adfcf81";
 /** The release record P renders to (what the verifiers pin). */
 const REL = release(P, render(P).composeHash, null);
 /** Compose files that are valid YAML yet run something else (a review's probes and more): each must fail. */
@@ -152,6 +153,11 @@ test("compose: refuses unfilled launch values, a tag instead of a digest, a bad 
   assert.match(render(P).yaml, /LLM_LAUNCH_AT: ""/);
   // X's approval of AI replies is a measured literal: off ("") unless the launch values say X approved
   assert.match(render(P).yaml, /X_AI_REPLIES_APPROVED: ""/);
+  // how ideas reach the dev team, and the public Telegram chat: measured literals (rounds and none by default)
+  assert.match(render(P).yaml, /IDEA_MODE: "rounds"/);
+  assert.match(render({ ...P, ideaMode: "live", telegramPublicChat: "@dna_news" }).yaml, /IDEA_MODE: "live"\n {6}TELEGRAM_PUBLIC_CHAT: "@dna_news"/);
+  assert.throws(() => render({ ...P, ideaMode: "fast" as never }), /ideaMode/);
+  assert.throws(() => render({ ...P, telegramPublicChat: "https://t.me/x" }), /telegramPublicChat/);
   assert.match(render({ ...P, xAiRepliesApproved: true }).yaml, /X_AI_REPLIES_APPROVED: "1"/);
   assert.match(render({ ...P, llmLaunchAt: "2026-10-10T12:00:00Z" }).yaml, /LLM_LAUNCH_AT: "2026-10-10T12:00:00Z"/);
   assert.throws(() => render({ ...P, llmLaunchAt: "soon" }), /llmLaunchAt/);

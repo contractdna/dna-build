@@ -77,6 +77,14 @@ Safe batch (rehearsed in `test_fork_ladderChangeRepointsRoles`):
 There is no owner and no upgrade path in GameFunder, so its numbers can't be changed in place. Lifetime per-game totals
 start from zero in a new GameFunder; the old one's `fundedTotal` stays readable.
 
+The engine reads one funder (`gameFunder` in `engine/deployments/1.json`): its fund records don't name the funder, so a
+game whose last fund went through the old one looks vetoed after the switch ("funding stopped" until the Safe funds it
+once). Re-point when no fund is in flight.
+
+**Live level:** 2 ETH a rolling week, 0.1 ETH per game, GameFunder `0x0b4768168F48Cf059B9C9432Ca88866724410791`
+(the second level; deployed alone through the CREATE2 deployer with salt 0, then re-pointed by one Safe batch). The
+first, `0xB009dBF6F26F1fCF34A0F0fb801dF17398aE8E78`, had 0.2 ETH a week.
+
 ## Vetoing (the stop button)
 
 Every call waits an hour in Delay's queue. To cancel, the Safe signs `Delay.setTxNonce(n)`: everything queued before

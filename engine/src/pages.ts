@@ -20,7 +20,7 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { type Abi, type Address, encodeFunctionData, getCreate2Address, type Hex, keccak256 } from "viem";
+import { type Abi, type Address, decodeFunctionResult, encodeFunctionData, getCreate2Address, type Hex, keccak256 } from "viem";
 import * as abi from "./abi.ts";
 import { trustedRows } from "./approve.ts";
 import { LOG_BASE_URL, RPC_URLS } from "./config.ts";
@@ -122,12 +122,26 @@ export async function withAnvil<T>(fork: { url: string; block: bigint } | undefi
   }
 }
 
+/** On the staging fork only: a full factory (MAX_LIVE games live) gets its live count cleared, so the next game stages
+ *  while the real deploy still waits for its free slot (the eviction, sequencer.ts). `liveCount` is the uint8 at slot 0,
+ *  byte 20, packed after `funder` (forge inspect GameFactory storageLayout); both are read back, so a layout change fails
+ *  loudly here, never silently. */
+export async function freeSlot(url: string, factory: Address) {
+  const read = async (fn: "liveCount" | "MAX_LIVE" | "funder") => decodeFunctionResult({ abi: abi.gameFactoryAbi, functionName: fn, data: await rpc<Hex>(url, "eth_call", [{ to: factory, data: encodeFunctionData({ abi: abi.gameFactoryAbi, functionName: fn }) }, "latest"]) });
+  if ((await read("liveCount")) < (await read("MAX_LIVE"))) return;
+  const funder = await read("funder");
+  const word = BigInt(await rpc<Hex>(url, "eth_getStorageAt", [factory, "0x0", "latest"]));
+  await rpc(url, "anvil_setStorageAt", [factory, "0x0", `0x${(word & ~(0xffn << 160n)).toString(16).padStart(64, "0")}`]);
+  if ((await read("liveCount")) !== 0 || (await read("funder")) !== funder) throw new Error("stage: could not free a slot in the full factory on the fork (its storage layout changed?)");
+}
+
 type Stage = { factory: Address; safe: Address; game: Address; deploy?: { initCode: Hex; salt: Hex }; gameAbi?: unknown[]; fundWei?: bigint };
 /** Stage the game on `url` (deployed through the factory as the Safe when `deploy` is given, then funded), read every
  *  view the page can read so it is in the dump, and dump the state. */
 export async function stage(url: string, s: Stage): Promise<Staged> {
   if (s.deploy) {
     if (getCreate2Address({ from: s.factory, salt: s.deploy.salt, bytecodeHash: keccak256(s.deploy.initCode) }).toLowerCase() !== s.game.toLowerCase()) throw new Error("stage: the game address is not the factory's CREATE2 address for this code");
+    await freeSlot(url, s.factory);
     await rpc(url, "anvil_impersonateAccount", [s.safe]);
     await rpc(url, "anvil_setBalance", [s.safe, "0xde0b6b3a7640000"]);
     const data = encodeFunctionData({ abi: abi.gameFactoryAbi, functionName: "deploy", args: [s.deploy.initCode, s.deploy.salt] });

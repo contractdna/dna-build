@@ -89,7 +89,7 @@ test("persona: every model call keeps code's `agent:` tag first, on the defaults
     const text = readFileSync(join(src, f), "utf8");
     for (const m of text.matchAll(/prompt\("([a-z-]+)"\)/g)) {
       const line = text.slice(text.lastIndexOf("\n", m.index) + 1, text.indexOf("\n", m.index));
-      assert.ok(/sys\("[a-z-]+", ("[^"]*", )?(prompt|PERSONA)/.test(line) || /readUntrusted\("[a-z-]+", prompt/.test(line) || /handlesOf\(|keyedOf\(|linesOf\(/.test(line), `${f}: ${m[1]} outside sys()`);
+      assert.ok(/sys\("[a-z-]+", ("[^"]*", )?(prompt|PERSONA)/.test(line) || /readUntrusted\("[a-z-]+", prompt/.test(line) || /handlesOf\(|keyedOf\(|linesOf\(|watchOf\(/.test(line), `${f}: ${m[1]} outside sys()`);
     }
   }
   const code = `const { SYSTEM } = await import("./src/brain.ts"); const { WRITER, writerCall, factSheet } = await import("./src/voice.ts"); const { AUDIT } = await import("./src/character.ts");

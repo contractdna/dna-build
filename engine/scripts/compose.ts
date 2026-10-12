@@ -20,7 +20,7 @@ import { canonical } from "../src/log.ts";
 export type Params = {
   commit: string; image: string; imageDigest: string; xClientId: string; xUserId: string;
   githubRepo: string; seqBot: string; pagecheckImage: string; pagecheckDigest: string;
-  policyThresholdsSha256?: string; studioUrl: string; xAiRepliesApproved?: boolean; llmLaunchAt?: string; dstackApp?: string | null; attestationUrl?: string | null; logSigner?: string | null; funder?: string | null;
+  policyThresholdsSha256?: string; studioUrl: string; xAiRepliesApproved?: boolean; ideaMode?: "rounds" | "live"; telegramPublicChat?: string; llmLaunchAt?: string; dstackApp?: string | null; attestationUrl?: string | null; logSigner?: string | null; funder?: string | null;
   measurements?: { mrtd: string; rtmr0: string; rtmr1: string; rtmr2: string; osImageHash: string } | null;
 };
 const root = new URL("../../", import.meta.url);
@@ -41,7 +41,11 @@ export function render(p: Params, template = read("deploy/app-compose.template.j
     STUDIO_URL: p.studioUrl, LLM_LAUNCH_AT: p.llmLaunchAt ?? "",
     GITHUB_REPO: p.githubRepo, SEQ_BOT: p.seqBot, PAGECHECK_IMAGE: p.pagecheckImage, PAGECHECK_DIGEST: p.pagecheckDigest,
     X_AI_REPLIES_APPROVED: p.xAiRepliesApproved ? "1" : "", // "" = unset: AI replies stay off until X approves them
+    IDEA_MODE: p.ideaMode ?? "rounds", // src/config.ts IDEA_MODE: live = each idea judged as it comes in
+    TELEGRAM_PUBLIC_CHAT: p.telegramPublicChat ?? "", // src/config.ts TG.publicChat: "" = no public chat
   };
+  if (vals.IDEA_MODE !== "rounds" && vals.IDEA_MODE !== "live") throw new Error("ideaMode: rounds or live");
+  if (!/^(@[A-Za-z0-9_]{5,32}|-?\d+)?$/.test(vals.TELEGRAM_PUBLIC_CHAT)) throw new Error("telegramPublicChat: a channel's @name or a numeric chat id");
   if (p.studioUrl !== "" && !/^https:\/\/[^\s"]+$/.test(p.studioUrl)) throw new Error("studioUrl: the studio service's https URL, or \"\" (no studio: fallback plates at once)");
   if (p.llmLaunchAt && !isoWithZone(p.llmLaunchAt)) throw new Error("llmLaunchAt: an ISO date-time with Z or an explicit offset (the LLM spend schedule starts there), or empty");
   for (const [k, v] of Object.entries(vals)) if (/TODO|["\n\\]/.test(v)) throw new Error(`${k}: not filled in (or contains a quote / newline)`);

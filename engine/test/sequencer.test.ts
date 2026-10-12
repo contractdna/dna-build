@@ -127,10 +127,14 @@ test("a spec amendment: read from the build's report as data, appended to the sp
   assert.deepEqual(s.specOf({ ...data, amendment: { ...gas, round: 1, approved: true, why: "gas bound", spec: amended, specSha256: sha256(amended) } }), { spec: amended, specSha256: sha256(amended) });
 });
 
-test("a 4th game evicts the fewest players in 48 h, then the oldest; the idle rule", () => {
+test("a 4th game evicts the fewest players in 48 h, then the oldest, of those live 8 h or more; the idle rule", () => {
   const g = (game: string, players48h: number, deployedAt: number) => ({ game: game as never, build: game, players48h, deployedAt });
-  assert.equal(s.evictee([g("0xa", 3, 1), g("0xb", 1, 5), g("0xc", 1, 2)]), "0xc");
-  assert.equal(s.evictee([]), undefined);
+  const now = 100 * HOUR;
+  assert.equal(s.evictee([g("0xa", 3, 1), g("0xb", 1, 5), g("0xc", 1, 2)], now), "0xc");
+  assert.equal(s.evictee([], now), undefined);
+  assert.equal(s.evictee([g("0xa", 3, 1), g("0xd", 0, now - 7 * HOUR)], now), "0xa", "a game live under 8 h is never evicted");
+  assert.equal(s.evictee([g("0xd", 0, now - 7 * HOUR)], now), undefined, "nothing old enough: wait");
+  assert.deepEqual(s.evictOrder([g("0xa", 3, 1), g("0xb", 1, 5), g("0xc", 1, 2)], now).map((x) => x.game), ["0xc", "0xb", "0xa"]);
   assert.equal(s.retireDue({ ageMs: 48 * HOUR, players48h: 0 }), true);
   assert.equal(s.retireDue({ ageMs: 47 * HOUR, players48h: 0 }), false, "too young");
   assert.equal(s.retireDue({ ageMs: 100 * HOUR, players48h: 1 }), false);
@@ -183,4 +187,13 @@ test("the order: neutral fields only, a fresh id per round, accepted by the work
   const v = await verifyOrder(rec, privateKeyToAccount(process.env.LOG_SIGNING_KEY as `0x${string}`).address, now);
   assert.equal(v.ok, true, JSON.stringify(v));
   assert.equal((await verifyOrder(rec, privateKeyToAccount(process.env.LOG_SIGNING_KEY as `0x${string}`).address, now + 21 * 60_000)).ok, false, "expired after 20 min");
+});
+
+test("publicReason: sanitized, at most 300 bytes, cut at a word with an ellipsis; empty stays empty", async () => {
+  assert.equal(await s.publicReason("  "), "");
+  assert.equal(await s.publicReason("short reason"), "short reason");
+  const long = `${"word ".repeat(70)}tail`;
+  const r = await s.publicReason(long);
+  assert.ok(Buffer.byteLength(r) <= 300, String(Buffer.byteLength(r)));
+  assert.match(r, /word…$/);
 });

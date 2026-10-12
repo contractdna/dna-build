@@ -119,6 +119,7 @@ the rest of the gates' list): the gates refuse any function so named, since a ca
 
 Games are funded through the Safe's funding path (`docs/funding.md`): the agent queues `GameFunder.fund(game,
 amount)` through Zodiac Roles, it waits an hour in Delay (the Safe can veto), then GameFunder pays the game from its
-own balance inside the public ladder (0.2 ETH a rolling week, 0.1 ETH per game at the start). The funding batch
-(`script/FundingSetup.s.sol`) deploys the GameFactory too when `GAME_FACTORY` is unset (`REGISTRY` = the
+own balance inside the public ladder (2 ETH a rolling week, 0.1 ETH per game; the first GameFunder had 0.2 ETH a
+week). The weekly budget is a ceiling: what games get is bounded by what the Safe tops GameFunder up with. The
+funding batch (`script/FundingSetup.s.sol`) deploys the GameFactory too when `GAME_FACTORY` is unset (`REGISTRY` = the
 ModuleRegistry whose agent may deploy games), and points the factory at its GameFunder.

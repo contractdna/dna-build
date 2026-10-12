@@ -10,6 +10,8 @@
 .step::before { content: ""; position: absolute; left: -25px; top: 9px; width: 5px; height: 5px; background: var(--ash); }
 .step:last-child { padding-bottom: 0; }
 .body { min-width: 0; }
+.earlier { margin-top: 24px; }
+.foot { margin-top: 40px; }
 
 .meta { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 14px; margin-bottom: 6px; font-size: 13px; color: var(--ash-text); }
 .kind { color: var(--bone); }

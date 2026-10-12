@@ -69,6 +69,16 @@ export const alertHandler: Handler = {
 };
 export const alert = (text: string, dedupeKey?: string) => enqueue("alert", { text }, { dedupeKey });
 
+/** The public chat (TG.publicChat), once per key: plain text, never a button or a command. Off when it is unset. */
+export const publicPost = (text: string, key: string) => (TG.publicChat ? enqueue("tg:public", { text }, { dedupeKey: `tgpub:${key}` }) : Promise.resolve(undefined));
+export const publicHandler: Handler = {
+  lane: "tg",
+  run: async (job) => {
+    if (!TG.token || !TG.publicChat) return "no public chat";
+    return tg<Message>("sendMessage", { chat_id: TG.publicChat, text: String(job.payload.text).slice(0, 4000) });
+  },
+};
+
 /** Create a draft and ask the signers. `text` is the exact final text the approval publishes/sends. Approving takes a
  *  Safe owner's signature over the draft's pending record (src/approve.ts); the button only rejects. */
 export async function createDraft(kind: string, payload: Record<string, unknown> & { text: string }) {

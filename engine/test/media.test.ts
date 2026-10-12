@@ -359,8 +359,9 @@ test("the digest stays silent when nothing happened", async () => {
   for (const k of Object.keys(none)) assert.equal(digestDue({ ...none, [k]: 1 }), true, k);
 });
 
-test("launch, progress and housework posts get a plate card at once: a headline and code's figures on a pinned plate, under the upload cap; the engine going live gets the logo", () => {
-  assert.deepEqual([...card.PLATE_EVENTS].sort(), Object.keys(PLATE_SAMPLES).sort());
+test("launch, progress and treasury posts get a plate card at once: a headline and code's figures on a pinned plate, under the upload cap; the engine going live gets the logo", () => {
+  assert.deepEqual([...card.PLATE_EVENTS].sort(), Object.keys(PLATE_SAMPLES).filter((e) => !media.hasArt(e)).sort());
+  assert.deepEqual(Object.keys(PLATE_SAMPLES).filter(media.hasArt).sort(), ["burn_summary", "fees_distributed", "site_changed"], "studio art first, the same card on a plate when it does not come");
   assert.ok(card.LOGO_EVENTS.has("online") && readFileSync(card.LOGO_MP4).length > 0);
   const p = plates();
   const tx = `0x${"ab".repeat(32)}`;
@@ -378,4 +379,18 @@ test("launch, progress and housework posts get a plate card at once: a headline 
   assert.equal(factLayer({ event: "site_changed" }, { url: "https://evil.example" }, 1).addresses, undefined, "a path off the site is never drawn");
   assert.deepEqual(factLayer({ event: "site_changed" }, { url: "/burn" }, 1).addresses, ["page /burn"], "the page from the outbox event (the sheet has no url)");
   assert.deepEqual(factLayer({ event: "treasury_transfer", dnaAmount: 1000 }, { recipient: `0x${"12".repeat(20)}` }, 1).addresses, ["to 0x1212…1212"]);
+});
+
+test("a fee split, a buyback and burn and a site change: studio art under a borrowed scene (the studio's enum is unchanged), the ETH as light; treasury posts stay plates", () => {
+  assert.deepEqual(["burn_summary", "fees_distributed", "site_changed"].map((e) => slotsOf({ event: e, ...PLATE_SAMPLES[e] }, `${e}:t`, "riso").event), ["digest", "jackpot_drawn", "outcome"]);
+  assert.ok(slotsOf({ event: "fees_distributed", totalEth: 5 }, "k", "riso").light > slotsOf({ event: "fees_distributed", totalEth: 0.1 }, "k", "riso").light, "a bigger split glows more");
+  assert.ok(slotsOf({ event: "burn_summary", spentEth: 2 }, "k", "riso").light > 0);
+  for (const e of ["treasury_buy", "treasury_transfer"]) assert.ok(card.PLATE_EVENTS.has(e) && !media.hasArt(e), e);
+});
+
+test("a studio failure is named without a token: the error's name and its cause's code, never its message", () => {
+  const e = new TypeError("fetch failed: Bearer tok https://user:pw@studio.example", { cause: { code: "ENOTFOUND" } });
+  assert.equal(card.failureOf(e), "TypeError ENOTFOUND");
+  assert.equal(card.failureOf(new DOMException("The operation was aborted due to timeout", "TimeoutError")), "TimeoutError");
+  assert.equal(card.failureOf("tok"), "Error");
 });

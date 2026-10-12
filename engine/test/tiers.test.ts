@@ -99,9 +99,9 @@ test("audience gone: only in a running thread, counted from our first reply in i
   assert.equal(stopRule(post, [], [{ id: "5001", text: "x", at: NOW - 25 * 3600_000 }], NOW), "audience gone", "the send time when the id is no snowflake");
 });
 
-test("own posts: 15 a UTC day, at least 20 min apart; mentions read every minute; AI replies off by default", async () => {
+test("own posts: 25 a UTC day, at least 20 min apart; mentions read every minute; AI replies off by default", async () => {
   const { X } = await import("../src/config.ts");
-  assert.deepEqual([X.dailyPosts, X.spacingMs, X.mentionsMs, X.aiRepliesApproved], [15, 20 * 60_000, 60_000, false]);
+  assert.deepEqual([X.dailyPosts, X.spacingMs, X.mentionsMs, X.aiRepliesApproved], [25, 20 * 60_000, 60_000, false]);
 });
 
 test("impersonators: an author shaped like this account or an ally (by handle or display name, look-alikes folded) gets no reply; the real ones do", () => {

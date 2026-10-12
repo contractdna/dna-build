@@ -70,7 +70,7 @@ test("refused when GitHub can't say: an error status, a network failure, an unre
 test("the workflow names each run after its order and lets verify read the run list, nothing more", () => {
   const yml = readFileSync(new URL("../../.github/workflows/sequencer.yml", import.meta.url), "utf8");
   assert.match(yml, /^run-name: seq \$\{\{ github\.event\.client_payload\.ref \}\}$/m);
-  assert.match(yml, /^concurrency:\n {2}group: sequencer\n {2}cancel-in-progress: false$/m, "one workflow-wide lock: verify runs only once the run holds it");
+  assert.match(yml, /^concurrency:\n {2}group: sequencer-\$\{\{ github\.event\.client_payload\.ref \}\}\n {2}cancel-in-progress: false$/m, "one lock per signed order: verify runs only once the order's earlier run holds none");
   const verify = yml.slice(yml.indexOf("\n  verify:"), yml.indexOf("\n  build:"));
   assert.match(verify, /permissions:\n {6}contents: read\n {6}actions: read\n/);
   assert.match(verify, /GITHUB_TOKEN: \$\{\{ github\.token \}\}/);

@@ -56,7 +56,7 @@ const { llm, useLedger } = await import("../src/llm.ts");
 const { Defer } = await import("../src/jobs.ts");
 const agents = await import("../src/agents.ts");
 const { brainCall } = await import("../src/brain.ts");
-const { ideaGate, instructionMarkers, pick, reportRow, screenDecision } = await import("../src/ideas.ts");
+const { ideaGate, instructionMarkers, outcomeGates, pick, reportRow, screenDecision } = await import("../src/ideas.ts");
 const { rewardCaps, rewardWei } = await import("../src/idea-queue.ts");
 const { briefOf, GOAL, RESEARCH_QUESTION } = await import("../src/loop.ts");
 const { HOOK_FEES, pctOf } = await import("../src/hook-fees.ts");
@@ -235,7 +235,7 @@ const round = await step("round", "an IdeaMarket round of the picked candidates:
     const days = m ? (m.stats.toMs - m.stats.fromMs) / 86_400_000 : 1;
     const sims: Record<number, unknown> = {};
     for (const x of decided) if (x.decision === "accept" && x.kind === "fee" && x.params && m) sims[x.id] = { params: [x.params.base, x.params.mult, x.params.cap], ...analytic(m.swaps, [x.params.base, x.params.mult, x.params.cap], days, 50_000), label: "uncalibrated", analyticOnly: true };
-    const rt = out ? await ask("red team (outcome)", () => agents.redTeam(false, { stage: "idea round 1 outcome", candidate: decided.map((x) => ({ id: x.id, decision: x.decision, kind: x.kind })), sim: sims, gates: "n/a (outcome report)", quotedHypothesis: decided.map((x) => `#${x.id} ${x.decision}: ${x.reason}`).join(" | ") })) : null;
+    const rt = out ? await ask("red team (outcome)", () => agents.redTeam(false, { stage: "idea round 1 outcome", candidate: decided.map((x) => ({ id: x.id, decision: x.decision, kind: x.kind })), sim: sims, gates: outcomeGates(decided.filter((x) => x.decision === "accept").map((x) => x.kind)), quotedHypothesis: decided.map((x) => `#${x.id} ${x.decision}: ${x.reason}`).join(" | ") })) : null;
     const block = rt?.data.verdict === "block" ? agents.sanitize(rt.data.findings[0]?.title ?? "see report") : null;
     const byId = new Map(decided.map((x) => [x.id, x]));
     const rows = ideas.filter((i) => reads.has(i.id)).map((i) => ({ post: i.post, ...reportRow(i, byId.get(i.id), reads.get(i.id)!, block), brain: byId.get(i.id) ?? null, sim: sims[i.id] ?? null }));

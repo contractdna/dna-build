@@ -1,7 +1,9 @@
-// The Sequencer in the enclave: the AI dev team's builds, one at a time, from the idea queue to a live game. Each step
-// reads and writes one signed `seq_build` row (table seq_build: at most one active build, by a unique index), so a
-// crash resumes where it stopped; every step is idempotent.
-//  idle       → open (SEQ_OPEN_DELAY_MIN after launch, default 0: at once), engine live, no ship and no skip today, a game factory deployed, room in the
+// The Sequencer in the enclave: the AI dev team's builds, several at once (SEQ_PACE), from the idea queue to a live game.
+// Each step reads and writes one signed `seq_build` row per build (table seq_build: at most one active build of an idea,
+// by a unique index), so a crash resumes where it stopped; every step is idempotent.
+//  idle       → open (SEQ_OPEN_DELAY_MIN after launch, default 0: at once), engine live, fewer than SEQ.maxInflight builds
+//               on their way, fewer than SEQ.dailyTarget shipped or on their way today, no outage skip in the last
+//               30 min, a game factory deployed, room in the
 //               dev part of the day's cap: the top build idea (its neutral spec only) goes to the brain (build /
 //               no-build, a signed `brain` record). Build ⇒ the whole build's budget (4 orders at the day's order
 //               ceiling) is reserved (a `dev-reserve` row) ⇒ `decided`.
@@ -18,7 +20,8 @@
 //               A spec amendment the lead proposed (in the run's report) goes to the brain first, once a build, unless
 //               the spec checks refuse it: approved, the amended spec is what the verdict and later orders carry, and
 //               the ship record names it.
-//  verdict    → a 4th live game would be one too many: the fewest-players game gets a brain-signed, delayed `retire`
+//  verdict    → a 4th live game would be one too many (counting the other ships on their way): of the games live 8 h
+//               or more, the fewest-players one no other ship already evicts gets a brain-signed, delayed `retire`
 //               record. Then the delayed `ship` record (one public hour, Safe veto: M1) with everything the deploy will
 //               check: gated sha, the game folders' blob ids, salt, init code hash, predicted address, code hash.
 //  shipping   → once the ship is in effect (and an evicted game is retired on-chain): (a) squash-merge pinned to the
@@ -46,7 +49,7 @@ import { createHash, randomBytes } from "node:crypto";
 import { type Address, getAddress, getCreate2Address, type Hex, keccak256, stringToHex } from "viem";
 import { effective, type Row, trustedRows, vetoed } from "./approve.ts";
 import type { Rubric } from "./brain.ts";
-import { d, LLM } from "./config.ts";
+import { d, IDEAS_LIVE, LLM, SEQ_PACE } from "./config.ts";
 import { edb as sql } from "./db.ts";
 import { ENCLAVE } from "./enclave.ts";
 import { Defer, type Handler } from "./jobs.ts";
@@ -73,6 +76,12 @@ export const SEQ = {
   codeWaits: 30, // minutes a mined deploy may show no code before its receipt is checked again
   orderMs: 4 * HOUR, // dispatch → a gated pull request
   publicHourMs: HOUR,
+  maxInflight: SEQ_PACE.maxInflight, // builds at once (config.ts SEQ_PACE: 3)
+  dailyTarget: SEQ_PACE.dailyTarget, // builds a UTC day, those shipped and those on their way (config.ts SEQ_PACE: 5)
+  skipCooldownMs: 30 * 60_000, // a build skipped for an outage: the next one starts no sooner than this after it
+  evictMinAgeMs: 8 * HOUR, // a game is evicted for a new one only once it has been live this long
+  pagesDailyWaitMs: 6 * HOUR, // the daily live page check waits for builds going at most this long
+  ownIdeas: false, // with no idea queued, may the brain build a fix for one of its own open risks? Off: people's ideas only
   idleMs: 48 * HOUR, // no players this long ⇒ retire
   playersWindowBlocks: 14_400n, // ≈ 48 h of 12 s blocks
   tokenWarnDays: 14,
@@ -153,8 +162,10 @@ export const specOf = (d: Pick<BuildData, "spec" | "specSha256" | "amendment">) 
 /** The approved amendment as the ship record shows it. */
 const amendmentShown = (d: BuildData) => (d.amendment?.approved ? { amendment: { reason: d.amendment.reason, change: d.amendment.change, specSha256: d.amendment.specSha256, brainSeq: d.amendment.brainSeq } } : {});
 export type LiveGame = { game: Address; build: string; players48h: number; deployedAt: number };
-/** The game a 4th one evicts: fewest distinct players in 48 h, then the oldest. */
-export const evictee = (games: LiveGame[]) => [...games].sort((a, b) => a.players48h - b.players48h || a.deployedAt - b.deployedAt)[0]?.game;
+/** The games a 4th one may evict, in turn: those live SEQ.evictMinAgeMs or more, fewest distinct players in 48 h first,
+ *  then the oldest. */
+export const evictOrder = <G extends LiveGame>(games: G[], now: number) => games.filter((g) => now - g.deployedAt >= SEQ.evictMinAgeMs).sort((a, b) => a.players48h - b.players48h || a.deployedAt - b.deployedAt);
+export const evictee = (games: LiveGame[], now: number) => evictOrder(games, now)[0]?.game;
 /** The idle rule: live 48 h or more and nobody played in the last 48 h. */
 export const retireDue = (g: { ageMs: number; players48h: number }) => g.ageMs >= SEQ.idleMs && g.players48h === 0;
 const dayOf = (t: number) => new Date(t).toISOString().slice(0, 10);
@@ -175,13 +186,15 @@ export type BuildData = {
   /** a build of the brain's own (no idea behind it): the self-file's open risk it answers */
   risk?: string;
   idea: string; ideaNum: number; slug: string; title: string; spec: string; specSha256: string; rubric: Rubric; brainSeq: string;
+  /** why the brain picked it (its build decision's reason: told when the build starts) */
+  pick?: string;
   ceilingUsd: number; reservation: { at: string; amount: number }; building?: boolean; reserved?: boolean; released?: boolean;
   orders: OrderState[]; issues: string[];
   /** the one spec amendment the brain reviewed (approved: `spec` is what later orders and verdicts carry) */
   amendment?: Amendment & { round: number; approved: boolean; why: string; brainSeq?: string; spec?: string; specSha256?: string };
   ship?: { verdictSeq: string; reason: string; orderId: string; pr: number; gatedSha: string; baseSha: string; decidedAt: string; evictAsked?: string };
   shipSeq?: string; mergeSha?: string; game?: { address: Address; codehash: Hex; deployedAt: string }; fund?: { queued: boolean; why?: string; amount?: string };
-  releaseSeq?: string; released_ff?: boolean; rewarded?: boolean; why?: string; deepChecked?: string;
+  releaseSeq?: string; released_ff?: boolean; rewarded?: boolean; why?: string; endedAt?: string; deepChecked?: string;
   deployed?: boolean; deployedOnce?: boolean; deployFails?: number; codeWaits?: number; badMerge?: string; // the deploy mined; failed deploys; minutes waited for its code; a merge never to be released
 };
 export type Status = "decided" | "dispatched" | "gated" | "verdict" | "shipping" | "shipped" | "handed" | "killed" | "skipped";
@@ -202,14 +215,18 @@ async function builds(where: ReturnType<typeof sql>, limit?: number): Promise<Bu
   for (const r of rs) if (await trusted("seq_build", r.id, valueOf(r), r.sig)) out.push({ id: r.id, status: r.status, round: r.round, data: r.data });
   return out;
 }
-export const activeBuild = async () => (await builds(sql`status = any(${ACTIVE})`, 5))[0] ?? null;
+/** Every build on its way (at most SEQ.maxInflight start), oldest first. */
+export const activeBuilds = async () => (await builds(sql`status = any(${ACTIVE})`, 20)).reverse();
+/** The newest build on its way, if any. */
+export const activeBuild = async () => (await activeBuilds()).at(-1) ?? null;
 /** Every shipped build (its game live or retired). */
 const shippedBuilds = () => builds(sql`status = 'shipped'`);
-/** Ships decided since `t` (at most one a day). */
+/** Ships decided since `t`. */
 export const shipsSince = async (t: number) => (await builds(sql`data->'ship'->>'decidedAt' >= ${new Date(t).toISOString()}`)).length;
-/** What the day's one ship was (the step's message). */
-const DONE: Record<Kind | "handed", string> = { game: "a game shipped", site: "a site change shipped", module: "a module was proposed to the Safe", engine: "an engine change was approved", handed: "an engine change was handed to an owner" };
-const skippedSince = async (t: number) => (await sql<{ n: number }[]>`select count(*)::int as n from seq_build where status = 'skipped' and updated_at >= ${new Date(t)}`)[0].n;
+/** Builds that ended shipped (or handed to an owner) whose ship was decided since `t`. */
+const shippedSince = async (t: number) => (await builds(sql`status in ('shipped', 'handed') and data->'ship'->>'decidedAt' >= ${new Date(t).toISOString()}`)).length;
+/** Builds skipped since `t` (the engine's clock, signed on the row when it ended). */
+const skippedSince = async (t: number) => (await builds(sql`status = 'skipped' and data->>'endedAt' > ${new Date(t).toISOString()}`)).length;
 const triedOn = async (day: string) => (await sql<{ n: number }[]>`select count(*)::int as n from seq_build where created_at >= ${new Date(`${day}T00:00:00Z`)} and created_at < ${new Date(Date.parse(`${day}T00:00:00Z`) + DAY)}`)[0].n;
 
 // ---------------------------------------------------------------- spend (the dev part of the day's cap)
@@ -282,15 +299,20 @@ export const SEQ_DEPS = {
   },
   runGates: async (...a: Parameters<typeof import("./seq-forge.ts").runGates>) => (await import("./seq-forge.ts")).runGates(...a),
   alert: async (text: string, key: string) => { await (await import("./telegram.ts")).alert(text, key); },
-  /** The site record, and an X post for the types with an X priority (src/announce.ts onX: switched on, started, killed,
-   *  shipped, retired, released, a module proposed, an engine change handed over, an empty day; never a round's steps),
-   *  its proof link the signed record. `record` must be a signed record's seq (resolvable at /api/log/<seq>). */
+  /** The site record, and an X post (and the public Telegram chat's) for the types with an X priority (src/announce.ts
+   *  onX: switched on, started, declined, killed, shipped, retired, released, a module proposed, an engine change handed
+   *  over, an empty day; a round's steps only in live idea mode), its link the signed record (a pull request: the pull
+   *  request). `record` must be a signed record's seq (resolvable at /api/log/<seq>). */
   announce: async (f: SeqFacts) => {
     if (!/^\d{1,18}$/.test(f.record) || !(await sql`select 1 from log where seq = ${f.record}`).length) throw new Error(`announce ${f.event}: no record ${f.record}`);
     const a = await import("./announce.ts");
     const key = a.seqKey(f);
     await a.announce(key, f as never);
-    if (a.onX(f.event)) await (await import("./x.ts")).enqueueX(key, "post", f as never, { link: a.recordUrl(f.record) });
+    if (!a.onX(f.event)) return;
+    const { GH } = await import("./github.ts");
+    const link = f.event === "seq_pr" && /^[\w.-]+\/[\w.-]+$/.test(GH.repo) ? `https://github.com/${GH.repo}/pull/${f.pr}` : a.recordUrl(f.record);
+    await (await import("./x.ts")).enqueueX(key, "post", f as never, { link });
+    await (await import("./telegram.ts")).publicPost(`${a.titleOf(f as never)}\n${link}`, key);
   },
   fund: async () => import("./funding.ts"),
   chain: async (): Promise<Chain> => liveChain(),
@@ -368,10 +390,13 @@ async function liveChain(): Promise<Chain> {
 
 // ---------------------------------------------------------------- helpers
 
+/** The brain's reason as a public line (site, X fact sheet, public Telegram): no links, handles or foreign cashtags, at
+ *  most 300 bytes, cut at a word with an ellipsis. */
+export const publicReason = async (s: string) => (s.trim() ? (await import("./announce.ts")).clipReason((await import("./agents.ts")).sanitize(s), 300) : "");
 const cur = (r: BuildRow) => r.data.orders.find((o) => o.round === r.round)!;
 /** A round's dispatch on the site: round 1 is the build's start (it goes to X too), a later round stays on the site. */
 export const building = (r: BuildRow, record: string): SeqFacts => r.round === 1
-  ? { event: "seq_started", build: r.id, title: r.data.title, record }
+  ? { event: "seq_started", build: r.id, title: r.data.title, ...(r.data.pick ? { reason: r.data.pick } : {}), record }
   : { event: "seq_building", build: r.id, title: r.data.title, round: r.round, record };
 export const branchOf = (o: { id: string; round: number }) => `seq/${o.id}-r${o.round}`;
 /** The body of the record the signed build row names (kind, ref, seq), only as the enclave signed it: a row the DB
@@ -413,7 +438,7 @@ async function end(r: BuildRow, status: "killed" | "skipped", why: string) {
   const o = cur(r);
   if (o?.pr && !r.data.mergeSha) await (await SEQ_DEPS.github()).closePull(o.pr, status === "killed" ? "Not shipped." : "Skipped: the build stopped on an outage or a deadline.").catch(() => {});
   await releaseReservation(r);
-  await saveBuild({ ...r, status, data: { ...r.data, why: why.slice(0, 500) } });
+  await saveBuild({ ...r, status, data: { ...r.data, why: why.slice(0, 500), endedAt: new Date(SEQ_DEPS.now()).toISOString() } });
   // a build that ends killed (a kill verdict, the 4th round, a stopped ship): one post, resting on its newest record
   if (status === "killed") {
     await SEQ_DEPS.announce({ event: "seq_killed", build: r.id, title: r.data.title, rounds: r.round, record: o?.verdictSeq ?? o?.gatesSeq ?? o?.seq ?? r.data.brainSeq })
@@ -443,13 +468,20 @@ async function start(now: number): Promise<string> {
   if ((await SEQ_DEPS.mode()) !== "live") return "waiting: the engine is not live";
   if (!d.gameFactory) return "waiting: no game factory in the deployment";
   await online();
-  const today = startOfDay(now);
-  const [done] = await builds(sql`data->'ship'->>'decidedAt' >= ${new Date(today).toISOString()}`, 1);
-  if (done) return `done for today: ${DONE[done.status === "handed" ? "handed" : kindOf(done.data)]}`;
-  if ((await skippedSince(today)) > 0) return "done for today: a build was skipped (outage)";
+  const going = (await activeBuilds()).length;
+  if (going >= SEQ.maxInflight) return `busy: ${going} builds on their way`;
+  const shipped = await shippedSince(startOfDay(now));
+  if (shipped + going >= SEQ.dailyTarget) return `done for today: ${shipped} shipped${going ? `, ${going} on their way` : ""} (the day's target is ${SEQ.dailyTarget})`;
+  if ((await skippedSince(now - SEQ.skipCooldownMs)) > 0) return `waiting: a build was skipped (outage) in the last ${SEQ.skipCooldownMs / 60_000} min`;
   const q = await SEQ_DEPS.queue();
   const [idea] = await q.buildQueue(1);
-  if (!idea) return improve(now);
+  // the dev team builds only from people's ideas: an empty queue waits (its own open risks only when SEQ.ownIdeas)
+  if (!idea) return SEQ.ownIdeas ? improve(now) : "nothing queued: waiting for people's ideas";
+  // a person's idea only: an X author or an IdeaMarket submitter on record (never one the engine submitted itself)
+  if (!idea.source) {
+    await q.setBuildStatus(idea.id, "queued", "killed", "not built: no person's idea on record");
+    return `not built: ${idea.id} has no author on record`;
+  }
   const bad = specIssues(idea.spec);
   if (bad.length) {
     await q.setBuildStatus(idea.id, "queued", "killed", `not buildable: ${bad.join("; ")}`.slice(0, 300));
@@ -462,9 +494,16 @@ async function start(now: number): Promise<string> {
   const b = await SEQ_DEPS.decide("build", { title: idea.title, spec: idea.spec, rubric: idea.rubric, untrusted: true }, `build:${idea.id}`);
   if (b.decision.decision !== "build") {
     await q.setBuildStatus(idea.id, "queued", "killed", `no-build: ${String(b.decision.reason)}`.slice(0, 300));
+    // live idea mode: a no-build is news (the idea was accepted in public); the brain's reason without links or handles
+    if (IDEAS_LIVE) await SEQ_DEPS.announce({ event: "seq_declined", idea: idea.id, title: idea.title, reason: (await publicReason(String(b.decision.reason ?? ""))), record: String(b.seq) })
+      .catch((e) => SEQ_DEPS.alert(`Sequencer: the no-build of ${idea.id} was not announced: ${(e as Error).message.slice(0, 200)}`, `alert:seq:declined:${idea.id}`));
     return `no-build: ${idea.id}`;
   }
-  const id = `b${dayOf(now).replace(/-/g, "")}-${idea.idea}`;
+  // an idea skipped for an outage goes back to the queue and may start again the same day: a fresh id for each try
+  // (its own row, reservation and release)
+  const stem = `b${dayOf(now).replace(/-/g, "")}-${idea.idea}`;
+  const [{ n: tries }] = await sql<{ n: number }[]>`select count(*)::int as n from seq_build where id = ${stem} or id like ${`${stem}-%`}`;
+  const id = tries ? `${stem}-${tries + 1}` : stem;
   const kind: Kind = b.decision.target === "site" || b.decision.target === "module" ? b.decision.target : "game";
   // a module needs the module kit in this image (it ships with the image before the brain can pick one): else no-build
   if (kind === "module" && !(await SEQ_DEPS.moduleKit())) {
@@ -474,9 +513,9 @@ async function start(now: number): Promise<string> {
   }
   const r: BuildRow = {
     id, status: "decided", round: 1,
-    data: { kind, idea: idea.id, ideaNum: idea.idea, slug: slugFor(idea.title, idea.idea), title: idea.title, spec: idea.spec, specSha256: (await import("./seq-gates.ts")).sha256(idea.spec), rubric: idea.rubric, brainSeq: String(b.seq), ceilingUsd: ceiling, reservation: { at: new Date(now).toISOString(), amount: 4 * ceiling }, orders: [{ round: 1, id: orderIdFor(id, 1) }], issues: [] },
+    data: { kind, idea: idea.id, ideaNum: idea.idea, slug: slugFor(idea.title, idea.idea), title: idea.title, spec: idea.spec, specSha256: (await import("./seq-gates.ts")).sha256(idea.spec), rubric: idea.rubric, brainSeq: String(b.seq), ...(IDEAS_LIVE ? { pick: (await publicReason(String(b.decision.reason ?? ""))) } : {}), ceilingUsd: ceiling, reservation: { at: new Date(now).toISOString(), amount: 4 * ceiling }, orders: [{ round: 1, id: orderIdFor(id, 1) }], issues: [] },
   };
-  await saveBuild(r); // first: the unique index refuses a second active build
+  await saveBuild(r); // first: the unique index refuses a second active build of the same idea
   return prepare(r);
 }
 
@@ -722,7 +761,7 @@ async function verdict(r: BuildRow, now: number): Promise<string> {
   // both signed: the gates record and the build row's own note of it
   const res = outcome(dv.verdict, g.ok && o.gatesOk === true ? g.results : [...g.results, { gate: "G13", name: "address", ok: false, issues: ["no deployable compile"] }], r.round);
   Object.assign(o, { verdictSeq: String(v.seq), verdict: res });
-  await SEQ_DEPS.announce({ event: "seq_verdict", build: r.id, title: r.data.title, round: r.round, verdict: res, reason: dv.reason.slice(0, 300), record: String(v.seq) });
+  await SEQ_DEPS.announce({ event: "seq_verdict", build: r.id, title: r.data.title, round: r.round, verdict: res, reason: await publicReason(dv.reason), record: String(v.seq) });
   if (res === "ship") {
     if (!same || !pr) return next(r, ["the pull request moved or closed after it was gated"]);
     await saveBuild({ ...r, status: "verdict", data: { ...r.data, ship: { verdictSeq: String(v.seq), reason: dv.reason.slice(0, 400), orderId: o.id, pr: pr.number, gatedSha: o.gatedSha!, baseSha: order.baseSha, decidedAt: new Date(now).toISOString() } } });
@@ -780,7 +819,7 @@ async function proposeRetire(g: LiveGame, rule: "idle" | "evict", now: number): 
   const ref = `retire:${g.game.toLowerCase()}:${day}`;
   if ((await sql`select 1 from log where kind = 'brain' and ref = ${ref} limit 1`).length) return "asked today already";
   const ageH = Math.floor((now - g.deployedAt) / HOUR);
-  const out = await SEQ_DEPS.decide("retire", { game: g.game, players48h: g.players48h, ageH, rule: rule === "idle" ? "no distinct players in the last 48 hours, live 48 hours or more: retire" : "a 4th game is ready and at most 3 may be live: retire the one with the fewest players in 48 hours (then the oldest)" }, ref.slice("retire:".length));
+  const out = await SEQ_DEPS.decide("retire", { game: g.game, players48h: g.players48h, ageH, rule: rule === "idle" ? "no distinct players in the last 48 hours, live 48 hours or more: retire" : `a new game is ready and at most 3 may be live: retire the one with the fewest players in 48 hours (then the oldest) of those live ${SEQ.evictMinAgeMs / HOUR} hours or more` }, ref.slice("retire:".length));
   if (out.decision.retire !== true) {
     await SEQ_DEPS.alert(`Sequencer: the rule says retire ${g.game} (${rule}), the brain says no (${String(out.decision.reason).slice(0, 200)}). No action; asked again tomorrow.`, `alert:seq:retire:${ref}`);
     return "the brain disagrees";
@@ -819,17 +858,32 @@ async function shipRecord(r: BuildRow, now: number): Promise<string> {
   if (!g.game?.codehash) return end(r, "killed", "the gated compile has no deployable code");
   const chain = await SEQ_DEPS.chain();
   let evict: { game: Address; retireSeq: string } | undefined;
-  if ((await chain.liveCount()) >= 3) {
+  // the other games on their way to a deploy each take a slot: one their own eviction frees (that game is theirs), or a
+  // free one. At most 3 live (GameFactory.MAX_LIVE): this one needs an eviction when the rest would fill them.
+  const claimed = new Set<string>();
+  let unclaimed = 0;
+  for (const b of await activeBuilds()) {
+    if (b.id === r.id || b.status !== "shipping" || kindOf(b.data) !== "game" || b.data.game) continue;
+    const [row] = await trustedRows("ship", `ship:${b.id}`, 1);
+    const e = row ? (JSON.parse(row.body) as ShipRecord).evict : undefined;
+    // its evictee still live: the slot it takes is that one; already retired: it takes a free one
+    if (e && (await chain.isLive(e.game))) claimed.add(e.game.toLowerCase());
+    else unclaimed++;
+  }
+  if ((await chain.liveCount()) + unclaimed >= 3) {
     const live = await liveGames(chain);
-    const target = evictee(live);
-    if (!target) return "waiting: 3 games live but none of ours (the Safe's?)";
-    let row = await pendingRetire(target);
-    if (!row) {
-      const res = await proposeRetire(live.find((x) => x.game === target)!, "evict", now);
-      row = await pendingRetire(target);
-      if (!row) return `waiting for a free slot: ${res}`;
+    const order = evictOrder(live.filter((g) => !claimed.has(g.game.toLowerCase())), now);
+    if (!live.length) return "waiting for a free slot: none of the live games is ours (the Safe's?)";
+    let why = `every live game of ours is newer than ${SEQ.evictMinAgeMs / HOUR} h or already makes room for another`;
+    for (const g of order) {
+      let row = await pendingRetire(g.game);
+      if (!row) {
+        why = await proposeRetire(g, "evict", now);
+        row = await pendingRetire(g.game);
+      }
+      if (row) { evict = { game: g.game, retireSeq: row.seq }; break; }
     }
-    evict = { game: target, retireSeq: row.seq };
+    if (!evict) return `waiting for a free slot: ${why}`;
   }
   const treeHashes = gh.treeHashes(await gh.treeOf(s.gatedSha), roots(r.data.slug));
   const salt = (await orderBody(o)).salt as Hex; // the salt the signed order fixed
@@ -884,7 +938,7 @@ async function handoff(r: BuildRow, now: number): Promise<string> {
 /** A game's ship record carries its deploy (salt, init code hash, predicted address, code hash); a site change's names
  *  its `target` and the exact `paths` it changes. */
 type ShipRecord = {
-  title: string; slug: string; order: string; gatedSha: string; treeHashes: Record<string, string>; gatesSeq: string; pr: number; effectiveAt: string;
+  title: string; slug: string; order: string; gatedSha: string; baseSha: string; treeHashes: Record<string, string>; gatesSeq: string; pr: number; effectiveAt: string;
   target?: Kind; paths?: string[];
   salt: Hex; initCodeHash: Hex; predicted: Address; codehash: Hex; evict?: { game: Address; retireSeq: string };
 };
@@ -970,6 +1024,16 @@ async function ship(r: BuildRow, now: number): Promise<string> {
         await SEQ_DEPS.alert(`Sequencer: PR #${body.pr} moved or closed after it was gated; ${r.id} is not merged.`, `alert:seq:moved:${r.id}`);
         return end(r, "killed", "the pull request changed after it was gated");
       }
+      // several builds at once: main may have moved since this one was gated. A file it changes that main changed
+      // meanwhile would merge into a tree nobody gated: skipped (the idea back in the queue), never merged
+      const mine = body.paths ?? roots(body.slug);
+      const [was, now2] = await Promise.all([gh.treeOf(body.baseSha), gh.refSha("main").then((m) => gh.treeOf(m))]);
+      if (JSON.stringify(gh.treeHashes(was, mine)) !== JSON.stringify(gh.treeHashes(now2, mine))) return end(r, "skipped", "main changed a file this change edits after it was gated");
+      // a game merges only with a free slot to deploy into (other games merged and not deployed yet count)
+      if ((body.target ?? "game") === "game") {
+        const merging = (await activeBuilds()).filter((b) => b.id !== r.id && b.data.mergeSha && !b.data.game && !b.data.badMerge && kindOf(b.data) === "game").length;
+        if ((await (await SEQ_DEPS.chain()).liveCount()) + merging >= 3) return "waiting: no free game slot yet";
+      }
       try {
         merged = await gh.merge(body.pr, body.gatedSha);
       } catch (e) {
@@ -1043,6 +1107,8 @@ async function ship(r: BuildRow, now: number): Promise<string> {
   if (!r.data.releaseSeq) {
     const parent = (await gh.commit(r.data.mergeSha!)).parents[0]?.sha;
     const covered = parent === (await gh.refSha("release")) || !!(await releaseInEffect(parent));
+    // the merge under it is another ship's whose own release record is not written yet: wait for that one
+    if (!covered && (await activeBuilds()).some((b) => b.id !== r.id && b.data.mergeSha === parent && !b.data.badMerge && !b.data.releaseSeq)) throw new Defer(60_000, `${r.id}: waiting for the release record of the merge under it`);
     if (!covered) await SEQ_DEPS.alert(`Sequencer: main had commits no release covers under ${r.id}'s merge; its release waits an hour of its own.`, `alert:seq:own-hour:${r.id}`);
     r.data.releaseSeq = (await releaseRecord(r.data.mergeSha!, covered ? Date.parse(body.effectiveAt) : now + SEQ.publicHourMs, { ship: row.seq, build: r.id })).seq;
     await saveBuild(r);
@@ -1163,7 +1229,8 @@ async function releaseTo(sha: string) {
 async function releaseStep(now: number) {
   const gh = await SEQ_DEPS.github();
   const [main, rel] = await Promise.all([gh.refSha("main"), gh.refSha("release")]);
-  const shipping = ["verdict", "shipping"].includes((await activeBuild())?.status ?? "");
+  // a ship's merge waiting for its own release record (it covers that merge)
+  const shipping = (await activeBuilds()).some((b) => b.data.mergeSha && !b.data.releaseSeq);
   if (main !== rel && !shipping && !(await trustedRows("release", `release:${main}`, 1)).length) await releaseRecord(main, now + SEQ.publicHourMs);
   const recent = await sql<{ ref: string }[]>`select ref, max(seq) as s from log where kind = 'release' group by ref order by s desc limit 10`;
   for (const { ref } of recent) {
@@ -1177,11 +1244,37 @@ async function releaseStep(now: number) {
 
 // ---------------------------------------------------------------- the step
 
-/** One step of the active build, or a new one. */
+/** When a deferred build is stepped again (its id → ms), while several builds share the step. In memory: after a
+ *  restart a deferred build is stepped at once, which only brings its next try forward (a deploy's tries are counted on
+ *  its row). */
+const deferredUntil = new Map<string, number>();
+
+/** One step of every build on its way (oldest first), then a new one if there is room. One build at a time
+ *  (SEQ.maxInflight 1): its wait (Defer) is the job's, as ever. Otherwise a build's wait holds only that build, and the
+ *  first other error is thrown once every build was stepped (the job retries). */
 export async function seqStep(): Promise<string> {
   const now = SEQ_DEPS.now();
-  const r = await activeBuild();
-  if (!r) return start(now);
+  const going = await activeBuilds();
+  for (const id of deferredUntil.keys()) if (!going.some((b) => b.id === id)) deferredUntil.delete(id);
+  const solo = going.length === 1 && SEQ.maxInflight === 1;
+  const out: [string | null, string][] = [];
+  let failed: unknown;
+  for (const r of going) {
+    if ((deferredUntil.get(r.id) ?? 0) > now) { out.push([r.id, "waiting"]); continue; }
+    deferredUntil.delete(r.id);
+    try { out.push([r.id, await stepBuild(r, now)]); } catch (e) {
+      if (solo) throw e;
+      if (e instanceof Defer) { deferredUntil.set(r.id, now + e.ms); out.push([r.id, `waiting ${Math.ceil(e.ms / 60_000)} min: ${e.message.slice(0, 120)}`]); continue; }
+      out.push([r.id, `error: ${String((e as Error)?.message ?? e).slice(0, 120)}`]);
+      failed ??= e;
+    }
+  }
+  if (going.length < SEQ.maxInflight) out.push([null, await start(now)]);
+  if (failed) throw failed;
+  return out.length === 1 ? out[0][1] : out.map(([id, m]) => (id ? `${id}: ${m}` : m)).join("; ");
+}
+
+async function stepBuild(r: BuildRow, now: number): Promise<string> {
   try {
     if (r.status === "decided") return await dispatchRound(r, now);
     if (r.status === "dispatched") return await intake(r, now);
@@ -1190,7 +1283,8 @@ export async function seqStep(): Promise<string> {
     return await ship(r, now);
   } catch (e) {
     if (e instanceof Defer || !(await isOutage(e))) throw e;
-    // before the ship is signed an outage ends the day's attempt; after it the ship path waits and retries
+    // before the ship is signed an outage ends the build (the next starts SEQ.skipCooldownMs later); after it the ship
+    // path waits and retries
     if (r.status === "decided" || r.status === "dispatched" || r.status === "gated") return end(r, "skipped", `outage: ${(e as Error).message.slice(0, 200)}`);
     return `waiting: outage (${(e as Error).message.slice(0, 120)})`;
   }
@@ -1212,7 +1306,7 @@ async function retireStep(now: number) {
     if (!live) {
       out[game] = await chain.sweep(game).catch((e) => `sweep: ${(e as Error).message.slice(0, 100)}`);
       // announced once (the site record and the X outbox both dedupe by key)
-      if (pending) await SEQ_DEPS.announce({ event: "game_retired", build: b.id, title: b.data.title, slug: b.data.slug, game, days: Math.max(1, Math.round((now - Date.parse(b.data.game.deployedAt)) / DAY)), returnedEth: null, record: pending.seq });
+      if (pending) await SEQ_DEPS.announce({ event: "game_retired", build: b.id, title: b.data.title, slug: b.data.slug, game, days: Math.max(1, Math.round((now - Date.parse(b.data.game.deployedAt)) / DAY)), returnedEth: null, record: pending.seq, rule: (JSON.parse(pending.body) as RetireRecord).rule });
       continue;
     }
     if (pending) {
@@ -1281,13 +1375,15 @@ export async function shippedGames(): Promise<import("./pages.ts").LiveGame[]> {
   if (!d.gameFactory) return [];
   return (await shippedBuilds()).filter((b) => b.data.game).map((b) => ({ slug: b.data.slug, address: b.data.game!.address, factory: d.gameFactory!, safe: d.safe }));
 }
-/** The daily live check. It shares the page check service with the build's own checks (one at a time): while a build
- *  is going it waits, so it never makes a build's check wait out its turn. */
+/** The daily live check. It shares the page check service with the builds' own checks (one at a time): while a build
+ *  is going it waits, so it never makes a build's check wait out its turn; with builds going all day, at most
+ *  SEQ.pagesDailyWaitMs, then it takes its turn (a build's check waits for the service, PAGES.busyWaitMs). */
 export const pagesDailyHandler: Handler = {
   lane: "pages",
-  run: async () => {
+  run: async (job) => {
     const a = await activeBuild();
-    if (a) throw new Defer(30 * 60_000, `the daily page check waits: build ${a.id} is ${a.status}`);
+    // the job's age on the wall clock (created_at is the database's)
+    if (a && Date.now() - job.created_at.getTime() < SEQ.pagesDailyWaitMs) throw new Defer(30 * 60_000, `the daily page check waits: build ${a.id} is ${a.status}`);
     return (await import("./pages.ts")).dailyPages(await shippedGames());
   },
 };

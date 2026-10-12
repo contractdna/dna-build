@@ -8,30 +8,36 @@
 // The style is picked once per event (`styleFor`: by its mood, never a style of the last 3 image posts) and signed.
 // The composite's sha256 + provenance go into the signed x_post record before upload (src/x.ts); a card that passes
 // every check posts on its own (no human approval). The post never waits in-process: `cardFor` says "wait" until the
-// art is ready, or MEDIA.waitMs passed; then a pinned fallback plate (`hash(event_key)` among the plates whose style
-// is not a recent one, never the previous plate) with the same fact layer; if that fails, text only.
-// The animated logo (pinned MP4) goes on the engine going live and the mystery seal and reveal posts; launch, progress
-// and housework posts (PLATE_EVENTS) get a plate with the fact layer at once.
+// art is ready, or MEDIA.waitMs passed, or the studio says none is coming (its verdict failed, or it holds no job for
+// the event: its daily round cap, an outage); then a pinned fallback plate (`hash(event_key)` among the plates whose
+// style is not a recent one, never the previous plate) with the same fact layer; if that fails, text only. A studio
+// call that fails (an HTTP status, a timeout, no route) is alerted, once an hour per kind.
+// The animated logo (pinned MP4) goes on the engine going live and the mystery seal and reveal posts; launch and
+// treasury posts (PLATE_EVENTS) get a plate with the fact layer at once. The lab, the status, the reflection, the recap,
+// a fee split, a buyback and burn and a site change get studio art under a borrowed scene (media-slots SCENE_OF), a
+// plate when it does not come.
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { Resvg } from "@resvg/resvg-js";
 import { z } from "zod";
-import { artIssue, Caption, IMAGE_EVENTS, MAX_BYTES, moodOf, pickStyle, SHAPES, type Shape, shapeOf, type Slots, slotsOf, type Style, STYLES } from "./media-slots.ts";
+import { artIssue, Caption, hasArt, MAX_BYTES, moodOf, pickStyle, SHAPES, type Shape, shapeOf, type Slots, slotsOf, type Style, STYLES } from "./media-slots.ts";
 import { MEDIA } from "./config.ts";
 import { edb as sql } from "./db.ts";
 import { llm } from "./llm.ts";
 import { mode } from "./mode.ts";
 import { append, type EnclaveRow, trustedRecord } from "./log.ts";
 import { latest, trustedDocs } from "./records.ts";
+import { alert } from "./telegram.ts";
 import { postFilter } from "./voice.ts";
 
 const sha256 = (b: Buffer | string) => createHash("sha256").update(b).digest("hex");
 export { ART_EVENTS, IMAGE_EVENTS, MAX_BYTES, artIssue, SHAPES, type Shape, shapeOf, Slots, slotsOf } from "./media-slots.ts";
 /** The engine going live, the mystery seal and reveal carry the animated logo. */
 export const LOGO_EVENTS = new Set(["online", "mystery_sealed", "mystery_revealed"]);
-/** Launch, progress and housework posts: a pinned plate with the fact layer at once (never studio art). */
-export const PLATE_EVENTS = new Set(["contracts_connected", "keys_handed", "first_idea_round", "first_burn", "fees_distributed", "burn_summary", "liquidity_added", "progress_day",
-  "jackpot_params", "seq_online", "site_changed", "treasury_buy", "treasury_transfer"]);
+/** Launch, progress and money posts: a pinned plate with the fact layer at once (never studio art; a treasury buy or
+ *  transfer is a money fact and goes out at once). */
+export const PLATE_EVENTS = new Set(["contracts_connected", "keys_handed", "first_idea_round", "first_burn", "liquidity_added", "progress_day",
+  "jackpot_params", "seq_online", "treasury_buy", "treasury_transfer"]);
 
 // ---------------------------------------------------------------- the fact layer
 
@@ -83,6 +89,15 @@ export function factLayer(facts: Record<string, unknown>, raw: Record<string, un
     case "mystery_result": return { badge, headline: "MYSTERY", figures: [f("mystery", `#${fmt(facts.mystery)}`), f("verdict", facts.outcome === "rejected" ? "REJECTED" : "QUEUED")] };
     case "digest": return { badge, headline: "DAILY DIGEST", figures: [f("survived", facts.survived), f("extinct", facts.extinct), f("winners", facts.winners), f("ETH paid", facts.ethPaid), f("DNA burned", facts.dnaBurned)] };
     case "roast": return { badge, headline: "", figures: [] }; // the words are the post's (and a meme's own labels)
+    // studio art under a borrowed scene (media-slots SCENE_OF), code's numbers on top
+    case "lab": {
+      const fee = ((facts.best ?? {}) as { fee?: { basePct?: unknown; multiplier?: unknown; capPct?: unknown } }).fee;
+      return { badge, headline: "LAB NOTES", figures: some(["simulated", facts.tested], ["rejected", facts.rejected], ["red-team findings", facts.redTeamFindings], ["research read", facts.researchFindings]),
+        ...line(fee && typeof fee.basePct === "number" && `best: base ${fmt(fee.basePct)}%  multiplier ${fmt(fee.multiplier)}x  cap ${fmt(fee.capPct)}%`) };
+    }
+    case "status": return { badge, headline: `LAST ${fmt(facts.hours)} HOURS`, figures: some(["swaps", facts.swaps], ["ETH volume", facts.volumeEth], ["ETH in fees", facts.feesEth], ["DNA burned", facts.burnedDna]) };
+    case "reflection": return { badge, headline: "NIGHTLY REFLECTION", figures: some(["day", facts.day]) };
+    case "recap": return { badge, headline: "THE WEEK", figures: some(["games shipped", facts.gamesShipped], ["kept", facts.experimentsKept], ["killed", facts.experimentsKilled], ["site changes", facts.siteChanges]) };
   }
   throw new Error(`no card for ${String(facts.event)}`);
 }
@@ -228,34 +243,58 @@ export async function styleFor(eventKey: string, facts: Record<string, unknown>)
 
 // ---------------------------------------------------------------- the studio's art
 
+/** Why a studio call failed, token-free: the error's name and its cause's code (never its message, a header or the
+ *  url), e.g. "TimeoutError", "TypeError ENOTFOUND". */
+export const failureOf = (e: unknown) => {
+  const code = (e as { cause?: { code?: unknown } } | null)?.cause?.code;
+  return `${e instanceof Error ? e.name : "Error"}${typeof code === "string" ? ` ${code}` : ""}`.replace(/[^\w ]/g, "").slice(0, 60);
+};
+/** A studio call that failed reaches the signers' alerts (and the signed alert record), once an hour per call and
+ *  reason; the post itself goes on (a plate when the art does not come). */
+export async function studioFailed(call: "request" | "status" | "art", reason: string) {
+  const hour = new Date().toISOString().slice(0, 13);
+  await alert(`Studio ${call} failed: ${reason}. Posts waiting for art get a plate instead.`, `alert:studio:${call}:${reason}:${hour}`).catch(() => {});
+}
+/** A studio fetch: the response, or null with the failure alerted (a 404 is an answer, not a failure). */
+async function studioCall(call: "request" | "status" | "art", url: string, init: RequestInit | undefined, timeoutMs: number) {
+  const r = await STUDIO.fetch(url, init, timeoutMs).catch(async (e) => { await studioFailed(call, failureOf(e)); return null; });
+  if (r && !r.ok && (r.status !== 404 || call === "request")) await studioFailed(call, `HTTP ${r.status}`);
+  return r;
+}
+
 /** Ask for art (idempotent per event key; best effort: the next send tick asks again). STUDIO_TOKEN (a sealed allowed
  *  env) authenticates the enclave to the studio. Never while halted: the studio's image models cost money too. */
 export async function requestArt(eventKey: string, slots: Slots, shape: Shape) {
   if (!MEDIA.studioUrl || (await mode()) === "halted") return false;
-  return STUDIO.fetch(`${MEDIA.studioUrl}/request`, { method: "POST", headers: { "content-type": "application/json", authorization: `Bearer ${MEDIA.studioToken ?? ""}` }, body: JSON.stringify({ eventKey, slots, shape }) }, STUDIO.timeouts.request).then((r) => r.ok, () => false);
+  const r = await studioCall("request", `${MEDIA.studioUrl}/request`, { method: "POST", headers: { "content-type": "application/json", authorization: `Bearer ${MEDIA.studioToken ?? ""}` }, body: JSON.stringify({ eventKey, slots, shape }) }, STUDIO.timeouts.request);
+  return !!r?.ok;
 }
 /** At enqueue: an art post picks its style and asks for its art the moment the event is known, so the studio has the
  *  whole post spacing to deliver it. */
 export async function requestArtFor(eventKey: string, facts: Record<string, unknown>) {
   const ev = String(facts.event);
-  if (!MEDIA.studioUrl || !(IMAGE_EVENTS as readonly string[]).includes(ev)) return false;
+  if (!MEDIA.studioUrl || !hasArt(ev)) return false;
   return styleFor(eventKey, facts).then((style) => requestArt(eventKey, slotsOf(facts, eventKey, style), shapeOf(ev))).catch(() => false);
 }
 
-/** The studio's art for an event, re-checked; null = not ready or rejected. The verdict is cached per art hash in a
- *  signed x_post record, so art that failed doesn't re-run the vision check every minute. */
-async function studioArt(eventKey: string, shape: Shape, style: Style, caption: unknown): Promise<{ png: Buffer; provenance: Provenance } | null> {
+/** The studio's art for an event, re-checked; null = not ready or rejected; "failed" = the studio's verdict (final:
+ *  it never tries that event again); "unknown" = it holds no job for the event (its daily round cap, an outage or a
+ *  restart drop a request without a verdict). The verdict on art is cached per art hash in a signed x_post record, so
+ *  art that failed doesn't re-run the vision check every minute. */
+async function studioArt(eventKey: string, shape: Shape, style: Style, caption: unknown): Promise<{ png: Buffer; provenance: Provenance } | "failed" | "unknown" | null> {
   if (!MEDIA.studioUrl) return null;
   const path = `${MEDIA.studioUrl}/studio/${encodeURIComponent(eventKey)}`;
-  const m = await STUDIO.fetch(`${path}.json`, undefined, STUDIO.timeouts.json);
-  if (!m.ok) return null;
+  const m = await studioCall("status", `${path}.json`, undefined, STUDIO.timeouts.json);
+  if (!m) return null;
   const mb = await readCapped(m, STUDIO.jsonMax);
   if (!mb) return null;
   let meta: StudioMeta;
   try { meta = JSON.parse(mb.toString("utf8")) as StudioMeta; } catch { return null; }
-  if (meta?.status !== "ready") return null;
-  const p = await STUDIO.fetch(`${path}.art`, undefined, STUDIO.timeouts.art);
-  if (!p.ok) return null;
+  if (m.ok && meta?.status === "failed") return "failed";
+  if (m.status === 404 && meta?.status === "unknown") return "unknown";
+  if (!m.ok || meta?.status !== "ready") return null;
+  const p = await studioCall("art", `${path}.art`, undefined, STUDIO.timeouts.art);
+  if (!p?.ok) return null;
   const png = await readCapped(p, MAX_BYTES);
   if (!png) return null; // over 5 MB: never read further
   const art = sha256(png);
@@ -295,6 +334,9 @@ export function plateIndex(eventKey: string, set: readonly { file: string; style
   return pool[parseInt(sha256(eventKey).slice(0, 8), 16) % pool.length];
 }
 export const LOGO_MP4 = new URL("dna-logo.mp4", MEDIA.dir);
+/** Events the studio held no job for on a send tick and that were asked for again then (the request reached it): still
+ *  none on the next tick means none is coming (process memory: after a restart an event is asked once more). */
+const unheard = new Set<string>();
 
 // ---------------------------------------------------------------- the decision
 
@@ -309,24 +351,31 @@ export async function cardFor(eventKey: string, createdAt: Date, raw: Record<str
     try { const buf = readFileSync(LOGO_MP4); return { kind: "video", buf, sha256: sha256(buf), source: "logo" }; } catch (e) { return { kind: "none", why: `logo: ${(e as Error).message}` }; }
   }
   const plateOnly = PLATE_EVENTS.has(ev);
-  if (!plateOnly && !(IMAGE_EVENTS as readonly string[]).includes(ev)) return { kind: "none", why: "no image for this event" };
+  if (!plateOnly && !hasArt(ev)) return { kind: "none", why: "no image for this event" };
   const shape = shapeOf(ev);
   let layer: Layer;
   try { layer = factLayer(facts, raw, (await latest<{ n: number }>("epoch"))?.n ?? 0); } catch (e) { return { kind: "none", why: (e as Error).message }; }
-  let oversize = false;
+  let plateNow = false;
   if (MEDIA.studioUrl && !plateOnly) {
     try {
       const style = await styleFor(eventKey, facts);
       const art = await studioArt(eventKey, shape, style, facts.caption);
-      if (art) {
+      // no art is coming: a failed verdict, or still no job after a request that reached it (its daily round cap, a
+      // generation error: alerted): the plate now
+      const dropped = art === "unknown" && unheard.has(eventKey);
+      if (art !== "unknown" || dropped) unheard.delete(eventKey);
+      if (dropped) await studioFailed("request", "no job after a request, its round cap or a generation error");
+      if (art === "failed" || dropped) plateNow = true;
+      else if (art === "unknown") { if (await requestArt(eventKey, slotsOf(facts, eventKey, style), shape)) unheard.add(eventKey); }
+      else if (art) {
         const png = composite(art.png, layer, shape);
         if (png.length <= CARD.maxBytes) return { kind: "image", png, sha256: sha256(png), source: "studio", style, provenance: art.provenance, layer };
-        oversize = true; // too big for X: the plate goes now (waiting won't shrink it)
+        plateNow = true; // too big for X: the plate goes now (waiting won't shrink it)
       } else await requestArt(eventKey, slotsOf(facts, eventKey, style), shape);
     } catch (e) {
       console.error(`card ${eventKey}:`, (e as Error).message);
     }
-    if (!oversize && now - createdAt.getTime() < MEDIA.waitMs) return "wait";
+    if (!plateNow && now - createdAt.getTime() < MEDIA.waitMs) return "wait";
   } // no studio configured, or a plate event: nothing to wait for, the plate goes at once
   try {
     const p = plates();

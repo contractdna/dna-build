@@ -13,6 +13,14 @@ export const ART_EVENTS = ["outcome", "jackpot_drawn", "ballot_result", "mystery
 /** Posts that may carry the two-panel meme (the one style with words in the art): roasts and comparisons. */
 export const MEME_EVENTS = ["roast"] as const;
 export const IMAGE_EVENTS = [...ART_EVENTS, ...MEME_EVENTS] as const;
+/** Posts that carry the studio's art under an image event's scene (the studio's enum stays as it is): the lab's
+ *  simulated candidates and a site change under the experiment's, the status, the nightly reflection, the weekly recap
+ *  and a buyback and burn (the glow dims) under the digest's, a fee split under the jackpot's (sparks drawn out). */
+export const SCENE_OF: Record<string, (typeof IMAGE_EVENTS)[number]> = {
+  lab: "outcome", status: "digest", reflection: "digest", recap: "digest", burn_summary: "digest", fees_distributed: "jackpot_drawn", site_changed: "outcome",
+};
+/** A post the studio makes art for (its own scene or a borrowed one). */
+export const hasArt = (event: string) => (IMAGE_EVENTS as readonly string[]).includes(event) || event in SCENE_OF;
 export const shapeOf = (event: string): Shape => (event === "digest" ? "square" : "wide");
 
 /** The style library (prompts: the studio's STUDIO_PROMPTS, neutral defaults in src/studio.ts). */
@@ -60,14 +68,14 @@ const clamp = (x: number) => Math.min(1, Math.max(0, Number.isFinite(x) ? x : 0)
 const num = (v: unknown) => (typeof v === "number" && Number.isFinite(v) ? v : 0);
 export const seedOf = (eventKey: string) => parseInt(createHash("sha256").update(eventKey).digest("hex").slice(0, 8), 16);
 /** Fact sheet → prompt slots: the event enum, the style, numbers mapped to visual parameters (survival = growth,
- *  extinction = decay, prize size = light), a seed from the event key. Never a free string from the facts (names,
+ *  extinction = decay, prize or fee size = light), a seed from the event key. Never a free string from the facts (names,
  *  reasons, options, titles). The one exception is a meme's two labels, upper-case words only, which the enclave reads
  *  back off the art and compares word by word before anything posts. */
 export function slotsOf(facts: Record<string, unknown>, eventKey: string, style: Style): Slots {
-  const event = z.enum(IMAGE_EVENTS).parse(facts.event);
+  const event = z.enum(IMAGE_EVENTS).parse(SCENE_OF[String(facts.event)] ?? facts.event);
   const kept = facts.outcome === "kept (promoted)" || facts.outcome === "queued for testing";
   const lost = facts.outcome === "killed" || facts.outcome === "rolled back" || facts.outcome === "rejected";
-  const eth = num(facts.prizeEth) + num(facts.ethPaid);
+  const eth = num(facts.prizeEth) + num(facts.ethPaid) + num(facts.totalEth) + num(facts.spentEth); // a fee split's, a buyback's
   const n = num(facts.survived) + num(facts.extinct);
   const share = num(facts.totalWeight) > 0 ? num(facts.winnerWeight) / num(facts.totalWeight) : 0;
   return Slots.parse({

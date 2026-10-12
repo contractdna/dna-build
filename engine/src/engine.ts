@@ -9,17 +9,18 @@
 // lockdown + TEE-derived keys (config.ts), no CLI and no registry:queue handler (no operator path to the agent key),
 // signed state and the enclave log chain (log.ts), the boot check against log-head rollback (head.ts).
 import { createServer } from "node:http";
-import { AGENT_LOOP, GAS, KEEPER, LLM, LOOP, PORT, PRELAUNCH, SCHEDULER_MS, WATCH, X } from "./config.ts";
+import { AGENT_LOOP, GAS, IDEAS_LIVE, KEEPER, LLM, LOOP, PORT, PRELAUNCH, SCHEDULER_MS, WATCH, X } from "./config.ts";
 import { edb as sql, migrate } from "./db.ts";
 import { dstackKeyProvider, ENCLAVE } from "./enclave.ts";
 import { ownerCommand } from "./approve.ts";
+import { CT, ctHandler } from "./ct.ts";
 import { attestation, nonceOk } from "./attest.ts";
 import { gameAgentHandler, gameKeeperHandlers } from "./games.ts";
 import { bootAnchor, bootCheck, persistHead } from "./head.ts";
 import { setKeyProvider } from "./sealed.ts";
 import { enqueue, type Handler, schedule, type Schedule, startWorker } from "./jobs.ts";
 import { ideaLoopHandler } from "./idea-queue.ts";
-import { intakeHandler, roundsHandler } from "./ideas.ts";
+import { intakeHandler, liveHandler, roundsHandler } from "./ideas.ts";
 import { pagesDailyHandler, seqHandler, seqHourlyHandler } from "./sequencer.ts";
 import { selfHandler } from "./self.ts";
 import { revertHandler } from "./pages.ts";
@@ -30,11 +31,12 @@ import { cycleHandler, genesisHandler, getLoop, journalHandler, prelaunchCycleHa
 import { closeFork, forkStats } from "./sim.ts";
 import { observeHandler } from "./observe.ts";
 import { getFlags, initMode, setOverride, waitWhenHalted } from "./mode.ts";
-import { alert, alertHandler, createDraft, draftHandler, pollTelegram } from "./telegram.ts";
+import { alert, alertHandler, createDraft, draftHandler, pollTelegram, publicHandler } from "./telegram.ts";
 import { AGENT_HOLD, balances } from "./tx.ts";
 import { keyAddresses, lastWatched, minuteChecks, watchTick } from "./watch.ts";
-import { CHARACTER_MEMORY, deletePost, digestHandler, mentionsHandler, postDraft, pressReply, repliesHandler, scoutHandler, sendHandler, setMuted } from "./x.ts";
+import { CHARACTER_MEMORY, deletePost, digestHandler, mentionsHandler, postDraft, quotesHandler, pressReply, repliesHandler, scoutHandler, sendHandler, setMuted } from "./x.ts";
 import { auditHandler, characterContext } from "./character.ts";
+import { labHandler, labSchedule } from "./lab.ts";
 import { launchHandler, milestonesHandler, progressHandler, recapHandler, siteChangesHandler, statusHandler, treasuryHandler, xSchedules } from "./status.ts";
 
 const [cmd, ...rest] = process.argv.slice(2);
@@ -61,6 +63,7 @@ CHARACTER_MEMORY.context = characterContext;
 
 const base: Record<string, Handler> = {
   alert: alertHandler,
+  "tg:public": publicHandler,
   genesis: genesisHandler,
   draft: draftHandler({ x_post: postDraft }),
 };
@@ -76,9 +79,11 @@ const handlers: Record<string, Handler> = waitWhenHalted(PRELAUNCH ? { ...base, 
   ...(ENCLAVE.on ? {} : { "registry:queue": queueHandler }),
   "registry:endCanary": endCanaryHandler,
   "x:mentions": mentionsHandler,
+  "x:quotes": quotesHandler,
   "x:replies": repliesHandler,
   "x:send": sendHandler,
   "x:digest": digestHandler,
+  "x:ct": ctHandler,
   "x:status": statusHandler,
   "site:changes": siteChangesHandler,
   "treasury": treasuryHandler,
@@ -86,6 +91,7 @@ const handlers: Record<string, Handler> = waitWhenHalted(PRELAUNCH ? { ...base, 
   "x:milestones": milestonesHandler,
   "x:launch": launchHandler,
   "x:progress": progressHandler,
+  "x:lab": labHandler,
   "x:scout": scoutHandler,
   "voice:audit": auditHandler,
   observe: observeHandler,
@@ -96,6 +102,7 @@ const handlers: Record<string, Handler> = waitWhenHalted(PRELAUNCH ? { ...base, 
   pulse: pulseHandler,
   "ideas:intake": intakeHandler,
   "ideas:rounds": roundsHandler,
+  "ideas:live": liveHandler,
   "ideas:loop": ideaLoopHandler,
   "seq:step": seqHandler,
   "seq:hourly": seqHourlyHandler,
@@ -121,15 +128,17 @@ const schedules: Schedule[] = PRELAUNCH ? [{ kind: "cycle", everyMs: LOOP.cycleM
   ...(AGENT_LOOP ? [{ kind: "games:agent", everyMs: HOUR }] : []),
   // 00:10 UTC: anchor the day that just ended
   { kind: "anchor", everyMs: DAY, offsetMs: 10 * 60_000, payload: prevDay },
-  ...(X.userId ? [{ kind: "x:mentions", everyMs: X.mentionsMs }, { kind: "ideas:intake", everyMs: X.mentionsMs }, { kind: "x:replies", everyMs: X.mentionsMs }] : []),
+  ...(X.userId ? [{ kind: "x:mentions", everyMs: X.mentionsMs }, { kind: "ideas:intake", everyMs: X.mentionsMs }, { kind: "x:replies", everyMs: X.mentionsMs }, ...(IDEAS_LIVE ? [{ kind: "x:quotes", everyMs: HOUR }] : [])] : []),
   // X posting: the outbox drains one item a minute within the caps; the tone brief daily at 06:00 UTC; the status at
   // 14:00 and 22:00 UTC, the recap Sundays 18:00 UTC, milestones hourly, the launch-day posts and chain progress every
-  // 2 h (src/status.ts)
-  ...(X.clientId ? [{ kind: "x:send", everyMs: X.sendMs }, { kind: "x:scout", everyMs: DAY, offsetMs: 6 * HOUR }, { kind: "voice:audit", everyMs: 7 * DAY, offsetMs: 5 * HOUR }, { kind: "x:digest", everyMs: DAY, offsetMs: 23 * HOUR, payload: (start: Date) => ({ due: start.toISOString() }) }, ...xSchedules()] : []),
+  // 2 h (src/status.ts); the lab every 2 h on a launch day, 6 h after (src/lab.ts)
+  ...(X.clientId ? [{ kind: "x:send", everyMs: X.sendMs }, { kind: "x:scout", everyMs: DAY, offsetMs: 6 * HOUR }, { kind: "voice:audit", everyMs: 7 * DAY, offsetMs: 5 * HOUR }, { kind: "x:digest", everyMs: DAY, offsetMs: 23 * HOUR, payload: (start: Date) => ({ due: start.toISOString() }) }, ...xSchedules(), labSchedule()] : []),
   // agent loop: observe every 5 min (a feed line per finalized
   // advance), the full cycle every CYCLE_MS, plate ticks with the keeper cadence, an hourly pulse, journal 00:05 UTC.
   // Periods without a payload coalesce (jobs.ts schedule): a cycle still running or deferred never stacks a backlog.
   { kind: "observe", everyMs: LOOP.observeMs },
+  // takes on crypto Twitter: about 5 a day at seeded times, each only when there is something worth one (src/ct.ts)
+  ...(X.clientId ? [{ kind: "x:ct", everyMs: CT.everyMs }] : []),
   // copy pools: new DNA pools without the hook + the leakage share (src/clones.ts), with the loop's cadence
   { kind: "clones", everyMs: LOOP.cycleMs },
   { kind: "plates:tick", everyMs: KEEPER.executeMs },
@@ -137,6 +146,8 @@ const schedules: Schedule[] = PRELAUNCH ? [{ kind: "cycle", everyMs: LOOP.cycleM
   { kind: "pulse", everyMs: LOOP.pulseMs },
   { kind: "journal", everyMs: DAY, offsetMs: 5 * 60_000, payload: prevDay },
   { kind: "ideas:rounds", everyMs: HOUR },
+  // live mode (IDEA_MODE=live): each site submit judged within a minute of being indexed (X ideas: in ideas:intake)
+  ...(IDEAS_LIVE ? [{ kind: "ideas:live", everyMs: 60_000 }] : []),
   // accepted ideas of final rounds: fee ideas into the experiment pipeline, rewards for kept ones (with the agent loop)
   ...(AGENT_LOOP ? [{ kind: "ideas:loop", everyMs: HOUR }] : []),
   // the Sequencer (src/sequencer.ts): a build step a minute (from launch: SEQ_OPEN_DELAY_MIN, default 0); games, release and the

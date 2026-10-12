@@ -80,7 +80,7 @@ export async function setOverride(to: "dry_run" | "halted", by: string) {
  *  idea jobs read them). Halted: they wait, so a halted engine spends nothing on models or mentions; code-only work
  *  (keepers, observe, the indexer) goes on. dry_run runs them (its cycles are the first real-model test). llm()
  *  refuses while halted too, for any path not listed here. */
-export const MODEL_JOBS = ["cycle", "journal", "genesis", "x:scout", "x:mentions", "x:replies", "voice:audit", "ideas:rounds"];
+export const MODEL_JOBS = ["cycle", "journal", "genesis", "x:scout", "x:mentions", "x:replies", "voice:audit", "ideas:rounds", "x:ct"];
 export const HALTED_WAIT_MS = 60_000; // a /dryrun resumes them within a minute; a waiting kind never stacks (jobs.ts schedule)
 
 /** The handlers, with every MODEL_JOBS kind waiting (Defer: no attempt spent, nothing run) while the engine is halted. */

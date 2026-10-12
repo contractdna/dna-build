@@ -87,6 +87,14 @@ export const IdeaStatus = z.object({
   round: z.number().int(),
   status: z.enum(["researching", "simulating", "red-team", "accepted", "rejected", "void"]),
   resolution: z.string().max(400).optional(),
+  // live idea mode (src/config.ts IDEA_MODE): one idea judged as it came in. `id` is its IdeaMarket id, or for an X
+  // idea the number it was queued under (0: not queued); `from` where it came from; `brain` the signed outcome's seq
+  live: z.literal(true).optional(),
+  from: z.enum(["site", "x"]).optional(),
+  kind: z.string().max(20).optional(),
+  title: z.string().max(120).optional(),
+  brain: z.string().regex(/^\d{1,18}$/).optional(),
+  redTeam: z.enum(["pass", "block"]).optional(),
 });
 
 /** Engine fields of the homepage core (web _live/feed.ts Core). */

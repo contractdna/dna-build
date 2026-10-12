@@ -19,9 +19,10 @@
 #   LAUNCH_JSON       default launch.json  (route A pack: graph init code + args, checked byte for byte; required on
 #                     mainnet)
 #   VRF_KEY_HASH      default the mainnet 200 gwei lane (GamePot's 6th constructor arg; Launch.s.sol VRF_KEY_HASH)
-#   SALT_NONCE / WEEKLY_BUDGET_WEI / PER_GAME_CAP_WEI   the values FundingSetup.s.sol was run with (its defaults:
-#                     0 / 0.2 ETH / 0.1 ETH): GameFactory = (Safe, registry), GameFunder = (Safe, GameFactory, budget,
-#                     cap), both CREATE2 via 0x4e59 with salt = SALT_NONCE as bytes32
+#   SALT_NONCE / WEEKLY_BUDGET_WEI / PER_GAME_CAP_WEI   the live GameFunder's values (defaults 0 / 2 ETH / 0.1 ETH:
+#                     the second ladder level, deployed alone through 0x4e59 with salt 0; the first was
+#                     FundingSetup.s.sol's 0.2 ETH): GameFactory = (Safe, registry), GameFunder = (Safe, GameFactory, budget, cap), both
+#                     CREATE2 via 0x4e59 with salt = SALT_NONCE as bytes32
 #   CHECK_ONLY=1      run the build + bytecode/args self-checks only (no on-chain code check, no key read, nothing
 #                     submitted): usable before launch on the planned addresses
 #   PLATFORM_RECIPIENT / GRAPH_FACTORY   defaults: the mainnet values baked into PlatformRevenue / Bootstrap
@@ -115,10 +116,10 @@ for i in 0 1 2 3; do
   ps=$(cast keccak "$(enc 'f(string,uint256)' dna.plate $i)")
   if [ $i -lt 3 ]; then add AdaptiveFee "$p" src/modules/AdaptiveFee.sol "$ps" 0x; else add BaselineSplit "$p" src/modules/BaselineSplit.sol "$ps" 0x; fi
 done
-# the Safe's funding batch (contracts/script/FundingSetup.s.sol): CREATE2 via 0x4e59, salt = SALT_NONCE as bytes32
+# GameFactory (the Safe's funding batch) and the live GameFunder: CREATE2 via 0x4e59, salt = SALT_NONCE as bytes32
 FS=$(cast to-uint256 "${SALT_NONCE:-0}")
 [ -n "$GF" ] && add GameFactory "$GF" src/games/GameFactory.sol "$FS" "$(enc 'f(address,address)' "$SAFE" "$REG")"
-[ -n "$GFU" ] && add GameFunder "$GFU" src/games/GameFunder.sol "$FS" "$(enc 'f(address,address,uint256,uint256)' "$SAFE" "$GF" "${WEEKLY_BUDGET_WEI:-200000000000000000}" "${PER_GAME_CAP_WEI:-100000000000000000}")"
+[ -n "$GFU" ] && add GameFunder "$GFU" src/games/GameFunder.sol "$FS" "$(enc 'f(address,address,uint256,uint256)' "$SAFE" "$GF" "${WEEKLY_BUDGET_WEI:-2000000000000000000}" "${PER_GAME_CAP_WEI:-100000000000000000}")"
 [ ${#ROWS[@]} -gt 0 ] || fail "nothing to verify"
 
 echo "• self-checks (nothing is submitted unless all pass)"

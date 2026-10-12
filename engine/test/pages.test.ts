@@ -11,7 +11,7 @@ import { type Abi, type Address, createPublicClient, createWalletClient, decodeF
 import { privateKeyToAccount } from "viem/accounts";
 import { foundry } from "viem/chains";
 import * as abi from "../src/abi.ts";
-import { answered, assetPaths, checkSite, copyState, liveBundle, PAGES, PAGES_DEPS, pageFiles, pageGateResult, sitePageGate, siteRoutes, stage, verdictOf, withAnvil } from "../src/pages.ts";
+import { answered, assetPaths, checkSite, copyState, freeSlot, liveBundle, PAGES, PAGES_DEPS, pageFiles, pageGateResult, sitePageGate, siteRoutes, stage, verdictOf, withAnvil } from "../src/pages.ts";
 import { compile, workspace } from "../src/seq-forge.ts";
 
 const ROOT = new URL("../..", import.meta.url).pathname;
@@ -138,6 +138,14 @@ test("the chain handed to the page check: the gated game deployed through the re
       factory = await deploy(art("GameFactory.sol", "GameFactory"), [safe, registry]);
       const at = getContractAddress({ opcode: "CREATE2", from: factory, salt, bytecode: game.bytecode.object });
       await assert.rejects(stage(url, { factory, safe, game: "0x0000000000000000000000000000000000000001", deploy: { initCode: game.bytecode.object, salt } }), /not the factory's CREATE2 address/);
+      // a full factory (3 live, the uint8 at slot 0 byte 20) still stages on the fork, and keeps its funder
+      const funderWord = `0x${"00".repeat(11)}03${"ab".repeat(20)}`;
+      await pub.request({ method: "anvil_setStorageAt" as never, params: [factory, "0x0", funderWord] as never });
+      assert.equal(await pub.readContract({ address: factory, abi: abi.gameFactoryAbi, functionName: "liveCount" }), 3);
+      await freeSlot(url, factory);
+      assert.equal(await pub.readContract({ address: factory, abi: abi.gameFactoryAbi, functionName: "liveCount" }), 0);
+      assert.equal((await pub.readContract({ address: factory, abi: abi.gameFactoryAbi, functionName: "funder" })).toLowerCase(), `0x${"ab".repeat(20)}`);
+      await pub.request({ method: "anvil_setStorageAt" as never, params: [factory, "0x0", `0x${"00".repeat(11)}03${"00".repeat(20)}`] as never }); // full again, its own (unset) funder
       return stage(url, { factory, safe, game: at, deploy: { initCode: game.bytecode.object, salt }, gameAbi: game.abi, fundWei: PAGES.fundWei });
     });
     const at = getContractAddress({ opcode: "CREATE2", from: factory, salt, bytecode: game.bytecode.object });

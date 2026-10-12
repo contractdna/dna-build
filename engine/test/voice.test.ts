@@ -140,9 +140,9 @@ test("tone scout: schema ≤ 20 phrases; code drops URLs, digits, number words, 
   assert.equal(toneBrief(Array(30).fill(0).map((_, i) => `word ${String.fromCharCode(97 + (i % 26))}${i > 25 ? "q" : ""}`)).length, 20);
 });
 
-test("X limits: ≤ 15 own posts a day 20 min apart; replies ≤ 200 a day, 30 an hour, 2 per author", async () => {
+test("X limits: ≤ 25 own posts a day 20 min apart; replies ≤ 200 a day, 30 an hour, 2 per author", async () => {
   const { X } = await import("../src/config.ts");
-  assert.deepEqual([X.dailyPosts, X.spacingMs / 60_000, X.dailyReplies, X.hourlyReplies, X.repliesPerAuthor], [15, 20, 200, 30, 2]);
+  assert.deepEqual([X.dailyPosts, X.spacingMs / 60_000, X.dailyReplies, X.hourlyReplies, X.repliesPerAuthor], [25, 20, 200, 30, 2]);
 });
 
 test("replies: 'stop' / 'unsubscribe' opt out (code, not a model)", () => {

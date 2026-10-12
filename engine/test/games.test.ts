@@ -147,14 +147,20 @@ test("commitment = keccak256(salt ‖ payload), as MutationBoard computes it", (
   assert.equal(commitmentOf(salt, payload), keccak256(concat([salt, payload])));
 });
 
-test("draw interval: the time for the jackpot inflow to reach ~1 ETH, within [12 h, 3 d], only on a > 25% move", () => {
+test("draw interval: the time for the jackpot inflow to reach ~1 ETH, within [12 h, 24 h], only on a > 25% move", () => {
   const E = 10n ** 18n;
-  assert.equal(desiredInterval(E / 2n, D), 2 * D); // 0.5 ETH/day → 2 d
+  assert.equal(GAME_POLICY.maxInterval, 24 * H, "default cap 24 h");
+  assert.equal(desiredInterval(2n * E, D), 12 * H); // 2 ETH/day → 12 h
   assert.equal(desiredInterval(10n * E, D), 12 * H, "floor 12 h");
-  assert.equal(desiredInterval(E / 100n, D), 3 * D, "ceiling 3 d");
+  assert.equal(desiredInterval(E / 100n, 12 * H), 24 * H, "low inflow → the 24 h cap");
+  assert.equal(desiredInterval(E / 100n, 3 * D), 24 * H, "a 72 h interval already set is brought down to 24 h");
+  assert.equal(desiredInterval(E / 100n, D), null, "at the cap with low inflow: keep");
   assert.equal(desiredInterval(E, D), null, "already right");
-  assert.equal(desiredInterval(E * 4n / 5n, D), null, "within 25%");
+  assert.equal(desiredInterval(E * 6n / 5n, D), null, "within 25%");
   assert.equal(desiredInterval(0n, D), null, "no inflow: keep");
+  assert.equal(desiredInterval(0n, 3 * D), 24 * H, "no inflow, above the cap: down to it");
+  const p = { ...GAME_POLICY, maxInterval: 60 * H };
+  assert.equal(desiredInterval(E / 100n, 3 * D, p), 60 * H, "above the cap even within 25%");
 });
 
 test("the engine's constants mirror the contracts' (a contract change must update src/games.ts)", async () => {

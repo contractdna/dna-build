@@ -10,6 +10,8 @@
   "xUserId": "TODO",
   "policyThresholdsSha256": "",
   "xAiRepliesApproved": true,
+  "ideaMode": "live",
+  "telegramPublicChat": "",
   "llmLaunchAt": "TODO: launch time (ISO, UTC): the LLM spend schedule allows $200/day for 7 days from here, then $100/day",
   "dstackApp": null,
   "attestationUrl": null,

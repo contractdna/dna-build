@@ -435,6 +435,64 @@ test("studio bodies are bounded, the art must show something, an oversize card f
   } finally { card.CARD.maxBytes = limit; }
 });
 
+test("studio failures reach the alerts once an hour per kind, never the token; a failed verdict or a capped studio: the plate at once; a fee split, a buyback and a site change wait for their art up to 20 min", { skip }, async () => {
+  await clean();
+  const { PLATE_SAMPLES } = await import("./fixtures/plate-samples.ts");
+  const ev = (e: string) => ({ event: e, ...PLATE_SAMPLES[e] });
+  const studioAlerts = () => sql<{ payload: { text: string }; dedupe_key: string }[]>`select payload, dedupe_key from job where kind = 'alert' and dedupe_key like 'alert:studio:%'`;
+  const fetch0 = card.STUDIO.fetch;
+  const json = (status: number, body: unknown) => (url: string, init?: RequestInit, t?: number) => (/\.json$/.test(new URL(url).pathname) ? Promise.resolve(new Response(JSON.stringify(body), { status })) : fetch0(url, init, t));
+  try {
+    // a 401 at /request and an egress failure: each alerted with its status or error code, once this hour
+    card.STUDIO.fetch = async (url, init, t) => (new URL(url).pathname === "/request" ? new Response("{}", { status: 401 }) : fetch0(url, init, t));
+    assert.equal(await card.requestArtFor("fees_distributed:a1", ev("fees_distributed")), false);
+    assert.equal(await card.requestArtFor("burn_summary:a1", ev("burn_summary")), false);
+    card.STUDIO.fetch = async () => { throw new TypeError(`fetch failed ${MEDIA.studioToken}`, { cause: { code: "ECONNREFUSED" } }); };
+    assert.equal(await card.cardFor("site:a1", new Date(), { url: "/burn" }, ev("site_changed")), "wait", "an unreachable studio: the post waits, as for art not ready");
+    await card.cardFor("site:a1", new Date(), { url: "/burn" }, ev("site_changed"));
+    const a = await studioAlerts();
+    const kinds = () => studioAlerts().then((rows) => [...new Set(rows.map((r) => r.dedupe_key.replace(/:\d{4}-\d\d-\d\dT\d\d$/, "")))].sort());
+    assert.deepEqual(await kinds(), ["alert:studio:request:HTTP 401", "alert:studio:request:TypeError ECONNREFUSED", "alert:studio:status:TypeError ECONNREFUSED"]);
+    assert.ok(a.every((r) => !r.payload.text.includes(MEDIA.studioToken!)), "never the token");
+    // the studio's verdict failed: no art will come, the plate now
+    card.STUDIO.fetch = json(200, { status: "failed" });
+    const f = await card.cardFor("burn_summary:a2", new Date(), {}, ev("burn_summary"));
+    assert.ok(f !== "wait" && f.kind === "image" && f.source === "plate" && f.layer.headline === "BUYBACK AND BURN");
+    // the studio holds no job (its daily round cap): asked again once, under the borrowed scene, then the plate, alerted
+    card.STUDIO.fetch = json(404, { status: "unknown" });
+    const n = requests.length;
+    assert.equal(await card.cardFor("fees_distributed:a3", new Date(), {}, ev("fees_distributed")), "wait");
+    assert.equal(requests.slice(n).find((q) => q.eventKey === "fees_distributed:a3")?.slots.event, "jackpot_drawn");
+    const g = await card.cardFor("fees_distributed:a3", new Date(), {}, ev("fees_distributed"));
+    assert.ok(g !== "wait" && g.kind === "image" && g.source === "plate" && g.layer.headline === "FEE SPLIT");
+    assert.ok((await kinds()).includes("alert:studio:request:no job after a request, its round cap or a generation error"));
+    // a re-request that never reached the studio is not a second ask: the post keeps waiting
+    let reach = false;
+    card.STUDIO.fetch = async (url, init, t) => (new URL(url).pathname === "/request" ? (reach ? fetch0(url, init, t) : new Response("{}", { status: 503 })) : new Response(JSON.stringify({ status: "unknown" }), { status: 404 }));
+    assert.equal(await card.cardFor("burn_summary:a6", new Date(), {}, ev("burn_summary")), "wait");
+    assert.equal(await card.cardFor("burn_summary:a6", new Date(), {}, ev("burn_summary")), "wait", "no request landed yet");
+    reach = true;
+    assert.equal(await card.cardFor("burn_summary:a6", new Date(), {}, ev("burn_summary")), "wait");
+    const h = await card.cardFor("burn_summary:a6", new Date(), {}, ev("burn_summary"));
+    assert.ok(h !== "wait" && h.kind === "image" && h.source === "plate");
+    // a 5xx body that says "failed" is no verdict
+    card.STUDIO.fetch = json(502, { status: "failed" });
+    assert.equal(await card.cardFor("burn_summary:a7", new Date(), {}, ev("burn_summary")), "wait");
+    // generating: it waits, never past MEDIA_WAIT_MIN
+    card.STUDIO.fetch = json(404, { status: "generating" });
+    assert.equal(await card.cardFor("site:a4", new Date(), { url: "/burn" }, ev("site_changed")), "wait");
+    const late = await card.cardFor("site:a4", new Date(Date.now() - MEDIA.waitMs), { url: "/burn" }, ev("site_changed"));
+    assert.ok(late !== "wait" && late.kind === "image" && late.source === "plate");
+    assert.deepEqual(await kinds(), ["alert:studio:request:HTTP 401", "alert:studio:request:HTTP 503", "alert:studio:request:TypeError ECONNREFUSED",
+      "alert:studio:request:no job after a request, its round cap or a generation error", "alert:studio:status:HTTP 502", "alert:studio:status:TypeError ECONNREFUSED"], "a 404 is an answer, not a failure");
+  } finally { card.STUDIO.fetch = fetch0; }
+  // the art comes: the studio's, with the fact layer on top
+  art.set("burn_summary:a5", fakePng("art-a5"));
+  await card.requestArtFor("burn_summary:a5", ev("burn_summary"));
+  const s5 = await card.cardFor("burn_summary:a5", new Date(), {}, ev("burn_summary"));
+  assert.ok(s5 !== "wait" && s5.kind === "image" && s5.source === "studio" && s5.layer.headline === "BUYBACK AND BURN");
+});
+
 test("the /delete brake: removes one of our own posts and nothing else; an id we never posted never reaches X; it never posts", { skip }, async () => {
   await clean();
   await drawn(70);
@@ -501,7 +559,7 @@ test("privacy: a signer's Telegram id never reaches the public log; brakes and r
 test("plate events never wait for the studio: each gets its plate card at once; the engine going live gets the logo MP4", { skip }, async () => {
   await clean();
   const { PLATE_SAMPLES } = await import("./fixtures/plate-samples.ts");
-  for (const [event, facts] of Object.entries(PLATE_SAMPLES)) {
+  for (const [event, facts] of Object.entries(PLATE_SAMPLES).filter(([e]) => card.PLATE_EVENTS.has(e))) {
     const c = await card.cardFor(`${event}:t`, new Date(), { link: `https://etherscan.io/tx/0x${"cd".repeat(32)}` }, { event, ...facts });
     assert.ok(c !== "wait" && c.kind === "image" && c.source === "plate" && c.png.length <= card.CARD.maxBytes, `${event}: ${c === "wait" ? c : c.kind}`);
   }

@@ -77,8 +77,8 @@ DNA is a token on a Uniswap v4 pool whose hook takes a project fee. The fee and 
 - daily limits: {"agentQueueOps":12,"redteamPerDay":12,"intakePerRound":16,"agentPending":2}
 
 ## AI spend (USD)
-- daily cap 100, 200 for the first 7 days after launch; monthly cap 3000
-- each day's cap is split: the Sequencer 48%, everything else 52%; one Sequencer order at most $12 and at most a quarter of the Sequencer's part
+- daily cap 300, 300 for the first 7 days after launch; monthly cap 3000
+- each day's cap is split: the Sequencer 65%, everything else 35%; one Sequencer order at most $12 and at most a quarter of the Sequencer's part
 - budget caps per day (inside the shared part): {"research":20,"redteam":40,"rest":40}
 - pause order as spend nears a cap: research at 80% of the shared part, everything else at 100%; in a month the Sequencer pauses at 60% of the monthly cap, research at 80%, everything else at 100%
 
@@ -104,7 +104,7 @@ DNA is a token on a Uniswap v4 pool whose hook takes a project fee. The fee and 
 - A new game is a standalone contract: no power over the hook, the fees or any other contract; only the Safe can pause it; no user deposits until a higher ladder level.
 - Forbidden: delegatecall, selfdestruct, upgradeability, payable entry points or receive(), approve / permit / setApprovalForAll flows, new dependencies, edits outside the game's own folder, edits to CI.
 - Gates a build must pass: fuzz and invariant tests, a fork simulation, Slither and Aderyn, a planted-bug (mutation) check where every planted bug must make a test fail, a gas cap, the opcode and pattern ban, and a spec-diff check (no code outside the spec).
-- One build at a time, at most 3 rework rounds, at most 3 Sequencer games live. A game with no players for 2 days is retired: funds back to the treasury, claims stay.
+- Several builds at once (up to a set number, and a daily target of builds), at most 3 rework rounds, at most 3 Sequencer games live. A new game takes the slot of the live game with the fewest players (of those live 8 hours or more). A game with no players for 2 days is retired: funds back to the treasury, claims stay.
 - A verdict's input gives `round` (this round, counted from 1), `maxRounds` (the last round) and `reworkRoundsLeft` (maxRounds minus round: the rework rounds that remain after this one; 0 means a rework now ends the build). When you mention rounds left, use `reworkRoundsLeft` as given.
 - Ship only what passes. When nothing is good enough, say so plainly; no build is better than a risky one.
 
@@ -113,7 +113,7 @@ DNA is a token on a Uniswap v4 pool whose hook takes a project fee. The fee and 
 - fit (0-5): fits every rule and limit here and can be tested by the listed gates
 - clarity (0-5): the spec says exactly what to build
 - originality (0-5): new for DNA, not a copy of something it already has
-- score = the sum (0-20); the Sequencer builds the highest score first, one build at a time.
+- score = the sum (0-20); the Sequencer builds the highest score first, as soon as a build slot is free.
 
 ## Rules for idea rewards
 - Paid from the idea reserve (30% of the games pot), never the treasury. One reward is at least GamePot.MIN_REWARD and at most 25% of the reserve; all rewards queued in a rolling day at most 25% of the reserve. Each waits 1 public hour; the Safe can cancel it.

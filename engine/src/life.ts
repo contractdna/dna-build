@@ -120,7 +120,7 @@ export async function pendingNow(now = Date.now()): Promise<Pending[]> {
       const r = await pub.readContract({ address: d.ideaMarket, abi: ideaMarketAbi, functionName: "currentRound" }) as bigint;
       const end = await pub.readContract({ address: d.ideaMarket, abi: ideaMarketAbi, functionName: "roundEnd", args: [r] }) as bigint;
       const [{ n, x }] = await sql<{ n: number; x: number }[]>`select (select count(*) from chain_log where event = 'IdeaSubmitted' and (args->>'round')::numeric = ${String(r)})::int as n,
-        (select count(*) from intake where round = ${Number(r)} and status in ('candidate', 'picked', 'submitted'))::int as x`;
+        (select count(*) from intake where round = ${Number(r)} and status in ('candidate', 'picked', 'submitted', 'queued', 'rejected'))::int as x`;
       ideaRound = { endsMs: Number(end) * 1000, ideas: n, fromX: x };
     } catch { /* not read: no line */ }
   }

@@ -1,5 +1,5 @@
 // Finding the visitor's wallet, plain TypeScript (no React) so web/test runs it. Desktop: every extension that
-// announces itself over EIP-6963 (Rabby, Coinbase, ...), else the legacy window.ethereum. Phones have no
+// announces itself over EIP-6963 (MetaMask, Rabby, Coinbase, ...), else the legacy window.ethereum. Phones have no
 // extensions: the page offers to reopen itself inside a wallet app's own browser, where the wallet is injected. No
 // SDK, no relay, no third-party script: the wallet only ever talks to this page through its own provider.
 
@@ -39,6 +39,7 @@ export function openIn(url: string) {
   const u = new URL(url);
   const enc = encodeURIComponent(u.href);
   return [
+    { name: "MetaMask", href: `https://link.metamask.io/dapp/${u.host}${u.pathname}${u.search}` },
     { name: "Coinbase Wallet", href: `https://go.cb-w.com/dapp?cb_url=${enc}` },
     { name: "Trust Wallet", href: `https://link.trustwallet.com/open_url?coin_id=60&url=${enc}` },
   ];

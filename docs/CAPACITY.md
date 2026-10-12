@@ -215,8 +215,8 @@ Cost controls:
   prompt carries the generated project context, well above the 512-token minimum prefix); the red-team prompts are
   under it, so a breakpoint there would only add the 1.25× write (platform.claude.com/docs/en/build-with-claude/prompt-caching).
   Cost accounting prices Anthropic cache writes and reads at each model's listed rates (`engine/models.json`).
-- **Caps:** hard daily cap $200 for the 7 days after `LLM_LAUNCH_AT`, then `LLM_DAILY_USD_CAP` $100/day; `LLM_MONTHLY_USD_CAP`
-  $3,000. Each day's cap is split: the Sequencer (dev) 48 %, everything else 52 % (at $100: $48 / $52); inside the
+- **Caps:** hard daily cap `LLM_DAILY_USD_CAP` $300/day (the first week too); `LLM_MONTHLY_USD_CAP` $3,000. Each
+  day's cap is split: the Sequencer (dev) 65 %, everything else 35 % (at $300: $195 / $105); inside the
   shared part, sub-caps research $20 / red team $40 / rest $40, research pausing at 80 % of it; in a month dev pauses
   at 60 %, research at 80 %, the rest at 100 % (docs/MODELS.md). Telegram alert at 70 % of each part.
   Over a cap a call is refused before it is made and the cycle carries on code-only: no LLM cap defers the cycle (the
@@ -239,7 +239,7 @@ Per-call assumptions (tokens; not yet measured on production traffic: check `llm
 | --- | --- | ---: | ---: |
 | **typical launch day** | 2 experiments (≈ 16 h of 64 monitored cycles) + 32 search cycles; 4 Opus, 4 go/no-go, 2 Fable, 6 research, 30 mentions, 6 lessons/journal | **≈ 3.2** | **≈ 96** |
 | **busy** | 96 search cycles at 3,000/2,000 tokens, Opus at the daily max (12, 8,000 out), 3 Fable, research every hour (24), 12 go/no-go, 100 mentions | **≈ 10** | **≈ 300** |
-| **hard ceiling** | `LLM_DAILY_USD_CAP` (week 1: 200), `LLM_MONTHLY_USD_CAP` | 100 | 3,000 |
+| **hard ceiling** | `LLM_DAILY_USD_CAP`, `LLM_MONTHLY_USD_CAP` | 300 | 3,000 |
 
 A busy day of this shape is unit-tested against the caps (test/loop.test.ts "cost accounting at 96 cycles/day"): every budget stays
 under its sub-cap and the total under the 70 % alert of the shared part.

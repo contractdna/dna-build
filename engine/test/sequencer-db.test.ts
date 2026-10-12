@@ -67,6 +67,8 @@ before(async () => {
   if (!ADMIN) return;
   await migrate();
   enclave.ENCLAVE.on = true;
+  // one build at a time, one a day, unless a test says otherwise (the pace tests below)
+  Object.assign(s.SEQ, { maxInflight: 1, dailyTarget: 1 });
   Object.assign(pages.PAGES_DEPS, { now: () => st.now, alert: async (t: string) => { st.alerts.push(t); } });
   Object.assign(s.SEQ_DEPS, {
     now: () => st.now,
@@ -128,6 +130,7 @@ beforeEach(async () => {
   if (!ADMIN) return;
   await sql`delete from seq_build`;
   await sql`delete from llm_call`;
+  s.SEQ.ownIdeas = false;
   await sql`delete from idea_queue`; // an idea a test sent back to the queue would be picked first (and reuse its build id)
   // noon today: an hour's wait never crosses midnight (the midnight test sets its own clock)
   Object.assign(st, { now: Date.parse(`${new Date().toISOString().slice(0, 10)}T12:00:00Z`), alerts: [], verdicts: [], build: "build", live: new Set(), code: new Map(), deploys: 0, vetoed: new Set(), fundRoom: true, gateCalls: [], gatesOk: true, lag: 0, deployFail: null, players: { players48h: 0, sinceFund: 0 }, fundCalls: [], fundSt: null, approved: new Set(), landed: true, finalLag: 0, pageCalls: [], page: PAGE_OK, deep: PAGE_OK, deepCalls: 0, kind: "game", siteCalls: [], moduleKit: true, risks: [], improve: null, inputs: {}, amend: true });
@@ -144,11 +147,11 @@ beforeEach(async () => {
 // ---------------------------------------------------------------- helpers
 const active = () => s.activeBuild();
 /** The dev team's run for the current round: its report, the bot's one commit and the PR (what publish does). */
-async function devTeam(o: { amendment?: { reason: string; change: string }; cost?: number; attempt?: number; runs?: number; files?: Record<string, string>; noPr?: boolean } = {}) {
-  const r = (await active())!;
+async function devTeam(o: { amendment?: { reason: string; change: string }; cost?: number; attempt?: number; runs?: number; files?: Record<string, string>; noPr?: boolean; build?: string } = {}) {
+  const r = o.build ? (await s.activeBuilds()).find((b) => b.id === o.build)! : (await active())!;
   const oid = r.data.orders.find((x) => x.round === r.round)!.id;
   assert.match(oid, new RegExp(`^${r.id}-r${r.round}-[0-9a-f]{12}$`));
-  const payload = gh.dispatches.at(-1).client_payload;
+  const payload = o.build ? gh.dispatches.findLast((x: { client_payload: { body: string } }) => JSON.parse(x.client_payload.body).id === oid).client_payload : gh.dispatches.at(-1).client_payload;
   const order = JSON.parse(payload.body);
   assert.equal(order.id, oid);
   for (let i = 0; i < (o.runs ?? 1); i++) gh.addRun(`seq order:${oid}`, { run_attempt: o.attempt ?? 1, artifacts: { build: { "report.json": Buffer.from(JSON.stringify({ orderId: oid, round: r.round, runId: "1", runAttempt: String(o.attempt ?? 1), queries: [], totalUsd: o.cost ?? 3.5, outcome: "pr", ...(o.amendment ? { amendment: o.amendment } : {}) })) } } });
@@ -220,8 +223,8 @@ test("ship: idea → order → PR → gates → verdict → one public hour → 
   assert.deepEqual(xs.map((x) => x.event_key), [`seq:${r0.id}:seq_started`, `seq:${r0.id}:seq_shipped`]);
   assert.ok(xs.every((x) => /\/api\/log\/\d+$/.test(x.link)), JSON.stringify(xs));
   assert.equal((await sql`select 1 from x_outbox where event_key ~ ':r[0-9]+:'`).length, 0, "a round's steps stay on the site");
-  // a second build the same day: none (one ship a UTC day)
-  assert.equal(await step(), "done for today: a game shipped");
+  // a second build the same day: none (the day's target, 1 here)
+  assert.equal(await step(), "done for today: 1 shipped (the day's target is 1)");
   // switched on: once, ever, on a signed record (every start() past the gates checks; the first with a record to rest on posts)
   await step();
   assert.equal((await sql`select 1 from log where kind = 'announce' and ref = 'seq:online'`).length, 1);
@@ -421,7 +424,7 @@ test("an order is charged once, even when a crash lost the saved charge", { skip
   assert.deepEqual((await spend()).map((x) => [x.agent, x.cost_usd]), [[RESERVE_AGENT, 48], ["dev-round", 2]]);
 });
 
-test("a run may start until the order expires (+5 min); none by then: skipped, the idea back in the queue, no second build that day", { skip }, async () => {
+test("a run may start until the order expires (+5 min); none by then: skipped, the idea back in the queue, the next build 30 min later under a fresh id", { skip }, async () => {
   await step(); await step();
   const r = (await active())!;
   st.now += 19 * 60_000; // the order is still valid: a run starting now is still matched
@@ -430,7 +433,11 @@ test("a run may start until the order expires (+5 min); none by then: skipped, t
   assert.match(await step(), /^skipped: no run of .* within 25 min/);
   assert.equal((await sql`select status from idea_queue where id = ${r.data.idea}`)[0].status, "queued");
   assert.deepEqual((await spend()).map((x) => x.cost_usd), [48, -48]);
-  assert.equal(await step(), "done for today: a build was skipped (outage)");
+  assert.equal(await step(), "waiting: a build was skipped (outage) in the last 30 min");
+  st.now += 30 * 60_000;
+  assert.match(await step(), new RegExp(`^decided: ${r.id}-2 `), "the same idea again, its own row");
+  assert.equal((await sql`select status from seq_build where id = ${r.id}`)[0].status, "skipped", "the skipped try is kept");
+  assert.deepEqual((await spend()).map((x) => x.cost_usd), [48, -48, 48], "the new try reserves its own budget");
 });
 
 test("an order model with no price in models.json: not dispatched, an alert; dispatched once every model is priced", { skip }, async () => {
@@ -490,9 +497,12 @@ test("a 4th game: the fewest-players game gets a brain-signed retire record with
   assert.match(await step(), /^shipped/);
 });
 
-test("one build at a time: the database refuses a second active row", { skip }, async () => {
+test("the database refuses a second active build of the same idea, never one of another idea", { skip }, async () => {
   await step();
-  await assert.rejects(sql`insert into seq_build (id, status, round, data) values ('other', 'dispatched', 1, '{}')`, /seq_build_one_active/);
+  const r = (await active())!;
+  await assert.rejects(sql`insert into seq_build (id, status, round, data) values ('other', 'dispatched', 1, ${sql.json({ idea: r.data.idea })})`, /seq_build_one_active_idea/);
+  await sql`insert into seq_build (id, status, round, data) values ('other', 'dispatched', 1, ${sql.json({ idea: "im:elsewhere" })})`;
+  await sql`insert into seq_build (id, status, round, data) values ('own1', 'dispatched', 1, ${sql.json({ idea: "" })}), ('own2', 'decided', 1, ${sql.json({ idea: "" })})`;
 });
 
 test("the day's post: never while a build runs, once after the day with no ship", { skip }, async () => {
@@ -630,8 +640,8 @@ test("the order ceiling shrinks with the day's cap", { skip }, async () => {
   LLM.week1DailyCapUsd = 40;
   try {
     await step(); await step();
-    assert.deepEqual((await spend()).map((x) => x.cost_usd), [19.2], "4 × min($12, 48% of $40 / 4) = 4 × $4.80");
-    assert.equal(JSON.parse(gh.dispatches.at(-1).client_payload.body).budget.ceilingUsd, 4.8);
+    assert.deepEqual((await spend()).map((x) => x.cost_usd), [26], "4 × min($12, 65% of $40 / 4) = 4 × $6.50");
+    assert.equal(JSON.parse(gh.dispatches.at(-1).client_payload.body).budget.ceilingUsd, 6.5);
   } finally { LLM.week1DailyCapUsd = saved; }
 });
 
@@ -1214,6 +1224,7 @@ const ENGINE_FILES = {
 const IMPROVE = { improve: true, risk: "the watch's head read has no retry", target: "engine", title: "Watch retry", spec: "Retry a failed head read once before alerting, and add a test that a single failed read is retried.", rubric: { value: 3, fit: 4, clarity: 4, originality: 2 }, reason: "an open risk with a small, testable fix" };
 
 test("engine: no idea queued → the brain picks one of its open risks → an engine order → its gates → handed: the pull request left for an owner, never merged", { skip }, () => realGates(async () => {
+  s.SEQ.ownIdeas = true; // off in production (people's ideas only); beforeEach turns it off again
   await sql`delete from idea_queue`;
   st.risks = ["the watch's head read has no retry"];
   st.improve = IMPROVE;
@@ -1249,7 +1260,7 @@ test("engine: no idea queued → the brain picks one of its open risks → an en
   assert.deepEqual((await spend()).map((x) => x.cost_usd), [48, 3.5, -48], "the reservation released");
   // hours later: still open, never merged; the open risks are not weighed twice a day
   st.now += 3 * HOUR;
-  assert.equal(await step(), "done for today: an engine change was handed to an owner");
+  assert.equal(await step(), "done for today: 1 shipped (the day's target is 1)", "a handed engine change counts toward the day's target");
   assert.equal(gh.refs.get("main"), base);
   assert.equal(pr!.state, "open");
   assert.equal(pr!.merged, false);
@@ -1268,7 +1279,26 @@ test("open risks: the newest self record the enclave signed (its text hashing to
   assert.deepEqual(await realOpenRisks(), [], "a self record whose text doesn't hash is not read (no self-file on disk here)");
 });
 
+test("people's ideas only: an empty queue waits and says so; the brain never builds one of its own", { skip }, async () => {
+  await sql`delete from idea_queue`;
+  st.risks = ["the watch's head read has no retry"];
+  st.improve = { improve: true, risk: "the watch's head read has no retry", target: "engine", title: "Watch retry", spec: "Retry a failed head read once.", rubric: { value: 3, fit: 4, clarity: 4, originality: 2 }, reason: "small fix" };
+  assert.equal(await step(), "nothing queued: waiting for people's ideas");
+  assert.equal(st.inputs.improve, undefined, "no brain call");
+  assert.equal(await active(), null);
+});
+
+test("people's ideas only: a queued idea with no author on record is never built", { skip }, async () => {
+  const [row] = await sql<{ id: string; kind: string; status: string; score: number; data: Record<string, unknown> }[]>`select id, kind, status, score, data from idea_queue`;
+  const value = { kind: row.kind, status: row.status, score: row.score, data: { ...row.data, source: null } };
+  await sql`update idea_queue set data = ${sql.json(value.data as never)}, sig = ${await stateSig("idea_queue", row.id, value)} where id = ${row.id}`;
+  assert.equal(await step(), `not built: ${row.id} has no author on record`);
+  assert.equal(st.inputs.build, undefined, "no brain call");
+  assert.equal((await sql`select status from idea_queue where id = ${row.id}`)[0].status, "killed");
+});
+
 test("improve: no open risk, no brain call; a no from the brain, no build", { skip }, async () => {
+  s.SEQ.ownIdeas = true;
   await sql`delete from idea_queue`;
   st.now += 48 * HOUR; // a day the open risks were not weighed yet
   assert.equal(await step(), "nothing queued");
@@ -1281,4 +1311,172 @@ test("improve: no open risk, no brain call; a no from the brain, no build", { sk
 test("the daily live page check waits while a build is going (they share the one page check service)", { skip }, async () => {
   await step(); // a build decided
   await assert.rejects(s.pagesDailyHandler.run({ id: "1", kind: "pages:daily", payload: {}, attempts: 1, max_attempts: 5, created_at: new Date(), dedupe_key: null }), isDefer);
+});
+
+// ---------------------------------------------------------------- the pace: several builds at once, a daily target
+
+/** One more build idea in the queue (as beforeEach queues one). */
+async function queueIdea(score = 15) {
+  ideaN++;
+  const id = `im:${ideaN}`;
+  const value = { kind: "build", status: "queued", score, data: { idea: ideaN, round: 1, index: 0, report: "1", title: "Dice", summary: "a dice game", spec: "A dice game: each player rolls once a day; the highest roll of the day wins the day's pot.", source: { source: "ideamarket", author: "0x00000000000000000000000000000000000000a5" }, rubric: { value: 4, fit: 4, clarity: 4, originality: 3 }, raw: "RAW-IDEA-MARKER" } };
+  await sql`insert into idea_queue (id, kind, status, score, data, sig) values (${id}, 'build', 'queued', ${score}, ${sql.json(value.data as never)}, ${await stateSig("idea_queue", id, value)})`;
+  return id;
+}
+async function pace<T>(p: { maxInflight: number; dailyTarget: number }, fn: () => Promise<T>) {
+  Object.assign(s.SEQ, p);
+  try { return await fn(); } finally { Object.assign(s.SEQ, { maxInflight: 1, dailyTarget: 1 }); }
+}
+
+test("pace: up to SEQ.maxInflight builds at once, each its own order and reservation; a slot frees, the next starts", { skip }, async () => {
+  await queueIdea(); await queueIdea(); await queueIdea();
+  await pace({ maxInflight: 3, dailyTarget: 5 }, async () => {
+    assert.match(await step(), /^decided: b\d{8}-\d+ /);
+    assert.match(await step(), /^b\d{8}-\d+: dispatched: .*; decided: /);
+    assert.match(await step(), /: waiting for the run; .*: dispatched: .*; decided: /);
+    const going = await s.activeBuilds();
+    assert.equal(going.length, 3);
+    assert.equal(new Set(going.map((b) => b.data.idea)).size, 3, "three ideas");
+    const out = await step(); // full: no fourth
+    assert.doesNotMatch(out, /decided: /);
+    assert.equal((await s.activeBuilds()).length, 3);
+    assert.deepEqual((await spend()).map((x) => x.cost_usd), [48, 48, 48], "a reservation each (3 × $48 fit the day's $195 part)");
+    assert.equal(new Set(gh.dispatches.slice(-3).map((x: { client_payload: { body: string } }) => JSON.parse(x.client_payload.body).id)).size, 3, "three orders");
+    // one ends (the brain kills it): its slot goes to the next idea within the step
+    const first = going[0];
+    await sql`update seq_build set status = 'killed' where id = ${first.id}`; // (unsigned: no longer read as ours)
+    assert.match(await step(), /decided: /);
+  });
+});
+
+test("pace: the daily target counts the builds on their way; none past it", { skip }, async () => {
+  await queueIdea(); await queueIdea();
+  await pace({ maxInflight: 3, dailyTarget: 2 }, async () => {
+    await step(); await step();
+    assert.equal((await s.activeBuilds()).length, 2);
+    assert.match(await step(), /done for today: 0 shipped, 2 on their way \(the day's target is 2\)$/);
+  });
+});
+
+test("pace: one build's wait (a deploy retried in 15 min) holds only that build; it is retried once the wait is over", { skip }, async () => {
+  // build A to its deploy, alone
+  await step(); await step();
+  await devTeam();
+  await step(); await step(); await step();
+  st.now += HOUR + 1000;
+  const a = (await active())!;
+  st.deployFail = "rpc down";
+  await queueIdea();
+  await pace({ maxInflight: 2, dailyTarget: 5 }, async () => {
+    const out = await step();
+    assert.match(out, new RegExp(`^${a.id}: waiting 15 min: deploy sim_revert`), out);
+    assert.match(out, /; decided: /, "the next build starts anyway");
+    const out2 = await step();
+    assert.match(out2, new RegExp(`^${a.id}: waiting; .*: dispatched: `), out2);
+    assert.equal(st.deploys, 0);
+    st.deployFail = null;
+    st.now += 15 * 60_000;
+    assert.match(await step(), new RegExp(`^${a.id}: shipped: `));
+  });
+});
+
+test("pace: two ships on their way never evict the same game; the second takes the next fewest-players game", { skip }, async () => {
+  const [{ s: before }] = await sql<{ s: string }[]>`select coalesce(max(seq), 0)::text as s from log`;
+  for (let i = 0; i < 3; i++) {
+    const g = `0x00000000000000000000000000000000000000${(0x70 + i).toString(16)}`;
+    // not b0..b2: the eviction test above left a pending retire record for b0, which a ship would reuse (no new record)
+    st.live.add(g);
+    const id = `old${i}`;
+    const value = { status: "shipped", round: 1, data: { idea: `im:x${i}`, ideaNum: 100 + i, slug: `old-${i}`, title: "Old", spec: "", specSha256: "", rubric: {}, brainSeq: "1", ceilingUsd: 12, reservation: { at: new Date().toISOString(), amount: 48 }, orders: [], issues: [], game: { address: g, codehash: "0x", deployedAt: new Date(st.now - (10 - i) * HOUR).toISOString() } } };
+    await sql`insert into seq_build (id, status, round, data, sig) values (${id}, 'shipped', 1, ${sql.json(value.data as never)}, ${await stateSig("seq_build", id, value)})`;
+  }
+  // build A: its ship record evicts the oldest (all have 0 players)
+  await step(); await step();
+  await devTeam();
+  await step(); await step();
+  assert.match(await step(), /ship record/);
+  const a = (await active())!;
+  await queueIdea();
+  await pace({ maxInflight: 2, dailyTarget: 5 }, async () => {
+    assert.match(await step(), /decided: /);
+    await step(); // B dispatched
+    const b = (await s.activeBuilds()).find((x) => x.id !== a.id)!;
+    await devTeam({ build: b.id });
+    await step(); await step(); // B gated, verdict
+    const out = await step();
+    assert.match(out, new RegExp(`${b.id}: ship record`), out);
+    const rets = await sql<{ doc: { game: string; rule: string } }[]>`select doc from log where kind = 'retire' and seq > ${before} order by seq`;
+    assert.deepEqual(rets.map((x) => x.doc.game), ["0x0000000000000000000000000000000000000070", "0x0000000000000000000000000000000000000071"]);
+    // a game live under 8 h is never evicted: a third ship would wait
+  });
+});
+
+test("pace: a game live under 8 h is not evicted; the ship waits for a slot", { skip }, async () => {
+  for (let i = 0; i < 3; i++) {
+    const g = `0x00000000000000000000000000000000000000${(0xc0 + i).toString(16)}`;
+    st.live.add(g);
+    const id = `new${i}`;
+    const value = { status: "shipped", round: 1, data: { idea: `im:y${i}`, ideaNum: 200 + i, slug: `new-${i}`, title: "New", spec: "", specSha256: "", rubric: {}, brainSeq: "1", ceilingUsd: 12, reservation: { at: new Date().toISOString(), amount: 48 }, orders: [], issues: [], game: { address: g, codehash: "0x", deployedAt: new Date(st.now - (i + 1) * HOUR).toISOString() } } };
+    await sql`insert into seq_build (id, status, round, data, sig) values (${id}, 'shipped', 1, ${sql.json(value.data as never)}, ${await stateSig("seq_build", id, value)})`;
+  }
+  const [{ s: before }] = await sql<{ s: string }[]>`select coalesce(max(seq), 0)::text as s from log`;
+  await step(); await step();
+  await devTeam();
+  await step(); await step();
+  assert.match(await step(), /^waiting for a free slot: every live game of ours is newer than 8 h/);
+  assert.equal((await sql`select 1 from log where kind = 'retire' and seq > ${before}`).length, 0);
+});
+
+test("pace: a ship whose evicted game already retired takes a free slot; the next ship still evicts one", { skip }, async () => {
+  const [{ s: before }] = await sql<{ s: string }[]>`select coalesce(max(seq), 0)::text as s from log`;
+  for (let i = 0; i < 3; i++) {
+    const g = `0x00000000000000000000000000000000000000${(0xd0 + i).toString(16)}`;
+    st.live.add(g);
+    const id = `old${i}`;
+    const value = { status: "shipped", round: 1, data: { idea: `im:z${i}`, ideaNum: 300 + i, slug: `old-${i}`, title: "Old", spec: "", specSha256: "", rubric: {}, brainSeq: "1", ceilingUsd: 12, reservation: { at: new Date().toISOString(), amount: 48 }, orders: [], issues: [], game: { address: g, codehash: "0x", deployedAt: new Date(st.now - (10 - i) * HOUR).toISOString() } } };
+    await sql`insert into seq_build (id, status, round, data, sig) values (${id}, 'shipped', 1, ${sql.json(value.data as never)}, ${await stateSig("seq_build", id, value)})`;
+  }
+  await step(); await step();
+  await devTeam();
+  await step(); await step();
+  assert.match(await step(), /ship record/); // A evicts d0
+  const a = (await active())!;
+  st.live.delete("0x00000000000000000000000000000000000000d0"); // retired on-chain; A has not deployed yet
+  await queueIdea();
+  await pace({ maxInflight: 2, dailyTarget: 5 }, async () => {
+    await step(); await step();
+    const b = (await s.activeBuilds()).find((x) => x.id !== a.id)!;
+    await devTeam({ build: b.id });
+    await step(); await step();
+    assert.match(await step(), new RegExp(`${b.id}: ship record`));
+    const rets = await sql<{ doc: { game: string } }[]>`select doc from log where kind = 'retire' and seq > ${before} order by seq`;
+    assert.deepEqual(rets.map((x) => x.doc.game), ["0x00000000000000000000000000000000000000d0", "0x00000000000000000000000000000000000000d1"], "2 live + A's free slot = 3: B evicts the next one");
+  });
+});
+
+test("pace: a game never merges without a free slot to deploy into", { skip }, async () => {
+  await step(); await step();
+  await devTeam();
+  await step(); await step();
+  assert.match(await step(), /ship record/); // nothing live: no eviction
+  for (const g of ["0x00000000000000000000000000000000000000e0", "0x00000000000000000000000000000000000000e1", "0x00000000000000000000000000000000000000e2"]) st.live.add(g); // the Safe filled the factory
+  st.now += HOUR + 1000;
+  assert.equal(await step(), "waiting: no free game slot yet");
+  assert.equal(gh.refs.get("main"), base, "not merged");
+  st.live.delete("0x00000000000000000000000000000000000000e0");
+  assert.match(await step(), /^shipped/);
+});
+
+test("pace: main changed a file this build edits after it was gated: skipped before the merge, the idea back in the queue", { skip }, async () => {
+  await step(); await step();
+  await devTeam();
+  await step(); await step();
+  assert.match(await step(), /ship record/);
+  const r = (await active())!;
+  gh.refs.set("main", gh.commitFiles(gh.refs.get("main")!, { [`web/app/g/${r.data.slug}/page.tsx`]: "export default function Q() { return null; }\n" }));
+  const main = gh.refs.get("main");
+  st.now += HOUR + 1000;
+  assert.equal(await step(), "skipped: main changed a file this change edits after it was gated");
+  assert.equal(gh.refs.get("main"), main, "not merged");
+  assert.equal((await sql`select status from idea_queue where id = ${r.data.idea}`)[0].status, "queued");
 });

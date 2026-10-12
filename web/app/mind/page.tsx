@@ -21,6 +21,24 @@ const KIND: Record<ThreadStep["kind"], string> = {
   next: "Next",
 };
 const SEGMENTS = 20;
+const SHOWN = 15; // newest steps in view; the rest one tap away
+
+function step(st: ThreadStep) {
+  return (
+    <li key={st.id} className={s.step}>
+      <div className={s.body}>
+        <div className={s.meta}>
+          <span className={s.kind}>{KIND[st.kind]}</span>
+          <span className={s.agent}>{st.agent} agent</span>
+          <span className={s.model}>model {st.model}</span>
+          <time className={s.at} dateTime={st.at}>{fmtTime(st.at)}</time>
+        </div>
+        <p className={s.text}>{st.text}</p>
+        {st.ref && <div className={ui.source}>{st.ref}</div>}
+      </div>
+    </li>
+  );
+}
 
 export default async function MindPage() {
   const thread = await getThread();
@@ -42,6 +60,9 @@ export default async function MindPage() {
   const decision = steps.findLast((x) => x.kind === "decision");
   const next = steps.filter((x) => x.kind === "next");
   const last = steps[steps.length - 1];
+  // the log is in chain order (oldest first); the page reads newest first
+  const newest = steps.toReversed();
+  const latest = newest.slice(0, SHOWN), earlier = newest.slice(SHOWN);
 
   return (
     <Shell>
@@ -49,28 +70,20 @@ export default async function MindPage() {
         <PageHead hero="mind"
           title="AI thread"
           lede="The AI's reasoning, step by step: the idea, the evidence for and against it, and what it will do next."
-          detail="Each step names the agent and the exact model version that wrote it. Arguments against a change sit next to the ones for it, and every step goes into a hash-chained log, so nothing can be quietly edited."
           aside={<Chip value={thread.status} label={`thread ${thread.id} · ${thread.status}`} />}
         />
         <div className={s.layout}>
-          <Section title="The reasoning" note={`${thread.id} · ${steps.length} steps · hash-chained log`} className={s.thread}>
+          <Section title="The reasoning" note={`${thread.id} · ${steps.length} steps · newest first · hash-chained log`} className={s.thread}>
             <p className={s.question}>{thread.title}</p>
-            <ol className={s.steps}>
-              {steps.map((st) => (
-                <li key={st.id} className={s.step}>
-                  <div className={s.body}>
-                    <div className={s.meta}>
-                      <span className={s.kind}>{KIND[st.kind]}</span>
-                      <span className={s.agent}>{st.agent} agent</span>
-                      <span className={s.model}>model {st.model}</span>
-                      <time className={s.at} dateTime={st.at}>{fmtTime(st.at)}</time>
-                    </div>
-                    <p className={s.text}>{st.text}</p>
-                    {st.ref && <div className={ui.source}>{st.ref}</div>}
-                  </div>
-                </li>
-              ))}
-            </ol>
+            <ol className={s.steps}>{latest.map(step)}</ol>
+            {earlier.length > 0 && (
+              <details className={ui.more}>
+                <summary>Show {earlier.length} earlier step{earlier.length === 1 ? "" : "s"}</summary>
+                <ol className={`${s.steps} ${s.earlier}`}>{earlier.map(step)}</ol>
+              </details>
+            )}
+            {/* below the steps, not in the head: the reasoning starts right under the hero */}
+            <p className={`${ui.prose} ${ui.muted} ${s.small} ${s.foot}`}>Each step names the agent and the exact model version that wrote it. Arguments against a change sit next to the ones for it, and every step goes into a hash-chained log, so nothing can be quietly edited.</p>
           </Section>
 
           <aside className={s.side} aria-label="Thread state">

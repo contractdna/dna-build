@@ -679,7 +679,9 @@ test("games:agent: a sealed mystery (preimage kept sealed), the draw interval", 
   for (let i = 0; i < 7; i++) await chain(300 + i, 0, ago(D * i + H), "FeeTaken", { project: String(E), gross: String(50n * E), pips: "20000", buy: true }); // 7 ETH in 7 d
   await chain(310, 0, ago(2 * D), "Synced", { arrived: String(7n * E / 10n), jackpotPot: "0", ideaReserve: "0", overflowBurned: "0" }); // 0.7 ETH arrived → 0.07 ETH/day to the jackpot
   st.lastBallotAt = BigInt(T); // no ballot this hour
+  st.drawInterval = 3 * D; // set before the 24 h cap
   await games.gameAgentHandler.run(job());
+  st.drawInterval = D;
   const seal = st.sent.find((s) => s.fn === "seal")!;
   const commitment = seal.args[0] as Hex;
   assert.equal(Number(seal.args[1]), T + 2 * D + H, "reveal = now + REVEAL_MIN (2 d) + 1 h");
@@ -688,8 +690,8 @@ test("games:agent: a sealed mystery (preimage kept sealed), the draw interval", 
   const [{ v }] = await sql<{ v: string }[]>`select value as v from secret where key = ${`mystery:${commitment.toLowerCase()}`}`;
   assert.match(v, /^v1:/, "the preimage is sealed at rest");
   assert.ok(!JSON.stringify((await sql`select doc from log where kind = 'game'`).map((r) => r.doc)).includes(pre!.payload), "no payload in public records before the reveal");
-  assert.deepEqual(st.sent.find((s) => s.fn === "proposeDrawInterval")?.args, [3 * D], "0.07 ETH/day → the 3 d ceiling");
-  const [iv] = await sql<{ seq: string }[]>`select seq::text from log where kind = 'game' and ref = 'interval' and (doc->>'interval')::int = ${3 * D}`;
+  assert.deepEqual(st.sent.find((s) => s.fn === "proposeDrawInterval")?.args, [D], "0.07 ETH/day, a 3 d interval → down to the 24 h cap");
+  const [iv] = await sql<{ seq: string }[]>`select seq::text from log where kind = 'game' and ref = 'interval' and (doc->>'interval')::int = ${D}`;
   const [itx] = await sql<{ seq: string }[]>`select seq::text from log where kind = 'tx' and ref = 'agent:game:proposeDrawInterval'`;
   assert.ok(iv && Number(iv.seq) < Number(itx.seq), "the interval decision is recorded before the call");
   reset();
@@ -788,6 +790,35 @@ test("indexer: GamePot, ConvictionVault and MutationBoard events land in chain_l
     assert.equal(rows[2].args.commitment, `0x${"cd".repeat(32)}`);
     const [{ g }] = await sql<{ g: Record<string, unknown> }[]>`select value->'game' as g from state where key = 'chain'`;
     assert.deepEqual(Object.keys(g).sort(), ["board", "pot", "vault"]);
+  } finally {
+    Object.assign(fakes.rpc, { eth_getBlockByNumber: saved.blk, eth_getLogs: saved.logs, eth_call: saved.call, eth_getBalance: saved.bal });
+  }
+});
+
+// the indexer keeps the last finalized block it took (module state): a later indexer test needs finalized > 90 and deletes the cursor
+test("indexer: a window with more logs than one insert can bind (8 parameters a row, 65535 a statement) lands whole", { skip }, async () => {
+  const { finalizedTier } = await import("../src/indexer.ts");
+  const saved = { blk: fakes.rpc.eth_getBlockByNumber, logs: fakes.rpc.eth_getLogs, call: fakes.rpc.eth_call, bal: fakes.rpc.eth_getBalance };
+  const block = (n: bigint) => ({ ...(saved.blk as () => Record<string, unknown>)(), number: toHex(n), hash: `0x${n.toString(16).padStart(64, "0")}`, timestamp: toHex(1_700_000_000n + n * 12n) });
+  const N = 9_000;
+  const from = "0x00000000000000000000000000000000000000a1", to = "0x00000000000000000000000000000000000000b2";
+  const transfer = (li: number) => ({
+    address: d.token, topics: encodeEventTopics({ abi: abi.tokenAbi, eventName: "Transfer", args: { from, to } } as never), data: encodeAbiParameters([{ type: "uint256" }], [BigInt(li + 1)]),
+    blockNumber: toHex(90n), logIndex: toHex(li), transactionHash: `0x${li.toString(16).padStart(64, "0")}`, transactionIndex: "0x0", blockHash: `0x${(90n).toString(16).padStart(64, "0")}`, removed: false,
+  });
+  Object.assign(fakes.rpc, {
+    eth_getBlockByNumber: ([tag]: [string]) => block(tag === "finalized" ? 90n : BigInt(tag)),
+    eth_getBalance: () => "0x0",
+    eth_call: () => encodeAbiParameters([{ type: "tuple[]", components: [{ type: "bool" }, { type: "bytes" }] }], [Array.from({ length: 34 }, () => [true, `0x${"00".repeat(1024)}`] as const)]),
+    eth_getLogs: ([f]: [{ address: string | string[] }]) => typeof f.address === "string" && f.address.toLowerCase() === d.token.toLowerCase() ? Array.from({ length: N }, (_, li) => transfer(li)) : [],
+  });
+  await sql`delete from cursor`;
+  try {
+    await finalizedTier();
+    const [{ n }] = await sql<{ n: number }[]>`select count(*)::int as n from chain_log where block = 90 and event = 'Transfer'`;
+    assert.equal(n, N);
+    const [{ block: cur }] = await sql<{ block: string }[]>`select block from cursor`;
+    assert.equal(Number(cur), 90, "the cursor moves past the window");
   } finally {
     Object.assign(fakes.rpc, { eth_getBlockByNumber: saved.blk, eth_getLogs: saved.logs, eth_call: saved.call, eth_getBalance: saved.bal });
   }

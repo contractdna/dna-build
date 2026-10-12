@@ -79,11 +79,11 @@ test("status: the launch-tax swaps are reported apart (count, volume, the tax se
 
 // ---------------------------------------------------------------- the launch window's post caps
 
-test("post caps: 40 a UTC day, 10 min apart on every UTC day the 48 h after LLM_LAUNCH_AT touch, then 15 and 20 min; the digest keeps the last slot", () => {
-  assert.deepEqual([X.launchDailyPosts, X.launchSpacingMs, X.launchWindowMs, X.dailyPosts, X.spacingMs], [40, 10 * 60_000, 48 * 3600_000, 15, 20 * 60_000], "the defaults (the enclave sets none of them)");
+test("post caps: 40 a UTC day, 10 min apart on every UTC day the 48 h after LLM_LAUNCH_AT touch, then 25 and 20 min; the digest keeps the last slot", () => {
+  assert.deepEqual([X.launchDailyPosts, X.launchSpacingMs, X.launchWindowMs, X.dailyPosts, X.spacingMs], [40, 10 * 60_000, 48 * 3600_000, 25, 20 * 60_000], "the defaults (the enclave sets none of them)");
   const launch = Date.parse("2026-10-12T15:00:00Z");
   const H = 3600_000;
-  const launchCaps = { daily: 40, spacingMs: 10 * 60_000 }, normal = { daily: 15, spacingMs: 20 * 60_000 };
+  const launchCaps = { daily: 40, spacingMs: 10 * 60_000 }, normal = { daily: 25, spacingMs: 20 * 60_000 };
   const D = Date.parse("2026-10-12T00:00:00Z");
   assert.deepEqual(postCaps(D - 1, launch), normal, "the UTC day before the launch day");
   assert.deepEqual(postCaps(launch - 1, launch), launchCaps, "the cap is decided per UTC day: the launch day is a launch day from 00:00");
@@ -96,7 +96,7 @@ test("post caps: 40 a UTC day, 10 min apart on every UTC day the 48 h after LLM_
   const used = 20, late = D + 2 * 24 * H + 22 * H;
   assert.ok(used < eventPosts(late, launch) && used < postCaps(late, launch).daily, "events and the digest still post on D+2");
   assert.deepEqual(postCaps(launch, undefined), normal, "no launch time: the normal caps");
-  assert.deepEqual([eventPosts(launch + H, launch), eventPosts(launch + 73 * H, launch)], [39, 14], "events take all but the digest's slot");
+  assert.deepEqual([eventPosts(launch + H, launch), eventPosts(launch + 73 * H, launch)], [39, 24], "events take all but the digest's slot");
 });
 
 // ---------------------------------------------------------------- replies from day one

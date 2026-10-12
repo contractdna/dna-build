@@ -56,6 +56,19 @@ test("publishIssues: private paths, process words and tool names fail anywhere",
   for (const t of ["Karrik (Phantom Foundry / Velvetyne)", "a friendly name", "https://docs.example.org/research/x", "grep -r . | ~ /x", "the researcher"]) ok("a.md", t);
 });
 
+test("publishIssues: the wallet finder alone may name one blocked wallet brand and its app link, nothing more", () => {
+  const W = "Meta" + "Mask", LINK = "https://link." + W.toLowerCase() + ".io/dapp/genomedna.xyz/trade";
+  const why = (path: string, t: string) => publishIssues(path, t).map((x) => x.why);
+  assert.deepEqual(why("web/app/_ui/discover.ts", `{ name: "${W}", href: \`${LINK}\` },`), []);
+  assert.deepEqual(why("web/app/_ui/discover.ts", `// ${W}, Rabby, Coinbase`), []);
+  // the rest of the line is still scanned, and only that exact file is let through
+  assert.deepEqual(why("web/app/_ui/discover.ts", `${W} keys in ~` + "/.dna-keys"), ["tool or key path"]);
+  assert.deepEqual(why("web/app/_ui/discover.ts", `${W} ` + "Phan" + "tom"), ["tool or key path"]);
+  for (const t of [`~/.${W}/vault`, `~/.${W}`]) assert.deepEqual(why("web/app/_ui/discover.ts", t), ["tool or key path"], t);
+  assert.deepEqual(why("web/app/_ui/discover.ts", `https://link.${W.toLowerCase()}.io/other`), ["tool or key path"]);
+  for (const p of ["web/app/_ui/Wallet.tsx", "web/app/_ui/discover.tsx", "x/web/app/_ui/discover.ts", "README.md"]) assert.deepEqual(why(p, `{ name: "${W}" }`), ["tool or key path"], p);
+});
+
 test("publishIssues: PR refs in comments and markdown only, never ids, colors or anchors", () => {
   const n = "#" + "56"; // split so this file passes its own scan
   for (const [p, t] of [["a.ts", `x(); // fixed in PR ${n}`], ["a.ts", ` *  the cap (${n} Q1)`], ["a.sol", `/// @dev see ${n}`], ["a.sh", `# merged ${n}`],

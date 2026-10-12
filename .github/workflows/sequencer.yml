@@ -16,10 +16,11 @@ on:
 
 permissions: {}
 
-# Workflow-wide, so a run's verify starts only once the run before it has finished: of two dispatches of one order,
-# the later one's verify sees the earlier run.
+# One group per order (its ref is signed with it: verify refuses a payload whose ref was changed), so a run's verify
+# starts only once the run of the same order before it has finished: of two dispatches of one order, the later one's
+# verify sees the earlier run. Orders of different builds run side by side (the engine's SEQ_MAX_INFLIGHT).
 concurrency:
-  group: sequencer
+  group: sequencer-${{ github.event.client_payload.ref }}
   cancel-in-progress: false
 
 env:

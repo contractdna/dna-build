@@ -36,11 +36,12 @@ export function nextRange(from: bigint, last: bigint, window: bigint): { from: b
   return { from, to: to < last ? to : last };
 }
 
-/** Provider errors that mean "ask for a smaller range" (Alchemy, dRPC, geth, erigon wordings). Anything else (rate
- *  limits included: "exceeded its compute units", "capacity limit exceeded") is retried from the same cursor next tick. */
+/** Provider errors that mean "ask for a smaller range" (Alchemy, dRPC, geth, erigon wordings, and viem's own cap on a
+ *  response body). Anything else (rate limits included: "exceeded its compute units", "capacity limit exceeded") is
+ *  retried from the same cursor next tick. */
 export function isRangeError(e: unknown): boolean {
   const msg = `${(e as { details?: string })?.details ?? ""} ${(e as Error)?.message ?? ""}`;
-  return /block range|range (is )?too (large|wide)|ranges? over|max results|too many (results|logs)|more than \d+ (results|logs)|response size|limited to a|query timeout/i.test(msg);
+  return /block range|range (is )?too (large|wide)|ranges? over|max results|too many (results|logs)|more than \d+ (results|logs)|response size|response body exceeded|limited to a|query timeout/i.test(msg);
 }
 
 /** ModuleRegistry.Op in enum order → abi types of its `data` (ModuleRegistry._apply). A new op is one line here. */

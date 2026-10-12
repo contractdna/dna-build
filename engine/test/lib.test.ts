@@ -44,6 +44,7 @@ test("isRangeError matches provider limits, not transient failures", () => {
     "query returned more than 10000 results",
     "eth_getLogs is limited to a 10,000 range",
     "block range is too large",
+    "HTTP response body exceeded the size limit.", // viem's 10 MB cap on one getLogs response
   ]) assert.ok(isRangeError(new Error(m)), m);
   for (const m of [
     "fetch failed", "HTTP request failed. Status: 502", "socket hang up",

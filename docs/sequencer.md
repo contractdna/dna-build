@@ -23,8 +23,9 @@ One order is one round of one build, signed by the enclave's log key and refused
 (every job refuses a re-run). The same signed order dispatched again inside its 20-minute window is refused too: the
 `verify` job lists the workflow's runs with its read-only token (`actions: read`) and refuses an order whose id
 (`seq order:<id>`, the run's title) any other run carries, in any status, or when GitHub can't answer. The workflow's
-concurrency group holds each run, `verify` included, until the one before it has finished, so of two dispatches of one
-order the later one always sees the earlier one. An earlier one still pending is cancelled by the concurrency group,
+concurrency group (one per order: its signed ref) holds each run, `verify` included, until the one of the same order
+before it has finished, so of two dispatches of one order the later one always sees the earlier one; orders of
+different builds run side by side. An earlier one still pending is cancelled by the concurrency group,
 or, if its verify is already running, sees the later one and is refused. Order ids end in a random suffix the engine
 draws when it plans the round, so no one can start a run under a coming order's id ahead of it. A run deleted from
 GitHub's history (that takes `actions: write`) is not seen: like the repository's other settings, that is outside the
@@ -52,6 +53,25 @@ an interface to guide the team, and a function it missed or named differently co
 fails: a payable function other than the kit's `fund()`, `receive` or `fallback`, a function named like selfdestruct, a
 kit function missing. The enclave's G5 checks the interface against its own compile both ways. Then main's code
 checks the patch again as data and the bot publishes it as a single commit.
+
+### Pace
+
+Several builds run at once: up to 3 (`SEQ_MAX_INFLIGHT`), and new ones start until 5 (`SEQ_DAILY_TARGET`) builds
+shipped or are on their way that UTC day. Both are code defaults (`engine/src/config.ts` `SEQ_PACE`): the enclave
+allows neither env, so changing them is a new image. A slot frees as soon as a build ends, and the next queued idea starts within the minute. A build
+skipped for an outage holds the next start for 30 minutes. Each build reserves its whole budget (4 orders at the
+day's ceiling) when it starts, so the day's dev part is what bounds how many run at once (`docs/MODELS.md`). The
+database refuses two active builds of the same idea. A build's own waits (a deploy retried in 15 minutes, code not
+yet visible) hold only that build.
+
+At most 3 games are live (GameFactory's `MAX_LIVE`, a constant). A new game takes the slot of a live one: of the games
+live 8 hours or more, the one with the fewest distinct players in 48 hours, then the oldest, and never one another
+ship already takes. The brain must agree (a signed, delayed `retire` record, one public hour, Safe veto); the slot is
+freed on-chain before the new game deploys, and a game merges only once a slot is free to deploy into (other games
+merged and not deployed yet count). With several builds at once main may move under a build: one whose files main
+changed after it was gated is skipped before its merge (its idea goes back to the queue) and never merged. An evicted game's retirement is announced as making room for a new game. The page
+check stages a new game on a fork even when the factory is full (it clears the fork's live count; the real deploy
+still waits for its slot).
 
 ### Spec amendments
 
@@ -152,7 +172,9 @@ public timelock on chain, like any other change to the engine.
   diff. A signed ship record names the pull request, its commit, its files and that report; the owners are told, with
   the report and the open risk it answers. The build ends handed over. The pull request stays open; no step of the
   Sequencer merges it (see the `main` settings below for what enforces that).
-- **Where the ideas come from.** When no idea waits in the queue, the brain may pick one of the open risks in its
+- **Where the ideas come from.** People's ideas only: every build answers a queued idea with a person on record (an
+  X author, or an IdeaMarket submitter that is not the engine); an empty queue waits and says so. Off by default
+  (`SEQ.ownIdeas`, a code constant): when no idea waits in the queue, the brain may pick one of the open risks in its
   self-file (the newest one the enclave signed, else the file) and order a fix (a site change, a module or an engine
   change), at most once a day. The self-file quotes what others wrote, so the brain reads it as data. The build keeps
   the risk it answers. Public text says a thing was fixed only once it shipped.
@@ -244,6 +266,36 @@ signature, and it could learn your wallet address and try to send it somewhere.
 Your wallet shows you what you are asked to sign before you confirm. DNA games never take deposits, and never need a
 token approval or a signed message. Never approve, sign or send value on a game page. If a page asks, reject it. The
 page can be pulled in seconds.
+
+## Where ideas come from: rounds or live
+
+`IDEA_MODE`, a literal in the compose (param `ideaMode`), picks how ideas reach the build queue:
+
+- `rounds` (the default): IdeaMarket's on-chain rounds. A closed round is researched and its outcome proposed after
+  the public hour, then finalized after the Safe's 24 h. Only then do its accepted fee and build ideas queue. The
+  engine submits X ideas on-chain (the top 16 of a round).
+- `live`: every idea is judged as it comes in. A site submit is judged within a minute of being indexed; an X mention
+  past the gate and the screen is judged in the same intake run. Each judgment runs the reader, the brain's signed
+  outcome, and the red team on an acceptance. An accepted build or fee idea queues at once. The Sequencer picks the
+  best queued idea whenever a build slot is free (the pace below).
+  - Switching on: X ideas the rounds mode took in but never judged (candidates, picks, and submits whose round has
+    no report) are judged the same way. Site submits are judged from the switch on; ideas already in a round keep
+    that round's outcome, or the all-void refund. Quotes of our posts from the last 2 days are fetched hourly, so an
+    idea posted as a quote meets the same gate and screen as one posted as a mention.
+  - The gate in live mode: no author bar beyond a profile (no badge, account age or follower count), one idea per
+    author per UTC day, no links, and no near-duplicate or same title of an idea from the last 7 days. Switching on,
+    every stored mention (the table starts at launch) that an earlier gate or screen turned away (bindings aside) is
+    gated and screened again from its stored text and author, once, with nothing taken from the old verdict.
+  - Holder staking has no say. Every closed round gets an all-void report, so every stake is refunded (the 1,000 DNA
+    submit fee is burned as always).
+  - X ideas stay off-chain. They are numbered from 1,000,001, and their reward goes to the author's bound wallet as
+    before.
+  - Every verdict is a public `idea` record and an announcement. A site idea's verdict also goes to X; an X idea gets
+    its reply.
+  - X carries every build step: the pick and why (`seq_started`), a pull request with its link (`seq_pr`), each
+    verdict (`seq_verdict`), a no-build (`seq_declined`), the ship or the kill.
+  - When `TELEGRAM_PUBLIC_CHAT` is set (param `telegramPublicChat`: a channel's @name or chat id, with the bot an
+    admin there), those posts go there too.
 
 ## Settings the operator sets
 

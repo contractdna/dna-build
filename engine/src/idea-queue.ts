@@ -134,18 +134,29 @@ const logsAt = (name: string, args: Record<string, unknown>, from: number, to: n
   readAgreed(async (c) => (await c.getLogs({ address: d.ideaMarket!, event: ev(name), args, fromBlock: BigInt(from), toBlock: BigInt(to) } as never))
     .map((l) => ({ block: Number((l as unknown as { blockNumber: bigint }).blockNumber), args: JSON.parse(canonical((l as unknown as { args: unknown }).args)) as Record<string, string | boolean> })));
 
-/** Who submitted an IdeaMarket idea, from its on-chain IdeaSubmitted (indexed by id): a person (the author), or, for the
- *  agent's X intake, the X author of the mention its on-chain body names. */
-async function sourceOf(ideaId: number): Promise<IdeaSource | null> {
+/** An IdeaMarket idea as the chain has it (its IdeaSubmitted at the block the indexer named, every provider agreeing):
+ *  null when the indexer has no such idea. */
+export async function ideaOnChain(ideaId: number) {
   const [hint] = await sql<{ block: number }[]>`select block::int as block from chain_log where event = 'IdeaSubmitted' and args->>'id' = ${String(ideaId)} limit 1`;
   if (!hint) return null;
   const [s] = await logsAt("IdeaSubmitted", { id: BigInt(ideaId) }, hint.block, hint.block);
   if (!s) throw new Error(`IdeaSubmitted ${ideaId} is not on-chain at block ${hint.block}: chain_log not trusted`);
-  const author = String(s.args.author);
-  if (author.toLowerCase() !== addressOf("agent")?.toLowerCase()) return { source: "ideamarket", author: getAddress(author) };
-  const m = xMentionOf(String(s.args.body ?? ""));
-  if (!m) return null;
-  const [x] = await sql<{ id: string; author_id: string | null; text: string; raw: unknown; sig: string | null }[]>`select id, author_id, text, raw, sig from x_mention where id = ${m}`;
+  return { author: getAddress(String(s.args.author)), round: Number(s.args.round), index: Number(s.args.index), title: String(s.args.title ?? ""), body: String(s.args.body ?? "") };
+}
+
+/** Who submitted an IdeaMarket idea, from its on-chain IdeaSubmitted (indexed by id): a person (the author), or, for the
+ *  agent's X intake, the X author of the mention its on-chain body names. */
+async function sourceOf(ideaId: number): Promise<IdeaSource | null> {
+  const s = await ideaOnChain(ideaId);
+  if (!s) return null;
+  const author = s.author;
+  if (author.toLowerCase() !== addressOf("agent")?.toLowerCase()) return { source: "ideamarket", author };
+  const m = xMentionOf(s.body);
+  return m ? xSourceOf(m) : null;
+}
+/** The X author of a mention, from its enclave-signed row (null: no such row, no author, or not ours). */
+export async function xSourceOf(mention: string): Promise<IdeaSource | null> {
+  const [x] = await sql<{ id: string; author_id: string | null; text: string; raw: unknown; sig: string | null }[]>`select id, author_id, text, raw, sig from x_mention where id = ${mention}`;
   if (!x?.author_id || !(await trusted("x_mention", x.id, { author: x.author_id, text: x.text, raw: x.raw }, x.sig))) return null;
   return { source: "x", authorId: x.author_id, postId: x.id };
 }
@@ -206,6 +217,27 @@ export async function ingest() {
   return added;
 }
 
+// ---------------------------------------------------------------- live mode (config.ts IDEA_MODE): queued at once
+
+/** The first number an X idea gets in live mode (it never went on-chain, so it has no IdeaMarket id): far above any
+ *  IdeaMarket id, so a build id or a game's folder never names both. */
+export const X_IDEA_BASE = 1_000_000;
+/** A queued idea's signed row by id, whatever its kind and status (null: none, or not ours). */
+export async function queuedRow(id: string): Promise<QueueRow | null> {
+  const [r] = await sql<(QueueRow & { sig: string | null })[]>`select id, kind, status, score, data, sig from idea_queue where id = ${id}`;
+  return r && (await trusted("idea_queue", r.id, valueOf(r), r.sig)) ? { id: r.id, kind: r.kind, status: r.status, score: r.score, data: r.data } : null;
+}
+/** A judged idea into the queue (live mode), once per id: its number (an X idea's: the next one after X_IDEA_BASE; the
+ *  ideas lane runs one job at a time). An id already queued keeps its row and its number. */
+export async function queueLive(id: string, kind: Kind, data: Omit<QueueData, "idea"> & { idea?: number }): Promise<number> {
+  const had = await queuedRow(id);
+  if (had) return had.data.idea;
+  const idea = data.idea ?? X_IDEA_BASE + 1 + (await sql<{ n: number }[]>`select count(*)::int as n from idea_queue where id like 'x:%'`)[0].n;
+  const r = data.rubric;
+  await save({ id, kind, status: "queued", score: r ? r.value + r.fit + r.clarity + r.originality : 0, data: { ...data, idea } });
+  return idea;
+}
+
 // ---------------------------------------------------------------- fee ideas → the experiment pipeline
 
 /** loop.ts behind a seam (tests stand in for the experiment pipeline and the brain). */
@@ -251,7 +283,7 @@ export async function feeStep() {
   if (!res.thread) {
     if (await QUEUE_DEPS.openRun()) { out[next.id] = "waiting: an experiment is running"; return out; }
     const v = next.data.params!;
-    res = await QUEUE_DEPS.queueCandidate({ title: `Idea #${next.data.idea}: ${next.data.title}`.slice(0, 200), hypothesis: `An accepted community idea (IdeaMarket #${next.data.idea}): ${next.data.summary}`.slice(0, 300), vector: [v.base, v.mult, v.cap] as Vector, source });
+    res = await QUEUE_DEPS.queueCandidate({ title: `Idea #${next.data.idea}: ${next.data.title}`.slice(0, 200), hypothesis: `An accepted community idea (${next.data.idea > X_IDEA_BASE ? "from X" : "IdeaMarket"} #${next.data.idea}): ${next.data.summary}`.slice(0, 300), vector: [v.base, v.mult, v.cap] as Vector, source });
   }
   if (res.thread) {
     await save({ ...next, status: "testing", data: { ...next.data, thread: res.thread, opId: res.opId, why: undefined } });

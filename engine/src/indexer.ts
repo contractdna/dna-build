@@ -20,6 +20,7 @@ const POLL_MS = Number(env.POLL_MS ?? 12_000);
 const LOG_WINDOW = BigInt(env.LOG_WINDOW ?? 10_000);
 const HEAD_TAG = (env.HEAD_TAG ?? "latest") as BlockTag;
 const ONCE = process.argv.includes("--once");
+const INSERT_ROWS = 2_000;
 
 // DEPLOYMENT_FILE: only for scripts/rehearsal.sh (a mainnet fork must not overwrite the committed deployments/1.json)
 const d: Deployment = JSON.parse(readFileSync(env.DEPLOYMENT_FILE ?? new URL(`../deployments/${CHAIN_ID}.json`, import.meta.url), "utf8"));
@@ -99,7 +100,12 @@ export async function finalizedTier() {
     const end = r.to === fin.number ? fin : await client.getBlock({ blockNumber: r.to });
     await sql.begin(async (tx) => {
       await lock(tx);
-      if (rows.length) await tx`insert into chain_log ${tx(rows.map((x) => ({ ...x, args: tx.json(x.args as never) })))} on conflict do nothing`;
+      // in slices: one insert binds 8 parameters a row and postgres.js caps a statement at 65534 (a busy catch-up window
+      // can hold more than 8k logs)
+      for (let i = 0; i < rows.length; i += INSERT_ROWS) {
+        const part = rows.slice(i, i + INSERT_ROWS).map((x) => ({ ...x, args: tx.json(x.args as never) }));
+        await tx`insert into chain_log ${tx(part)} on conflict do nothing`;
+      }
       await tx`insert into cursor (id, block, hash, at) values (1, ${Number(r.to)}, ${end.hash}, ${new Date(Number(end.timestamp) * 1000)})
         on conflict (id) do update set block = excluded.block, hash = excluded.hash, at = excluded.at
         where cursor.block < excluded.block`;

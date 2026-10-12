@@ -104,6 +104,24 @@ export const AGENT_LOOP = env.AGENT_LOOP !== "0";
 export const LOG_BASE_URL = env.LOG_BASE_URL ?? "https://genomedna.xyz";
 export const PORT = num(env.PORT, 8080);
 export const SCHEDULER_MS = num(env.SCHEDULER_MS, 60_000);
+/** How ideas reach the dev team (a compose literal in the enclave):
+ *  - rounds: IdeaMarket's on-chain rounds; a round is researched once it closes, its outcome proposed after the public
+ *    hour and finalized after the Safe's 24 h, and only then do its accepted ideas queue;
+ *  - live: every idea (an X mention past the screen, a site submit) is judged as it comes in and an accepted fee or build
+ *    idea queues at once; the Sequencer picks the best one whenever it is free. Holder staking has no say: every
+ *    closed round gets an all-void report, so every stake is refunded. */
+export const IDEA_MODE = (env.IDEA_MODE || "rounds") as "rounds" | "live";
+if (IDEA_MODE !== "rounds" && IDEA_MODE !== "live") throw new Error("IDEA_MODE must be rounds or live");
+export const IDEAS_LIVE = IDEA_MODE === "live";
+/** The dev team's pace: at most SEQ_MAX_INFLIGHT builds at once (1-5), and new builds start until SEQ_DAILY_TARGET
+ *  builds shipped or are on their way that UTC day (1-10). Code defaults: neither is an allowed env in the enclave, so
+ *  the enclave runs 3 and 5 (a change is a new image); the env only sets them outside it (rehearsals, tests). */
+const pace = (k: string, v: string | undefined, d: number, max: number) => {
+  const n = num(v, d);
+  if (!Number.isInteger(n) || n < 1 || n > max) throw new Error(`${k} must be a whole number from 1 to ${max}`);
+  return n;
+};
+export const SEQ_PACE = { maxInflight: pace("SEQ_MAX_INFLIGHT", env.SEQ_MAX_INFLIGHT, 3, 5), dailyTarget: pace("SEQ_DAILY_TARGET", env.SEQ_DAILY_TARGET, 5, 10) };
 /** The public hour of an IdeaMarket outcome report before it is proposed (M1). Not in allowed_envs: 1 h in the enclave. */
 export const IDEA_OUTCOME_DELAY_MS = num(env.IDEA_OUTCOME_DELAY_MS, 3600_000);
 /** The visible loop. Full cycle every CYCLE_MS; observe (code only, a feed
@@ -122,6 +140,9 @@ export const TG = {
   group: env.TELEGRAM_GROUP_ID ? Number(env.TELEGRAM_GROUP_ID) : undefined,
   allow: new Set(list(env.TELEGRAM_ALLOWED_USER_IDS).map(Number)),
   pollTimeoutS: num(env.TELEGRAM_POLL_TIMEOUT_S, 25),
+  /** a public chat (a channel's @name or a numeric chat id; a compose literal) the bot also posts the public build and
+   *  idea news to (the bot must be an admin there); unset = none */
+  publicChat: env.TELEGRAM_PUBLIC_CHAT || undefined,
 };
 
 export const X = {
@@ -130,11 +151,11 @@ export const X = {
   clientSecret: env.X_CLIENT_SECRET, // confidential client → Basic auth on token refresh
   refreshToken: env.X_REFRESH_TOKEN, // seed (and re-auth); rotated tokens live SEALED in the `secret` table
   userId: env.X_USER_ID,
-  // ≤ 15 own posts a UTC day, ≥ 20 min apart (≤ 40, ≥ 10 min apart in the launch window). Replies (src/tiers.ts) only to posts that @mention or quote us, from
+  // ≤ 25 own posts a UTC day, ≥ 20 min apart (≤ 40, ≥ 10 min apart in the launch window). Replies (src/tiers.ts) only to posts that @mention or quote us, from
   // accounts at least 30 days old with 50 followers, no badge needed (src/ideas.ts accountIssue); ≤ 2 per author a UTC day for a normal account (the
   // tiers set their own), under a safety ceiling of 200 a day and 30 an hour. An item queued longer than staleMs is
   // dropped. Mentions are read every minute (X bills per mention returned, not per call)
-  dailyPosts: num(env.X_DAILY_POSTS, 15),
+  dailyPosts: num(env.X_DAILY_POSTS, 25),
   // the launch window: every UTC day the X_LAUNCH_WINDOW_H after LLM_LAUNCH_AT touch, up to X_LAUNCH_DAILY_POSTS a
   // day, ≥ X_LAUNCH_POST_SPACING_MIN apart (src/announce.ts postCaps); the reply caps stay the same
   launchDailyPosts: num(env.X_LAUNCH_DAILY_POSTS, 40),
@@ -176,8 +197,8 @@ export const LLM = {
   // The day's cap is split: the Sequencer (budget dev) gets devPct of it, everything else shares the rest (research
   // pauses at pauseAt.research of that shared part, the others at all of it). Monthly: the calendar month's total
   // bounds every budget; dev pauses at devMonthlyPct of it, research at pauseAt.research. Keepers never call a model.
-  dailyCapUsd: num(env.LLM_DAILY_USD_CAP ?? env.LLM_DAILY_CAP_USD, 100),
-  week1DailyCapUsd: num(env.LLM_WEEK1_DAILY_USD_CAP, 200),
+  dailyCapUsd: num(env.LLM_DAILY_USD_CAP ?? env.LLM_DAILY_CAP_USD, 300),
+  week1DailyCapUsd: num(env.LLM_WEEK1_DAILY_USD_CAP, 300),
   launchAt: env.LLM_LAUNCH_AT ? Date.parse(env.LLM_LAUNCH_AT) : undefined, // ISO with Z or an offset; a compose literal in the enclave
   monthlyCapUsd: num(env.LLM_MONTHLY_USD_CAP, 3000),
   subCapsUsd: {
@@ -185,7 +206,7 @@ export const LLM = {
     redteam: num(env.LLM_CAP_REDTEAM_USD, 40),
     rest: num(env.LLM_CAP_REST_USD, 40), // Main (hypothesis, decide), the brain, narration, lessons, journal, readers
   } as Record<string, number>,
-  devPct: 0.48, // the Sequencer's share of each day's cap: 4 whole builds at the order ceiling fit $100
+  devPct: 0.65, // the Sequencer's share of each day's cap: $195 of $300; four $48 reservations (4 orders × $12) fit, so 3 builds run with room for charges
   devMonthlyPct: 0.6,
   orderCeilingUsd: 12, // one Sequencer order at most; lower when the day's dev share is below 4 × this
   pauseAt: { research: 0.8 } as Record<string, number>,
