@@ -1,0 +1,26 @@
+{
+  "spec": "Standalone game Genome. Constructor takes the DNA token address (balanceOf only) and threshold 1_000_000e18. claimGenome(): caller with balance >= threshold and no genome gets one: seed = keccak(sender, blockhash(-1)), no traits, mutations 0, scars 0. mutate(): once per 24h per genome; if balance >= threshold, mutations++ and a trait byte keccak(seed, mutations, blockhash(-1)) is appended (max 32); else scars++ (max 255). Per-address, non-transferable; no mint, no approvals, no ETH, no payable, no power over hook or fees. Views: genomeOf(address) -> seed, traits, mutations, scars, lastAct; svg(address) -> SVG drawn from traits with a mark per scar. Safe-only pause stops claim and mutate. Page: wallet connect, claim/mutate buttons, render SVG. Tests: threshold, double claim, cooldown, scars, pause, gas. (a game build)",
+  "specSha256": "e58b4d422a41d0b5b98fe19995979946fa0e636836edd6d5b55cb6e7517ffb7b",
+  "interface": [
+    "COOLDOWN()",
+    "MAX_SCARS()",
+    "MAX_TRAITS()",
+    "SCAR_AFTER()",
+    "claimGenome()",
+    "genomeOf(address)",
+    "genomes()",
+    "lastActor()",
+    "lastSvg()",
+    "mutate()",
+    "nextMutateAt(address)",
+    "svg(address)"
+  ],
+  "files": [
+    "contracts/src/games/genome-an-evolving-o-1000003/Genome.sol",
+    "contracts/test/games/genome-an-evolving-o-1000003/Genome.t.sol",
+    "web/app/g/genome-an-evolving-o-1000003/GenomeArt.tsx",
+    "web/app/g/genome-an-evolving-o-1000003/game.json",
+    "web/app/g/genome-an-evolving-o-1000003/page.module.css",
+    "web/app/g/genome-an-evolving-o-1000003/page.tsx"
+  ]
+}
