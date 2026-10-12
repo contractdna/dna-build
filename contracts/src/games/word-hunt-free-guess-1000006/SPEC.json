@@ -1,0 +1,30 @@
+{
+  "spec": "Standalone WordHunt contract: no ETH in, no payable functions, no receive, no approvals. A setter role held by the Safe (or a keeper it names) opens a round by posting keccak256 of a lowercase word and a round length in blocks. Players call commitGuess(bytes32 h) with h = keccak256(guess, ), then revealGuess(string guess) in a later block; one open commit per address per round. A reveal whose keccak256(guess) matches the word hash wins; the first such reveal is stored as the round winner, a Win event is emitted, and a per-address win counter serves as a leaderboard. A round with no winner closes empty. Only the Safe can pause. Tests: fuzz commit-reveal ordering, a copied reveal from another address fails, duplicate commit reverts, paused round rejects guesses. (a game build)",
+  "specSha256": "4c1fe064a6e1a35b6c9a0fbd08dc32939afd51977601e3732967346f075f255e",
+  "interface": [
+    "MAX_BLOCKS()",
+    "MAX_LEN()",
+    "MIN_BLOCKS()",
+    "closeRound()",
+    "closed()",
+    "commitGuess(bytes32)",
+    "commits(uint256,address)",
+    "endBlock()",
+    "hashGuess(string,address)",
+    "keeper()",
+    "openRound(bytes32,uint64)",
+    "revealGuess(string)",
+    "round()",
+    "setKeeper(address)",
+    "winner()",
+    "wins(address)",
+    "wordHash()"
+  ],
+  "files": [
+    "contracts/src/games/word-hunt-free-guess-1000006/WordHunt.sol",
+    "contracts/test/games/word-hunt-free-guess-1000006/WordHunt.t.sol",
+    "web/app/g/word-hunt-free-guess-1000006/game.json",
+    "web/app/g/word-hunt-free-guess-1000006/page.module.css",
+    "web/app/g/word-hunt-free-guess-1000006/page.tsx"
+  ]
+}
