@@ -1,0 +1,34 @@
+{
+  "spec": "Standalone contract, no ETH, no payable or receive, no deposits, no approvals. Windows of 6 hours by . enter(): one free entry per address per window, at most 256 entrants per window; entry weight = 1 + consecutive prior windows entered, capped at 5. After a window ends anyone calls draw(), which records the next block number; finalize() after that block uses its blockhash as seed (window voided if more than 256 blocks passed) and picks up to 5 distinct winners by weighted selection; each winner gets +1 point on a permanent on-chain board. Views: current window, entrants, winners per window, points. Only the Safe can pause entering. Gates: fuzz the weighted selection, invariants that winners are distinct entrants of that window and no points without a finalized draw, gas bound with full entrants. (a game build)",
+  "specSha256": "e33227ac60cd4cea90cd455719edb9e0ba43bb90aaa324ca293c2946f76579cf",
+  "interface": [
+    "MAX_ENTRANTS()",
+    "MAX_WEIGHT()",
+    "VOID_BLOCKS()",
+    "WINDOW()",
+    "WINNERS()",
+    "currentWindow()",
+    "draw(uint256)",
+    "drawBlockOf(uint256)",
+    "enter()",
+    "entrantAt(uint256,uint256)",
+    "entrantCount(uint256)",
+    "entrantsOf(uint256,uint256,uint256)",
+    "finalize(uint256)",
+    "finalizedOf(uint256)",
+    "hasEntered(uint256,address)",
+    "nextWeight(address)",
+    "pickWinners(uint256[8],uint256,uint256)",
+    "pointsOf(address)",
+    "weightOf(uint256,uint256)",
+    "windowOf(uint256)",
+    "winnersOf(uint256)"
+  ],
+  "files": [
+    "contracts/src/games/window-raffle-free-e-1000004/WindowRaffle.sol",
+    "contracts/test/games/window-raffle-free-e-1000004/WindowRaffle.t.sol",
+    "web/app/g/window-raffle-free-e-1000004/game.json",
+    "web/app/g/window-raffle-free-e-1000004/page.module.css",
+    "web/app/g/window-raffle-free-e-1000004/page.tsx"
+  ]
+}
