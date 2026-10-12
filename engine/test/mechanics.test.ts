@@ -7,12 +7,12 @@ import { test } from "node:test";
 import { mechanics } from "../scripts/brain-context.ts";
 import { ENCLAVE } from "../src/enclave.ts";
 import { MECHANICS, mechanicsFor, TOPICS } from "../src/mechanics.ts";
-import { factNumbers, postFilter } from "../src/voice.ts";
+import { factNumbers, isVoiceIssue, MentionOut, postFilter, STAKING_DENIED, voiceIssues } from "../src/voice.ts";
 
 test("mechanics: generated, committed fresh, one block per topic", () => {
   assert.deepEqual(JSON.parse(readFileSync(new URL("../brain/mechanics.json", import.meta.url), "utf8")), mechanics());
   execFileSync(process.execPath, ["scripts/brain-context.ts", "--check"], { cwd: new URL("..", import.meta.url).pathname, env: { PATH: process.env.PATH ?? "" }, stdio: "pipe" });
-  for (const t of ["hook_fee", "launch_guard", "buyback_burn", "liquidity_lock", "fee_split", "veto_safe", "idea_market", "games", "proof_enclave", "dev_team"] as const) {
+  for (const t of ["hook_fee", "launch_guard", "buyback_burn", "liquidity_lock", "fee_split", "veto_safe", "idea_market", "games", "proof_enclave", "dev_team", "staking"] as const) {
     assert.ok(TOPICS.includes(t), t);
     assert.ok(MECHANICS[t].length >= 2, t);
   }
@@ -56,4 +56,42 @@ test("mechanics: the launch guard only on a hook that has it; status and other t
   assert.deepEqual(mechanicsFor("hook_fee", true).slice(MECHANICS.hook_fee.length, -2), MECHANICS.launch_guard, "the fee topic tells the guard too when it is there");
   assert.deepEqual(mechanicsFor("other", true), []);
   assert.deepEqual(mechanicsFor("status_wen", true), []);
+});
+
+test("staking: the conviction vault's own numbers, told only once it is deployed, and the reader can name the topic", () => {
+  const src = readFileSync(new URL("../../contracts/src/ConvictionVault.sol", import.meta.url), "utf8");
+  // the numbers below are the contract's: a changed constant or function fails here before a reply states it
+  assert.match(src, /MIN_LOCK = 10_000 ether;/);
+  assert.match(src, /MIN_AGE = 12 hours;/);
+  assert.match(src, /MAX_MULT = 40_000;/);
+  assert.match(src, /return tier == 0 \? 12 hours : \(tier == 1 \? 3 days : 7 days\);/);
+  assert.match(src, /return tier == 0 \? 200 : \(tier == 1 \? 250 : 300\);/);
+  assert.match(src, /return age >= 10 days \? 200 : \(age >= 5 days \? 150 : \(age >= 2 days \? 125 : 100\)\);/);
+  assert.match(src, /tierMult\(tier\) : 2 \* BPS/);
+  const all = MECHANICS.staking.join(" ");
+  assert.match(all, /at least 10,000 DNA/);
+  assert.match(all, /12 hours at 2 times, 3 days at 2\.5 times or 7 days at 3 times its amount/);
+  assert.match(all, /once the term is over it counts 2 times until withdrawn/);
+  assert.match(all, /1\.25 from 2 days old, 1\.5 from 5 days old and 2 from 10 days old, never past 4 times/);
+  assert.match(all, /once it is 12 hours old/);
+  assert.match(all, /jackpot tickets/);
+  assert.match(all, /pays nothing by itself and nothing is promised/);
+  assert.match(all, /site's play page/);
+  assert.match(all, /cannot stake/);
+  assert.deepEqual(mechanicsFor("staking", false), [], "not deployed: nothing says staking is live");
+  assert.deepEqual(mechanicsFor("staking", false, false, true), MECHANICS.staking);
+  assert.equal(MentionOut.parse({ kind: "rules_question", topic: "staking", question: "where can i stake" }).topic, "staking");
+});
+
+test("staking: a reply that denies it is refused and redrafted; a plain no about its yield or rules is not", () => {
+  const reply = { event: "reply", category: "rules_question", topic: "other", question: "where can i stake" };
+  for (const t of ["There is no staking place on DNA.", "No staking on DNA, sorry.", "Staking doesn't exist here.", "We don't have staking.", "There's no place to stake DNA.", "Nowhere to stake."]) {
+    assert.ok(voiceIssues(reply, t, { linked: false }).includes(STAKING_DENIED), t);
+  }
+  assert.ok(isVoiceIssue(STAKING_DENIED), "a denial gets a redraft with the reason");
+  const facts = { ...reply, topic: "staking", mechanics: MECHANICS.staking };
+  for (const t of ["Staking pays nothing by itself: it raises your jackpot tickets and vote weight.", "No staking rewards, just more tickets.", "There is no early exit: withdraw after the term.", "Lock at least 10,000 DNA on the play page.", "No staking needed to play the games.", "No staking required to vote."]) {
+    assert.ok(!voiceIssues(facts, t, { linked: false }).includes(STAKING_DENIED), t);
+  }
+  assert.ok(!voiceIssues({ ...reply, state: { note: "no staking yet" } }, "No staking yet.", { linked: false }).includes(STAKING_DENIED), "the facts' own denial may be said back");
 });

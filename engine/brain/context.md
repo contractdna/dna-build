@@ -71,6 +71,10 @@ DNA is a token on a Uniswap v4 pool whose hook takes a project fee. The fee and 
 - GenomeVaults.MAX_LIVE = 50
 - GenomeVaults.DEPOSIT = 200_000 ether
 - GenomeVaults.ROYALTY_BPS = 250
+- ConvictionVault.MIN_LOCK = 10_000 ether ((tunable))
+- ConvictionVault.MIN_AGE = 12 hours (a position votes only from start + MIN_AGE)
+- ConvictionVault.TIERS = 3
+- ConvictionVault.MAX_MULT = 40_000 (×4 combined ceiling, in hundredths × hundredths)
 
 ## Engine policy (published defaults; code clamps every proposal to these)
 - fee vector bounds [min, max]: {"base":[10000,30000],"mult":[0,18000],"cap":[10000,35000]}

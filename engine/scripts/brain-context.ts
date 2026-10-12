@@ -11,7 +11,7 @@ import { BASE, ROLES } from "../src/models.ts";
 import { GATES, KILL, LIMITS, POLICY, REWARD_HOLD_DAYS, RUBRIC, TIMING } from "../src/policy.ts";
 
 export const CONTEXT_FILE = new URL("../brain/context.md", import.meta.url);
-const SOURCES = ["DNAToken.sol", "DNAHook.sol", "FeeVault.sol", "ModuleRegistry.sol", "IdeaMarket.sol", "GamePot.sol", "games/GameFunder.sol", "GenomeVaults.sol"];
+const SOURCES = ["DNAToken.sol", "DNAHook.sol", "FeeVault.sol", "ModuleRegistry.sol", "IdeaMarket.sol", "GamePot.sol", "games/GameFunder.sol", "GenomeVaults.sol", "ConvictionVault.sol"];
 
 /** `public constant` numbers of a Solidity source (bitmaps and expressions over other constants left out). */
 export function constants(src: string) {
@@ -113,6 +113,18 @@ export function mechanics(): Record<string, string[]> {
   const k = (name: string) => { const v = all.get(name) ?? GUARD_DEFAULTS[name.replace(/^DNAHook\./, "")]; if (v === undefined) throw new Error(`no constant ${name}`); return valueOf(v); };
   const H = (n: string) => k(`DNAHook.${n}`), R = (n: string) => k(`ModuleRegistry.${n}`), V = (n: string) => k(`FeeVault.${n}`), I = (n: string) => k(`IdeaMarket.${n}`), G = (n: string) => k(`GamePot.${n}`), N = (n: string) => k(`GenomeVaults.${n}`);
   const supply = k("DNAToken.SUPPLY");
+  // staking's terms and multiples live in ConvictionVault's pure functions, not constants: read from their return
+  // expressions (a reshaped function throws here rather than state a stale number)
+  const cv = sol("ConvictionVault.sol");
+  const ret = (fn: string) => { const m = cv.match(new RegExp(`function ${fn}\\([^)]*\\)[^{]*\\{\\s*return ([^;]+);`)); if (!m) throw new Error(`no ConvictionVault.${fn}`); return m[1]; };
+  const numsIn = (e: string) => [...e.matchAll(/\b\d+\b/g)].map((m) => Number(m[0]));
+  const C = (n: string) => k(`ConvictionVault.${n}`), bps = Number(cv.match(/\bBPS\s*=\s*(\d+);/)?.[1]);
+  const terms = [...ret("term").matchAll(/(\d+) (hours|days)/g)].map((m) => `${m[1]} ${m[2]}`);
+  const tierX = numsIn(ret("tierMult").replace(/tier == \d+/g, "")).map((m) => m / bps);
+  const streak = ret("streakMult"), ages = [...streak.matchAll(/(\d+) days/g)].map((m) => m[1]).reverse(), streakX = numsIn(streak.replace(/\d+ days/g, "")).slice(0, -1).map((m) => m / bps).reverse();
+  const afterX = Number(cv.match(/tierMult\(tier\) : (\d+) \* BPS/)?.[1]);
+  if (terms.length !== C("TIERS") || tierX.length !== C("TIERS") || ages.length !== streakX.length || !afterX || !bps) throw new Error("ConvictionVault: terms or multiples not read");
+  const list = (xs: string[], and: string) => `${xs.slice(0, -1).join(", ")} ${and} ${xs.at(-1)}`;
   return {
     hook_fee: [
       `the hook takes a project fee on every swap; fee modules set it, and the hook never charges more than ${pctPips(H("MAX_PROJECT_FEE"))}, whatever a module asks`,
@@ -160,6 +172,14 @@ export function mechanics(): Record<string, string[]> {
       `only the Safe funds the vaults, over an exact block window of fee inflows, with whatever amount the signers send (their script proposes 50% of the treasury's fee share in that window), split equally across every eligible vault; a new vault joins at the next fund and earns from every fund after that`,
       `a vault's unclaimed ETH stays with it when it is sold, so a buyer gets it; a sale pays a ${pctBps(N("ROYALTY_BPS"))} royalty to the Safe; every vault is equal, and nothing is promised about what a vault earns`,
       `mint, collect and burn on the site's vaults page or on the contract itself: a mint approves exactly ${big(N("DEPOSIT"))} DNA to the vaults, nothing more`,
+    ],
+    // ConvictionVault: what a stake counts for (jackpot tickets, holder votes); no yield, nothing promised
+    staking: [
+      `staking is the conviction vault: lock at least ${big(C("MIN_LOCK"))} DNA for a term, ${list(terms.map((t, i) => `${t} at ${tierX[i]} times`), "or")} its amount; once the term is over it counts ${afterX} times until withdrawn`,
+      `an older stake counts more: its multiple is multiplied by ${list(streakX.map((x, i) => `${x} from ${ages[i]} days old`), "and")}, never past ${C("MAX_MULT") / (bps * bps)} times the amount in all`,
+      `a stake raises your jackpot tickets (held DNA counts once, staked DNA at its multiple) and your vote weight in holder votes, where it votes once it is ${C("MIN_AGE")} hours old; staking pays nothing by itself and nothing is promised`,
+      `withdraw any time after the term ends, or recommit to start a new term without resetting its age; no early exit, no transfer, and nobody but the owner can withdraw a stake`,
+      `stake on the site's play page or on the contract itself; the team's own wallets, the Safe and the engine's keys cannot stake`,
     ],
     proof_enclave: [
       `the engine runs inside a TEE enclave from a public image; the compose hash pins exactly what runs, and a code change waits ${R("MIN_DELAY")} hour behind a public timelock`,

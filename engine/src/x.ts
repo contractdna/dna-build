@@ -559,8 +559,8 @@ export async function resolve(ev: Record<string, unknown>): Promise<Record<strin
     case "reply": {
       // the asked topic's mechanics (code's lines; the launch guard's only on a hook that has it)
       const topic = typeof ev.topic === "string" ? (ev.topic as Topic) : undefined;
-      // the vaults' lines only once the vaults are deployed (the deployment names them): never a live claim before
-      const mechanics = topic ? mechanicsFor(topic, await hasLaunchGuard(HOOK_READ.launchGuard), !!d.genomeVaults) : [];
+      // the vaults' and staking's lines only once their contract is deployed (the deployment names it): never a live claim before
+      const mechanics = topic ? mechanicsFor(topic, await hasLaunchGuard(HOOK_READ.launchGuard), !!d.genomeVaults, !!d.convictionVault) : [];
       // lang: the reader's (SCRIPTS); lead: code's "@handle" before a reply in our own thread (a thread presence turn)
       return { event: "reply", category: ev.category, topic, question: ev.question, ...(ev.category === "thanks" ? {} : { state: await stateFacts() }), relationship: ev.relationship, ...(mechanics.length ? { mechanics } : {}), ...(typeof ev.rival === "string" ? { rival: ev.rival } : {}),
         ...(typeof ev.lang === "string" && ev.lang in SCRIPTS ? { lang: ev.lang } : {}), ...(typeof ev.lead === "string" ? { lead: ev.lead } : {}) };

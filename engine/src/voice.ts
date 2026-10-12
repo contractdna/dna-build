@@ -262,8 +262,14 @@ function valuesOf(v: unknown, key = "", out = { pct: new Set<number>(), mult: ne
 const THANKS_ISSUE = "a thank-you is one short warm line: no numbers, no questions, nothing else";
 // a thank-you in the reader's language (zh, ja, ko, ru, es, pt, fr, de, tr, vi, id) counts as warm too
 const THANKS_RE = /谢|感谢|ありがと|感謝|감사|고마|спасибо|gracias|obrigad|merci|danke|teşekkür|cảm ơn|terima kasih/iu;
+/** Staking exists (the conviction vault): a draft never denies it ("there is no staking", "staking doesn't exist",
+ *  "we don't have staking"). A plain "no" about its yield ("no staking rewards") or a stake's rules ("no early exit")
+ *  is not a denial. simplification: staking only; a general "there is no" would refuse true lines ("there is no
+ *  early exit", "there is no promise"). */
+const STAKING_DENIAL = /\bno\s+(?:\w+\s+)?staking\b(?!\s+(?:yield|rewards?|apy|apr|payouts?|income|returns?|interest|needed|required|fee|minimum|lock))|\bno\s+(?:place|way|option|pool|contract|vault)\s+(?:to|for)\s+stak\w*|\bnowhere to stake\b|\bstaking\b[^.!?\n]{0,30}\b(?:does(?:n['’]t| not) exist|is(?:n['’]t| not)\s+(?:a thing|available|live|offered|supported|part of)|not (?:a thing|available|offered|supported|part of))|\b(?:don['’]t|doesn['’]t|do not|does not)\s+(?:have|offer|do|support|run)\s+(?:any\s+)?staking\b/i;
+export const STAKING_DENIED = "says there is no staking (there is: the conviction vault)";
 /** voiceIssues' reasons: a draft refused for one of them gets a redraft with the reason (draftInCharacter). */
-const VOICE_ISSUES = new Set(["the online post does not say it is live", "a jab in an ally post", "no warm word for an ally", "points at a link that is not there",
+const VOICE_ISSUES = new Set([STAKING_DENIED, "the online post does not say it is live", "a jab in an ally post", "no warm word for an ally", "points at a link that is not there",
   "does not say the idea is logged", "opens by echoing the question", "does not state what moved", "implies demand or price support", "does not say who got it", "calls a transfer a sale", "does not say it was a sale",
   "does not say it was simulated", "does not say what is built instead", "says the idea is in when it is not", "a jab at unnamed others",
   "starts a sentence in lower case", "lower-case i", "talks about its own mood", "says dev team", THANKS_ISSUE]);
@@ -290,6 +296,9 @@ export function voiceIssues(facts: Record<string, unknown>, text: string, o: { l
   if (facts.category === "greeting" && facts.relationship === "ally" && !WARM_RE.test(t)) out.push("no warm word for an ally");
   if (facts.category === "thanks" && (!(WARM_RE.test(t) || THANKS_RE.test(t)) || t.length > 100 || /\d|[?？]/.test(t))) out.push(THANKS_ISSUE);
   if (!o.linked && LINK_POINTER.test(t)) out.push("points at a link that is not there");
+  // a denial the facts make themselves (`mechanics`, `state`) may be said back
+  const denial = t.match(STAKING_DENIAL)?.[0].toLowerCase();
+  if (denial && !JSON.stringify([facts.mechanics, facts.state]).toLowerCase().includes(denial)) out.push(STAKING_DENIED);
   // an idea reply states its verdict and never contradicts it: in (queued, or logged for a round) says so; a buildable
   // version says what is built instead; out, held back or not an idea never says it is in
   const verdict = facts.verdict;
