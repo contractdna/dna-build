@@ -1,4 +1,4 @@
-/* The wallet bar (Wallet.tsx): connect, pick, open in a wallet app, then account, network and balances. */
+/* The wallet bar (Wallet.tsx): connect (the modal), then account, network and balances. */
 .wallet { display: grid; gap: 10px; margin-bottom: 18px; max-width: 560px; }
 .connect { justify-self: start; border-color: var(--blood); }
 .who { margin: 0; display: flex; flex-wrap: wrap; gap: 6px 14px; align-items: baseline; font-size: 14px; color: var(--ash-text); }
@@ -6,8 +6,7 @@
 .bal { margin: 0; font-size: 14px; color: var(--bone); font-variant-numeric: tabular-nums; }
 .warn { margin: 0; font-size: 14px; line-height: 1.6; color: var(--bone); }
 .pick { display: grid; gap: 8px; }
-.pick > button, .pick > a { justify-content: flex-start; gap: 10px; text-decoration: none; }
-.pick img { border-radius: 4px; }
+.pick > a { justify-content: flex-start; text-decoration: none; }
 .label { margin: 0; font-size: 13px; line-height: 1.5; color: var(--ash-text); overflow-wrap: anywhere; }
 .link { background: none; border: 0; padding: 0; color: var(--ash-text); font: inherit; text-decoration: underline; cursor: pointer; }
 .link:hover, .link:focus-visible { color: var(--bone); }

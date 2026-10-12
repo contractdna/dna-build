@@ -61,7 +61,7 @@ function strip<T>(r: Rec<T>): T {
 // ---------------------------------------------------------------- shapes written by the indexer
 
 type Deployment = { chainId: number; startBlock: number; safe: Hex; agent: Hex; token: Hex; hook: Hex; registry: Hex; feeVault: Hex; buybackBurn: Hex; liquidityVault: Hex; platformRevenue: Hex;
-  bountyBoard?: Hex; ideaMarket?: Hex; convictionVault?: Hex; gamePot?: Hex; gameFactory?: Hex };
+  bountyBoard?: Hex; ideaMarket?: Hex; convictionVault?: Hex; gamePot?: Hex; gameFactory?: Hex; genomeVaults?: Hex };
 type Manifest = { name: string; version: string; kind: Module["kind"]; author: string; review: Module["review"]; risk: Module["risk"]; summary: string; killConditions: string[]; params: { key: string; unit?: "pips" | "x1e4" }[] };
 type Snapshot = {
   level: number; agentPaused: boolean; lastRollbackBlock: string;
@@ -293,6 +293,8 @@ export const getTreasury = memo(async () => {
     { name: "LiquidityVault", address: dep.liquidityVault, balance: String(chain.lpPositions), unit: "positions", note: `add-only auto-LP · ${eth(c.liquidityVault)} ETH pending` },
     { name: "Initial LP", address: "0x000000000000000000000000000000000000dEaD", balance: "locked", unit: "forever", note: "2 LP NFTs minted to 0xdEaD" },
     { name: "PlatformRevenue", address: dep.platformRevenue, balance: eth(c.platformRevenue), unit: "ETH", note: `Programmable ${FEE.platform}, not ours · immutable` },
+    // the Genome Vaults NFT (when deployed): holders' locked DNA and the ETH the Safe funded, read on /vaults
+    ...(dep.genomeVaults ? [{ name: "GenomeVaults", address: dep.genomeVaults, balance: "on Etherscan", unit: "", note: "holders' 200,000 DNA deposits + their unclaimed ETH · see /vaults" }] : []),
   ];
   const [b, l, t, g] = chain.currentSplit.map(Number);
   const split: SplitShare[] = [

@@ -9,6 +9,7 @@ import { edb as sql } from "./db.ts";
 import { publicTextIssues, utf8Cut } from "./llm.ts";
 import { ENCLAVE } from "./enclave.ts";
 import { append } from "./log.ts";
+import { VAULT_TYPE } from "./vaults.ts";
 
 /** X priority per announcement type (lower first). */
 export const PRIORITY: Record<string, number> = {
@@ -41,6 +42,8 @@ export const PRIORITY: Record<string, number> = {
   fees_distributed: 3.5, burn_summary: 3.5, liquidity_added: 3.5,
   // the treasury's DNA (src/status.ts treasuryFacts): a buy on the pool, a transfer out
   treasury_buy: 3.5, treasury_transfer: 3.5,
+  // the Genome Vaults (src/vaults.ts): the Safe's fund is money; a mint and a burn go with the games
+  vault_funded: 1, vault_minted: 2, vault_burned: 2,
   // the lab (src/lab.ts): the brain's simulated fee candidates, every 2 h on a launch day, every 6 h after
   lab: 3.5,
   // after the launch window, one combined progress post a day: below every event, so a full day's digest absorbs it
@@ -82,7 +85,7 @@ const GAME_TYPE: Record<string, string> = {
   Run: "mystery_result", Rejected: "mystery_result", RoundFinalized: "idea_round",
 };
 /** An outbox event's announcement type (before it is resolved). */
-export const typeOf = (ev: Record<string, unknown>) => (ev.event === "game" ? GAME_TYPE[String(ev.name)] ?? "game" : String(ev.event));
+export const typeOf = (ev: Record<string, unknown>) => (ev.event === "game" ? GAME_TYPE[String(ev.name)] ?? "game" : ev.event === "vault" ? VAULT_TYPE[String(ev.name)] ?? "vault" : String(ev.event));
 /** The digest takes the day's last post slot; it is never in the way of a higher-priority event. */
 export const priorityOf = (ev: Record<string, unknown>) => (ev.event === "digest" ? 0 : PRIORITY[typeOf(ev)] ?? 4);
 /** Digest buckets. */
@@ -260,6 +263,16 @@ export function titleOf(f: Record<string, unknown>, raw: Record<string, unknown>
     case "first_burn": return "The first buyback: fee ETH bought DNA and all of it was burned";
     case "contracts_connected": return "The Safe's owners connected the registry and the vaults to the hook and queued the first fee plates";
     case "fees_distributed": case "burn_summary": case "liquidity_added": case "progress_day": return `Last ${f.hours} h: ${progressParts(f).join("; ")}`;
+    // the Genome Vaults (src/vaults.ts): the event's numbers, the live count as read when it was resolved
+    case "vault_minted": return `Genome Vault minted: slot ${f.slot}${f.maxLive !== undefined ? ` of ${f.maxLive}` : ""}${f.lockedDna !== undefined ? `, ${e(f.lockedDna)} DNA locked in it` : ""}${f.live !== undefined ? `; ${count(f.live, "vault", "vaults")} live` : ""}`;
+    case "vault_funded": return Number(f.vaults) > 0
+      ? `Genome Vaults funded: ${e(f.ethTotal)} ETH from the treasury, ${e(f.perVaultEth)} ETH to each of ${count(f.vaults, "eligible vault", "eligible vaults")}, any remainder from earlier funds included`
+      : `Genome Vaults funded: ${e(f.ethTotal)} ETH from the treasury; no vault was eligible yet, so it carries to the next fund`;
+    case "vault_burned": {
+      // "is theirs": a receiver that refuses ETH is credited for a withdraw instead (Owed)
+      const got = [f.lockedDna !== undefined && `its owner got the ${e(f.lockedDna)} DNA back`, Number(f.ethReturned) > 0 && `the ${e(f.ethReturned)} ETH it had not collected is its owner's`].filter(Boolean).join("; ");
+      return `Genome Vault burned${f.slot !== undefined ? `: slot ${f.slot} is free again` : ""}${got ? `; ${got}` : ""}${f.live !== undefined ? `; ${count(f.live, "vault", "vaults")} live` : ""}`;
+    }
     case "milestone": return f.metric === "jackpot_pot"
       ? `Milestone: the jackpot pot passed ${e(f.threshold)} ETH (now ${e(f.value)} ETH)`
       : `Milestone: ${e(f.threshold)} DNA burned in total (now ${e(f.value)})`;

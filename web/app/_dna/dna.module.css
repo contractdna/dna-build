@@ -28,6 +28,7 @@
 .end:focus-within { opacity: 1 !important; } /* a keyboard user tabbing to a link always sees it */
 .big { font-size: clamp(30px, min(3.6vw, 6.2vh), 96px); line-height: 1; }
 .end nav { display: flex; flex-direction: column; gap: 14px; }
+.end .vaults { margin: 0; max-width: 34em; line-height: 1.6; color: var(--g-mist); }
 .end a { color: var(--g-ink); border-bottom: 1px solid var(--g-line); padding-bottom: 3px; }
 .end a:hover { border-color: var(--g-ink); }
 .ca { margin-top: 6px; padding: 0; font: inherit; text-align: left; text-transform: uppercase; color: var(--g-mist); background: none; border: 0; cursor: var(--cursor-link); pointer-events: auto; }

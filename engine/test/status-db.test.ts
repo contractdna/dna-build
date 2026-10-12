@@ -324,3 +324,41 @@ test("the treasury's DNA moves: every move from treasuryFromBlock on, however ol
     status.TREASURY.bySafe = saved.bySafe;
   }
 });
+
+test("the Genome Vaults: a mint, the Safe's fund and a burn from the vaults address post once each, code's template with the contract's count; nothing before the vaults are deployed", { skip }, async () => {
+  const vaults = await import("../src/vaults.ts");
+  const VAULTS = "0xA69836A27706ED710811250a4A0E62Fe475b04d9";
+  const T = (n: number) => `0x${"e".repeat(60)}${n.toString(16).padStart(4, "0")}` as `0x${string}`;
+  const minted = (n: number, address?: string) => ({ eventName: "Minted", args: { id: 3n, owner: "0x00000000000000000000000000000000000000b8", slot: 7 }, transactionHash: T(n), logIndex: 0, address });
+  const was = d.genomeVaults;
+  const read = vaults.VAULT_READ.state;
+  vaults.VAULT_READ.state = async () => ({ live: 12, maxLive: 50, depositDna: 200_000 });
+  try {
+    delete d.genomeVaults;
+    assert.equal(await xM.onChainEvent(minted(1, VAULTS)), undefined, "not in the deployment: not live, nothing posts");
+    d.genomeVaults = VAULTS;
+    assert.equal(await xM.onChainEvent(minted(2)), undefined, "a Minted from elsewhere is not the vaults'");
+    assert.ok(await xM.onChainEvent(minted(3, VAULTS.toLowerCase())));
+    assert.equal(await xM.onChainEvent(minted(3, VAULTS)), undefined, "one row per chain log");
+    assert.ok(await xM.onChainEvent({ eventName: "Funded", args: { fromBlock: 100n, toBlock: 200n, amount: 10n ** 17n, perToken: 10n ** 16n, eligible: 10n }, transactionHash: T(4), logIndex: 1, address: VAULTS }));
+    assert.ok(await xM.onChainEvent({ eventName: "Burned", args: { id: 3n, owner: "0x00000000000000000000000000000000000000b8", eth: 10n ** 16n }, transactionHash: T(5), logIndex: 0, address: VAULTS }));
+    const [m] = await outbox(`Minted:${T(3)}:%`);
+    assert.deepEqual([m.event.event, m.event.name, (m.event.args as { slot: number }).slot], ["vault", "Minted", 7]);
+    assert.match(m.link, new RegExp(`/tx/${T(3)}`));
+    assert.equal((await rows(`Minted:${T(3)}:%`)).length, 1, "announced on the site");
+    // the burned vault's slot comes from its indexed mint
+    await sql`insert into chain_log (block, log_index, tx, block_hash, at, address, event, args) values (${++block}, 0, ${T(3)}, '0x', now(), ${VAULTS.toLowerCase()}, 'Minted', ${sql.json({ id: "3", owner: "0x00000000000000000000000000000000000000b8", slot: "7" })})`;
+    const n = tweets().length;
+    const texts: string[] = [];
+    for (let i = 0; i < 3; i++) { await xM.sendHandler.run(job("x:send")); }
+    for (const t of tweets().slice(n)) texts.push((t.body as { text: string }).text.split("\n")[0]);
+    assert.deepEqual(texts.sort(), [
+      "Genome Vault burned: slot 7 is free again. Its owner got the 200,000 DNA back; the 0.01 ETH it had not collected is theirs too. 12 vaults live now.",
+      "Genome Vault minted: slot 7 of 50. 200,000 DNA locked in it until its owner burns it. 12 vaults live now.",
+      "Genome Vaults funded: 0.1 ETH from the treasury. Each of the 10 eligible vaults gets 0.01 ETH, any remainder from earlier funds included.",
+    ]);
+  } finally {
+    vaults.VAULT_READ.state = read;
+    if (was) d.genomeVaults = was; else delete d.genomeVaults;
+  }
+});

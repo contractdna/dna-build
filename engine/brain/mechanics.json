@@ -37,6 +37,13 @@
     "a jackpot draw pays 10 winners, at most 3 ETH a draw, and waits until the pot holds 0.25 ETH; a prize stays open for 7 days",
     "at most 3 games from the sequencer run at once, and a game nobody plays gets retired with its funds sent back"
   ],
+  "vaults": [
+    "the genome vaults are an NFT: at most 50 live at once, and minting a vault locks exactly 200,000 DNA in the vaults contract; a free slot goes to the next mint, first come first served",
+    "the owner burns a vault at any time and gets the 200,000 DNA back with the vault's unclaimed ETH in the same transaction; nobody else can touch the DNA, and the Safe can pause new mints only, never a burn",
+    "only the Safe funds the vaults, over an exact block window of fee inflows, with whatever amount the signers send (their script proposes 50% of the treasury's fee share in that window), split equally across every eligible vault; a new vault joins at the next fund and earns from every fund after that",
+    "a vault's unclaimed ETH stays with it when it is sold, so a buyer gets it; a sale pays a 2.5% royalty to the Safe; every vault is equal, and nothing is promised about what a vault earns",
+    "mint, collect and burn on the site's vaults page or on the contract itself: a mint approves exactly 200,000 DNA to the vaults, nothing more"
+  ],
   "proof_enclave": [
     "the engine runs inside a TEE enclave from a public image; the compose hash pins exactly what runs, and a code change waits 1 hour behind a public timelock",
     "every action has a transaction or a signed log record, signed by a key that exists only inside the enclave",

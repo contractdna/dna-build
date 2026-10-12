@@ -11,7 +11,7 @@ import { BASE, ROLES } from "../src/models.ts";
 import { GATES, KILL, LIMITS, POLICY, REWARD_HOLD_DAYS, RUBRIC, TIMING } from "../src/policy.ts";
 
 export const CONTEXT_FILE = new URL("../brain/context.md", import.meta.url);
-const SOURCES = ["DNAToken.sol", "DNAHook.sol", "FeeVault.sol", "ModuleRegistry.sol", "IdeaMarket.sol", "GamePot.sol", "games/GameFunder.sol"];
+const SOURCES = ["DNAToken.sol", "DNAHook.sol", "FeeVault.sol", "ModuleRegistry.sol", "IdeaMarket.sol", "GamePot.sol", "games/GameFunder.sol", "GenomeVaults.sol"];
 
 /** `public constant` numbers of a Solidity source (bitmaps and expressions over other constants left out). */
 export function constants(src: string) {
@@ -53,6 +53,11 @@ export function brainContext() {
     "",
     "## Models (role: model, backup)",
     ...ROLES.map((r) => `- ${r}: ${BASE.roles[r].model}, backup ${BASE.roles[r].backup}`),
+    "",
+    "## Genome Vaults (contracts/src/GenomeVaults.sol)",
+    "- An NFT, at most GenomeVaults.MAX_LIVE live at once. Minting locks exactly GenomeVaults.DEPOSIT DNA in the vaults contract; the owner burns the vault at any time and gets the DNA back with the vault's unclaimed ETH in the same transaction. A burned slot goes to the next mint.",
+    "- Only the Safe funds the vaults: `fund(fromBlock, toBlock)` over an exact block window (the Safe's signers decide the amount; their script proposes half of the treasury's fee share in it, and the contract enforces no amount), split equally across the eligible vaults. A vault minted since the last fund joins at the next one and earns from every fund after that. Unclaimed ETH stays with the vault when it is sold; a sale pays GenomeVaults.ROYALTY_BPS to the Safe.",
+    "- No owner mint, no upgrade, nobody can take deposited DNA except the owner by burning; the Safe can pause new mints only, never a burn or a claim. Nothing is promised about what a vault earns. All vaults are equal: never rank them.",
     "",
     "## Rules for Sequencer builds",
     "- A new game is a standalone contract: no power over the hook, the fees or any other contract; only the Safe can pause it; no user deposits until a higher ladder level.",
@@ -106,7 +111,7 @@ export function mechanics(): Record<string, string[]> {
   const all = new Map<string, string>();
   for (const f of [...SOURCES, "BuybackBurn.sol", "LiquidityVault.sol", "games/GameFactory.sol"]) for (const c of constants(sol(f))) all.set(`${f.replace(/^.*\//, "").replace(".sol", "")}.${c.name}`, c.value);
   const k = (name: string) => { const v = all.get(name) ?? GUARD_DEFAULTS[name.replace(/^DNAHook\./, "")]; if (v === undefined) throw new Error(`no constant ${name}`); return valueOf(v); };
-  const H = (n: string) => k(`DNAHook.${n}`), R = (n: string) => k(`ModuleRegistry.${n}`), V = (n: string) => k(`FeeVault.${n}`), I = (n: string) => k(`IdeaMarket.${n}`), G = (n: string) => k(`GamePot.${n}`);
+  const H = (n: string) => k(`DNAHook.${n}`), R = (n: string) => k(`ModuleRegistry.${n}`), V = (n: string) => k(`FeeVault.${n}`), I = (n: string) => k(`IdeaMarket.${n}`), G = (n: string) => k(`GamePot.${n}`), N = (n: string) => k(`GenomeVaults.${n}`);
   const supply = k("DNAToken.SUPPLY");
   return {
     hook_fee: [
@@ -146,6 +151,15 @@ export function mechanics(): Record<string, string[]> {
       `the games pot splits what arrives ${pctBps(G("JACKPOT_BPS"))} to the jackpot and ${pctBps(10_000 - G("JACKPOT_BPS"))} to the idea reserve`,
       `a jackpot draw pays ${G("WINNERS")} winners, at most ${G("PRIZE_CAP")} ETH a draw, and waits until the pot holds ${G("MIN_PRIZE")} ETH; a prize stays open for ${G("CLAIM_WINDOW")} days`,
       `at most ${k("GameFactory.MAX_LIVE")} games from the sequencer run at once, and a game nobody plays gets retired with its funds sent back`,
+    ],
+    // the Genome Vaults NFT: every figure the contract's own; no earnings figure (a reply reads nothing but the chain) and
+    // no promise ("claim" is a banned word: "unclaimed" and "collects" say it)
+    vaults: [
+      `the genome vaults are an NFT: at most ${N("MAX_LIVE")} live at once, and minting a vault locks exactly ${big(N("DEPOSIT"))} DNA in the vaults contract; a free slot goes to the next mint, first come first served`,
+      `the owner burns a vault at any time and gets the ${big(N("DEPOSIT"))} DNA back with the vault's unclaimed ETH in the same transaction; nobody else can touch the DNA, and the Safe can pause new mints only, never a burn`,
+      `only the Safe funds the vaults, over an exact block window of fee inflows, with whatever amount the signers send (their script proposes 50% of the treasury's fee share in that window), split equally across every eligible vault; a new vault joins at the next fund and earns from every fund after that`,
+      `a vault's unclaimed ETH stays with it when it is sold, so a buyer gets it; a sale pays a ${pctBps(N("ROYALTY_BPS"))} royalty to the Safe; every vault is equal, and nothing is promised about what a vault earns`,
+      `mint, collect and burn on the site's vaults page or on the contract itself: a mint approves exactly ${big(N("DEPOSIT"))} DNA to the vaults, nothing more`,
     ],
     proof_enclave: [
       `the engine runs inside a TEE enclave from a public image; the compose hash pins exactly what runs, and a code change waits ${R("MIN_DELAY")} hour behind a public timelock`,

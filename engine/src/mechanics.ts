@@ -7,17 +7,19 @@ import { parseAbi } from "viem";
 import { ENCLAVE } from "./enclave.ts";
 
 /** The reader's closed topic enum (src/voice.ts MentionOut): every mechanics block, plus what's happening now and other. */
-export const TOPICS = ["hook_fee", "launch_guard", "buyback_burn", "liquidity_lock", "fee_split", "veto_safe", "idea_market", "games", "proof_enclave", "dev_team", "status_wen", "other"] as const;
+export const TOPICS = ["hook_fee", "launch_guard", "buyback_burn", "liquidity_lock", "fee_split", "veto_safe", "idea_market", "games", "vaults", "proof_enclave", "dev_team", "status_wen", "other"] as const;
 export type Topic = (typeof TOPICS)[number];
 type Block = Exclude<Topic, "status_wen" | "other">;
 
 export const MECHANICS = JSON.parse(readFileSync(new URL("../brain/mechanics.json", import.meta.url), "utf8")) as Record<Block, string[]>;
 
-/** The topic's lines; the guard's only when the hook has it (the fee topic then tells it too). */
-export function mechanicsFor(topic: Topic, guard: boolean): string[] {
+/** The topic's lines; the guard's only when the hook has it (the fee topic then tells it too); the vaults' only when
+ *  they are deployed (`vaults`: the deployment names them), so nothing calls them live before they are. */
+export function mechanicsFor(topic: Topic, guard: boolean, vaults = false): string[] {
   // the enclave's lines are true only in the enclave: the plain build has none to give
   if (topic === "status_wen" || topic === "other" || (topic === "proof_enclave" && !ENCLAVE.on)) return [];
   if (topic === "launch_guard") return guard ? MECHANICS.launch_guard : [];
+  if (topic === "vaults") return vaults ? MECHANICS.vaults : [];
   // "how does the fee work" also hears where it goes and how often the buyback runs
   if (topic === "hook_fee") return [...MECHANICS.hook_fee, ...(guard ? MECHANICS.launch_guard : []), MECHANICS.fee_split[0], MECHANICS.buyback_burn[1]];
   return MECHANICS[topic];

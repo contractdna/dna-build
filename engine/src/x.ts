@@ -45,6 +45,7 @@ import { type Card, cardFor, mediaRecord, requestArtFor } from "./card.ts";
 import { jsonSafe } from "./lib.ts";
 import { dayOfLife, mindNow, pendingNow, storyNow } from "./life.ts";
 import { GUARD_ABI, hasLaunchGuard, mechanicsFor, type Topic } from "./mechanics.ts";
+import { isVaultLog, resolveVault, VAULT_X_EVENTS } from "./vaults.ts";
 import { flatTake, intentOf, MIND_EVENTS, oldTokenTalk, questionOf, unclearReflection, writerSystem } from "./voice.ts";
 import { eventPost } from "./event-posts.ts";
 
@@ -455,7 +456,7 @@ const runOfOp = async (id: string) => {
   return r && (await trusted("thread", r.id, r.data, r.sig)) ? r.data : undefined;
 };
 
-type ChainEv = { eventName: string; args: Record<string, unknown>; transactionHash: Hex; logIndex?: number | null };
+type ChainEv = { eventName: string; args: Record<string, unknown>; transactionHash: Hex; logIndex?: number | null; address?: string };
 /** Watcher hook (head): the agent's own queued ops, tests going live, Safe vetoes of agent ops, rollbacks. */
 export async function onChainEvent(e: ChainEv) {
   const key = `${e.eventName}:${e.transactionHash}:${e.logIndex ?? 0}`;
@@ -463,6 +464,8 @@ export async function onChainEvent(e: ChainEv) {
   const a = e.args;
   // the Safe's changes, its cancels of game steps, a draw interval proposal, a pause (src/upgrades.ts)
   if (await (await import("./upgrades.ts")).onOwnerChange(e)) return;
+  // the Genome Vaults (by address: Funded and Burned are names other contracts use too): a mint, the Safe's fund, a burn
+  if (isVaultLog(e.address) && VAULT_X_EVENTS.has(e.eventName)) return publish(key, { event: "vault", name: e.eventName, args: jsonSafe(a) as Record<string, unknown> }, link);
   switch (e.eventName) {
     case "Queued":
       if (String(a.proposer).toLowerCase() !== addressOf("agent")?.toLowerCase()) return;
@@ -556,7 +559,8 @@ export async function resolve(ev: Record<string, unknown>): Promise<Record<strin
     case "reply": {
       // the asked topic's mechanics (code's lines; the launch guard's only on a hook that has it)
       const topic = typeof ev.topic === "string" ? (ev.topic as Topic) : undefined;
-      const mechanics = topic ? mechanicsFor(topic, await hasLaunchGuard(HOOK_READ.launchGuard)) : [];
+      // the vaults' lines only once the vaults are deployed (the deployment names them): never a live claim before
+      const mechanics = topic ? mechanicsFor(topic, await hasLaunchGuard(HOOK_READ.launchGuard), !!d.genomeVaults) : [];
       // lang: the reader's (SCRIPTS); lead: code's "@handle" before a reply in our own thread (a thread presence turn)
       return { event: "reply", category: ev.category, topic, question: ev.question, state: await stateFacts(), relationship: ev.relationship, ...(mechanics.length ? { mechanics } : {}), ...(typeof ev.rival === "string" ? { rival: ev.rival } : {}),
         ...(typeof ev.lang === "string" && ev.lang in SCRIPTS ? { lang: ev.lang } : {}), ...(typeof ev.lead === "string" ? { lead: ev.lead } : {}) };
@@ -565,6 +569,8 @@ export async function resolve(ev: Record<string, unknown>): Promise<Record<strin
       const g = await gameFacts(ev);
       return g && { ...g.facts, append: g.append };
     }
+    case "vault":
+      return resolveVault(ev);
     // a code update, an owner change (src/upgrades.ts)
     case "update_queued": case "update_allowed": case "update_running": case "update_cancelled": case "change_queued": case "change_cancelled": case "change_done":
       return (await import("./upgrades.ts")).resolveChange(ev);

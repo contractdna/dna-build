@@ -27,6 +27,8 @@ const abis: Record<string, unknown[]> = {
   gameFactoryAbi: read("GameFactory"),
   gameKitAbi: read("GameKit"),
   gameFunderAbi: read("GameFunder"),
+  // the Genome Vaults NFT: Minted / Funded / Burned feed the indexer, the site's news and X
+  genomeVaultsAbi: read("GenomeVaults"),
   // PoolManager: only what the engine touches (Swap logs, ERC-6909 claim balances)
   poolManagerAbi: read("PoolManager").filter((x) => (x.type === "event" && x.name === "Swap") || (x.type === "function" && x.name === "balanceOf")),
   // v4-core's test router: the simulator deploys it on its anvil fork to replay recorded swaps (src/sim.ts)

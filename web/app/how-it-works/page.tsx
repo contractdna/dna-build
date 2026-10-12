@@ -143,6 +143,15 @@ export default function HowItWorksPage() {
           </ul>
         </Section>
 
+        <Section title="Genome Vaults" note={<Link className={ui.link} href="/vaults">The 50 slots →</Link>}>
+          <p className={`${ui.prose} ${ui.muted}`}>
+            Fifty vaults, each an NFT. Lock 200,000 DNA to mint one; burn it any time and the DNA comes straight back with the ETH the
+            vault has not claimed. The Safe sends the vaults ETH from the treasury&apos;s fee share, split equally across every eligible
+            vault; a new vault joins at the next fund. No owner mint, no upgrade, and nobody can touch the deposit but the owner. All 50
+            are equal, and nothing is promised.
+          </p>
+        </Section>
+
         <Section title="How to check us">
           <ul className={s.checks}>
             {CHECKS.map((c) => (

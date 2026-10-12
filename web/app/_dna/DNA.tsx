@@ -116,9 +116,12 @@ export default function DNA({ split = LAUNCH_SPLIT }: { split?: number[] }) {
 
         <div className={s.end} data-end>
           <div className={s.big} data-big>Evolving in public</div>
+          {/* the Genome Vaults: 50 NFTs that lock 200,000 DNA each and share what the Safe sends them (the /vaults page) */}
+          <p className={s.vaults}>Genome Vaults: 50 NFTs. Lock 200,000 DNA to mint one, burn it any time to get it back. They share the ETH the Safe sends them, equally. Nothing is promised.</p>
           <nav aria-label="Next">
             <a href={X_URL} target="_blank" rel="noopener noreferrer">Follow on X →</a>
             <Link href="/live">See it live →</Link>
+            <Link href="/vaults">The Genome Vaults →</Link>
             <Link href="/sequencer">See the Sequencer →</Link>
             <Link href="/docs">Read the docs →</Link>
           </nav>

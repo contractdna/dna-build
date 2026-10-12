@@ -56,17 +56,27 @@ test("publishIssues: private paths, process words and tool names fail anywhere",
   for (const t of ["Karrik (Phantom Foundry / Velvetyne)", "a friendly name", "https://docs.example.org/research/x", "grep -r . | ~ /x", "the researcher"]) ok("a.md", t);
 });
 
-test("publishIssues: the wallet finder alone may name one blocked wallet brand and its app link, nothing more", () => {
+test("publishIssues: the wallet bar alone may name one blocked wallet brand and its app link, nothing more", () => {
   const W = "Meta" + "Mask", LINK = "https://link." + W.toLowerCase() + ".io/dapp/genomedna.xyz/trade";
   const why = (path: string, t: string) => publishIssues(path, t).map((x) => x.why);
-  assert.deepEqual(why("web/app/_ui/discover.ts", `{ name: "${W}", href: \`${LINK}\` },`), []);
-  assert.deepEqual(why("web/app/_ui/discover.ts", `// ${W}, Rabby, Coinbase`), []);
+  assert.deepEqual(why("web/app/_ui/Wallet.tsx", `{ name: "${W}", href: \`${LINK}\` },`), []);
+  assert.deepEqual(why("web/app/_ui/Wallet.tsx", `// ${W}, Rabby, Coinbase`), []);
   // the rest of the line is still scanned, and only that exact file is let through
-  assert.deepEqual(why("web/app/_ui/discover.ts", `${W} keys in ~` + "/.dna-keys"), ["tool or key path"]);
-  assert.deepEqual(why("web/app/_ui/discover.ts", `${W} ` + "Phan" + "tom"), ["tool or key path"]);
-  for (const t of [`~/.${W}/vault`, `~/.${W}`]) assert.deepEqual(why("web/app/_ui/discover.ts", t), ["tool or key path"], t);
-  assert.deepEqual(why("web/app/_ui/discover.ts", `https://link.${W.toLowerCase()}.io/other`), ["tool or key path"]);
-  for (const p of ["web/app/_ui/Wallet.tsx", "web/app/_ui/discover.tsx", "x/web/app/_ui/discover.ts", "README.md"]) assert.deepEqual(why(p, `{ name: "${W}" }`), ["tool or key path"], p);
+  assert.deepEqual(why("web/app/_ui/Wallet.tsx", `${W} keys in ~` + "/.dna-keys"), ["tool or key path"]);
+  assert.deepEqual(why("web/app/_ui/Wallet.tsx", `${W} ` + "Phan" + "tom"), ["tool or key path"]);
+  for (const t of [`~/.${W}/vault`, `~/.${W}`]) assert.deepEqual(why("web/app/_ui/Wallet.tsx", t), ["tool or key path"], t);
+  assert.deepEqual(why("web/app/_ui/Wallet.tsx", `https://link.${W.toLowerCase()}.io/other`), ["tool or key path"]);
+  for (const p of ["web/app/_ui/discover.ts", "web/app/_ui/Wallet.ts", "x/web/app/_ui/Wallet.tsx", "README.md"]) assert.deepEqual(why(p, `{ name: "${W}" }`), ["tool or key path"], p);
+  // the lockfile: that wallet's npm scope and domains in package names, registry URLs and deprecation notes, not
+  // the name as a word, and not a key path
+  const S = "@" + W.toLowerCase() + "/", D = W.toLowerCase();
+  assert.deepEqual(why("web/package-lock.json", `"node_modules/${S}sdk": {`), []);
+  assert.deepEqual(why("web/package-lock.json", `"resolved": "https://registry.npmjs.org/${S}utils/-/utils-5.0.1.tgz",`), []);
+  assert.deepEqual(why("web/package-lock.json", `"${S}utils": "^5.0.1"`), []);
+  assert.deepEqual(why("web/package-lock.json", `"deprecated": "superseded by https://docs.${D}.io/${D}-connect and ${S}connect-analytics",`), []);
+  assert.deepEqual(why("web/package-lock.json", `"name": "${W}"`), ["tool or key path"]);
+  assert.deepEqual(why("web/package-lock.json", `"deprecated": "keys in ~/.${D}/vault"`), ["tool or key path"]);
+  assert.deepEqual(why("web/package.json", `"node_modules/${S}sdk": {`), ["tool or key path"]);
 });
 
 test("publishIssues: PR refs in comments and markdown only, never ids, colors or anchors", () => {

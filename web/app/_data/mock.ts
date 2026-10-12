@@ -131,6 +131,7 @@ export const vaults: Vault[] = [
   { name: "Initial LP", address: h("000000000000000000000000000000000000dEaD"), balance: "locked", unit: "forever", note: "2 LP NFTs minted to 0xdEaD" },
   { name: "GamePot", address: h("7e2b5c91d04a6f38b1c7e05a29d4f6b83c1a0e57"), balance: "3.100", unit: "ETH", note: "jackpot pot + idea reserve, each capped at 15 ETH" },
   { name: "PlatformRevenue", address: h("D88539d3c4C460136a733A3Fd60cf6BF269079da"), balance: "0.744", unit: "ETH", note: `Programmable ${FEE.platform}, not ours · immutable` },
+  { name: "GenomeVaults", address: h("A69836A27706ED710811250a4A0E62Fe475b04d9"), balance: "on Etherscan", unit: "", note: "holders' 200,000 DNA deposits + their unclaimed ETH · see /vaults" },
 ];
 export const split: SplitShare[] = [
   { dest: "buyback-burn", bps: 3500, min: 2000, max: 5000 },

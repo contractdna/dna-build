@@ -11,6 +11,7 @@ import { createPublicClient, fallback, http, keccak256, parseEventLogs, type Add
 import * as abi from "./abi.ts";
 import { lock, migrate, sql } from "./db.ts";
 import { feedPayload, gameLogs, isRangeError, jsonSafe, logRow, nextRange, notifiable, type Row } from "./lib.ts";
+import { vaultEventAbi } from "./vaults.ts";
 
 import type { Deployment } from "./config.ts";
 
@@ -35,10 +36,12 @@ const transferEvent = abi.tokenAbi.find((x) => x.type === "event" && x.name === 
 // one address-array query (no event filter) decoded with the merged ABI: viem can't combine `events` with `args`
 // IdeaMarket + BountyBoard (when deployed): their events feed the engine's idea research, the web and the XP view;
 // GamePot, ConvictionVault, MutationBoard (when deployed): the game keepers, the agent's game tasks, /play and X
-const optional = [d.ideaMarket, d.bountyBoard, d.gamePot, d.convictionVault, d.mutationBoard].filter((a): a is Address => !!a);
+// GenomeVaults (when deployed): only its Minted / Funded / Burned (src/vaults.ts); its ERC-721 Transfer shares the
+// token's signature and must never land in chain_log as one
+const optional = [d.ideaMarket, d.bountyBoard, d.gamePot, d.convictionVault, d.mutationBoard, d.genomeVaults].filter((a): a is Address => !!a);
 const coreAddresses = [d.hook, d.registry, d.feeVault, d.buybackBurn, d.liquidityVault, d.platformRevenue, ...optional];
 const coreAbi = [...abi.registryAbi, ...abi.hookAbi, ...abi.feeVaultAbi, ...abi.buybackBurnAbi, ...abi.liquidityVaultAbi, ...abi.platformRevenueAbi, ...abi.ideaMarketAbi, ...abi.bountyBoardAbi,
-  ...abi.gamePotAbi, ...abi.convictionVaultAbi, ...abi.mutationBoardAbi].filter((x) => x.type === "event");
+  ...abi.gamePotAbi, ...abi.convictionVaultAbi, ...abi.mutationBoardAbi, ...vaultEventAbi].filter((x) => x.type === "event");
 
 // The Sequencer's games (src/lib.ts gameLogs), when a GameFactory is deployed: games already indexed come from chain_log.
 const knownGames = async () => (await sql<{ game: Address }[]>`select distinct lower(args->>'game') as game from chain_log where event = 'GameDeployed' and address = ${d.gameFactory!.toLowerCase()}`).map((r) => r.game);

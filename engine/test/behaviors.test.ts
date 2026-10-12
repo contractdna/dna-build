@@ -164,6 +164,12 @@ test("facts that can always post: a negated ship word, a public reason, a prize'
   assert.ok(postFilter("it can pump after the burn", allowed, false, { priceJoke: true }).includes("price prediction or advice"));
   assert.ok(postFilter("this can moon", allowed).length > 0);
   assert.deepEqual(postFilter("the fee can rise to the cap and no further.", allowed), []);
+  // a promised return or a price said to move, in the vaults' words or any other
+  for (const t of ["vault holders receive guaranteed passive income.", "a risk-free yield for every vault.", "the price of DNA keeps increasing.", "the price is going up."])
+    assert.ok(postFilter(t, allowed).includes("price prediction or advice"), t);
+  assert.ok(postFilter("returns are guaranteed.", allowed).includes("price prediction or advice"));
+  for (const t of ["vaults share whatever eth the safe sends. nothing is promised.", "the mint price is up to the safe.", "price impact is higher on a thin pool."])
+    assert.ok(!postFilter(t, allowed).includes("price prediction or advice"), t);
 });
 
 test("final filter: advice, direction, guarantees, solicitations in any wording are refused; another token gets the official line", () => {

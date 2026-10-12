@@ -123,10 +123,15 @@ export function bundleHits(text: string, shingles: Set<string>): number[] {
   return [...lines];
 }
 
-// simplification: one allowance. The site's wallet finder (web/app/_ui/discover.ts) names a wallet the tool-or-key-path
-// rule blocks, as a public brand: its name and its documented open-in-app link. Only in that file, only those two
-// strings; the rest of each line is still scanned, and every other file still fails on them. ([m]: so this file passes.)
-const ALLOWED = new Map([["web/app/_ui/discover.ts", /\bMeta[M]ask\b|https:\/\/link\.meta[m]ask\.io\/dapp\//g]]);
+// simplification: two allowances. The site's wallet bar (web/app/_ui/Wallet.tsx) names a wallet the tool-or-key-path
+// rule blocks, as a public brand: its name and its documented open-in-app link. The site's lockfile names that
+// wallet's npm scope and domains (packages its wallet connectors depend on, their registry URLs and the registry's
+// deprecation notes). Only in those files, only those strings; the rest of each line is still scanned, and every
+// other file still fails on them. ([m]: so this file passes.)
+const ALLOWED = new Map([
+  ["web/app/_ui/Wallet.tsx", /\bMeta[M]ask\b|https:\/\/link\.meta[m]ask\.io\/dapp\//g],
+  ["web/package-lock.json", /(?<=[@./])meta[m]ask(?=[/.-])/g],
+]);
 
 /** Why `text` (the file at `path`) must not be published, per line; never echoes the match. `persona`: personaLines
  *  of the private persona file, when the scan has it; `bundle`: bundleShingles of the private bundle. */

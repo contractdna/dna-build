@@ -37,17 +37,25 @@ export function playCsp(nonce: string, dev = false) {
   });
 }
 
+/** The wallet modal offers WalletConnect only in a build with a project id (app/_ui/Wallet.tsx); the main site's
+ *  policy opens to its relay and verify origins only then. */
+export const WALLET_CONNECT = !!process.env.NEXT_PUBLIC_WC_PROJECT_ID;
+
 /** The main site's policy: its own scripts (Next's inline bootstrap needs 'unsafe-inline' on statically rendered
  *  pages), its own fonts and images; reads over https (the proof page checks the attestation and RPC providers). */
-export function mainCsp(dev = false) {
+export function mainCsp(dev = false, walletConnect = WALLET_CONNECT) {
   return join({
     "default-src": "'self'",
     "script-src": `'self' 'unsafe-inline'${dev ? " 'unsafe-eval'" : ""}`,
     "style-src": "'self' 'unsafe-inline'",
     "img-src": "'self' data: blob:",
     "font-src": "'self'",
-    "connect-src": "'self' https:",
-    "frame-src": "'none'",
+    // WalletConnect: the relay carries the encrypted session between this page and a phone wallet over a websocket,
+    // which `https:` does not cover. Its verify and rpc APIs are plain https (already allowed); telemetry is off.
+    "connect-src": `'self' https:${walletConnect ? " wss://relay.walletconnect.org" : ""}`,
+    // WalletConnect's verify step loads a hidden frame from this origin to attest the page's origin to the wallet
+    // (the wallet then shows where the request comes from); blocked, the session waits for its timeout instead.
+    "frame-src": walletConnect ? "https://verify.walletconnect.org" : "'none'",
     "frame-ancestors": "'none'",
     "form-action": "'self'",
     "base-uri": "'self'",

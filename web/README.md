@@ -26,6 +26,7 @@ NEXT_PUBLIC_LIVE=1 npm run build # live build: pages read Postgres
 | `NEXT_PUBLIC_LIVE` | `1` switches every page from sample data to live data. Build time. |
 | `NEXT_PUBLIC_SITE_URL` | Canonical site URL for metadata (default `https://genomedna.xyz`). Build time. |
 | `NEXT_PUBLIC_RPC_URL` | Ethereum RPC the browser uses for the proof and draw checks and the /trade quotes, allowances and receipts (default a public endpoint). Build time, so it ships in the page: the LIVE build uses our own provider here, a key restricted to the site's origin, never a server key. |
+| `NEXT_PUBLIC_WC_PROJECT_ID` | WalletConnect project id: the wallet modal then offers phone wallets (QR code, app links) and the main site's CSP opens to WalletConnect's relay and verify origins (security.ts). Unset: the modal lists only the wallets installed in the browser. Build time. |
 | `DATABASE_URL` | Postgres connection string for the live build (a read-only role is enough). |
 | `SSE_GLOBAL_MAX` | Max open `/api/stream` connections per instance (default 6000). |
 | `SSE_PER_IP_MAX` | Max open `/api/stream` connections per client IP (default 20). |

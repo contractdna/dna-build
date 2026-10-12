@@ -5,7 +5,7 @@ import { getContracts, getIdeas, getIntake, getPool, getQueue } from "../_data/s
 import type { Idea } from "../_data/types";
 import { Shell } from "../_ui/Shell";
 import { Chip, fmtDate, fmtTime, PageHead, Section, short, ui } from "../_ui/ui";
-import { WalletBar } from "../_ui/Wallet";
+import { WalletBar, WalletProvider } from "../_ui/Wallet";
 import { RoundClock, StakeIdea, SubmitIdea } from "./IdeaForms";
 import p from "./proposals.module.css";
 
@@ -48,6 +48,7 @@ export default async function ProposalsPage() {
   const nowRound = start ? Math.max(0, Math.floor((Date.now() - Date.parse(start)) / roundMs)) : null;
   return (
     <Shell>
+      <WalletProvider>
       <div className={ui.page}>
         <PageHead hero="ideas"
           back={null}
@@ -157,6 +158,7 @@ export default async function ProposalsPage() {
           <SubmitIdea gate={GATE} market={ideaMarket} token={token} />
         </Section>
       </div>
+      </WalletProvider>
     </Shell>
   );
 }

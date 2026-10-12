@@ -5,9 +5,9 @@ import { test } from "node:test";
 import { LIVE } from "../app/_data/flags.ts";
 import { CHAPTERS, ENGINE_BASE, parseMode, SOURCE_BASE } from "../app/docs/content.ts";
 
-test("14 chapters with unique anchors, both modes filled, risks last", () => {
-  assert.equal(CHAPTERS.length, 14);
-  assert.equal(new Set(CHAPTERS.map((c) => c.id)).size, 14);
+test("15 chapters with unique anchors, both modes filled, risks last", () => {
+  assert.equal(CHAPTERS.length, 15);
+  assert.equal(new Set(CHAPTERS.map((c) => c.id)).size, 15);
   for (const c of CHAPTERS) {
     assert.ok(/^[a-z]+$/.test(c.id), c.id);
     assert.ok(c.dumb.length >= 1 && c.dumb.length <= 3, `${c.id}: dumb mode is 1–3 lines`);
@@ -58,6 +58,15 @@ test("the idea rewards chapter carries the canonical sentence", () => {
   const r = CHAPTERS.find((c) => c.id === "rewards");
   assert.ok(r.dumb.includes("70% of the games pot is the jackpot. 30% pays the people whose ideas the AI ships. the brain sets each amount, and every payment waits one public hour."));
   assert.ok(r.smart.facts.some((f) => f.at?.includes("GamePot.queueReward")));
+});
+
+test("the vaults chapter: 50 equal vaults, the deposit, the Safe's fund, no promise", () => {
+  const v = CHAPTERS.find((c) => c.id === "vaults");
+  assert.ok(v, "a vaults chapter");
+  const copy = JSON.stringify([v.dumb, v.smart]).toLowerCase();
+  for (const must of ["200,000 dna", "at most 50", "nothing is promised", "2.5% royalty", "all equal"]) assert.ok(copy.includes(must), `vaults chapter says "${must}"`);
+  for (const bad of ["apy", "apr", "yield", "income", "best vault", "rank"]) assert.ok(!copy.includes(bad), `vaults chapter never says "${bad}"`);
+  assert.ok(v.smart.links.some((l) => l.href === "/vaults"));
 });
 
 test("mode parsing", () => {

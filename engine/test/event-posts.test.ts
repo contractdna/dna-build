@@ -94,6 +94,13 @@ const SAMPLES: [Record<string, unknown>, string][] = [
   [{ event: "seq_handoff", build: "b4", title: "Faster reply queue", pr: 42, record: "10" }, RECORD],
   [{ event: "site_changed", id: "c1", title: "Wallet link in the header", summary: "The header now links the official contract on Etherscan", url: "/" }, "https://genomedna.xyz/"],
   [{ event: "treasury_buy", dnaAmount: 1234567, ethSpent: 0.5, supplyPct: 0.123 }, TX],
+  // the Genome Vaults (src/vaults.ts): the chain event's numbers, the live count and constants as read at send time
+  [{ event: "vault_minted", slot: 7, live: 12, maxLive: 50, lockedDna: 200000 }, TX],
+  [{ event: "vault_minted", slot: 1 }, TX],
+  [{ event: "vault_funded", ethTotal: 0.4123, vaults: 12, perVaultEth: 0.0343 }, TX],
+  [{ event: "vault_funded", ethTotal: 0.05, vaults: 0 }, TX],
+  [{ event: "vault_burned", slot: 7, ethReturned: 0.0343, live: 11, maxLive: 50, lockedDna: 200000 }, TX],
+  [{ event: "vault_burned", ethReturned: 0 }, TX],
   [{ event: "treasury_transfer", dnaAmount: 500000, supplyPct: 0.05, recipient: `0x${"34".repeat(20)}`, label: "fomo team wallet" }, TX],
   [{ event: "treasury_transfer", dnaAmount: 500000, supplyPct: 0.05, recipient: `0x${"34".repeat(20)}` }, TX],
   [{ event: "treasury_transfer", dnaAmount: 500000, supplyPct: 0.05, recipient: `0x${"34".repeat(20)}`, soldEth: 0.21 }, TX],

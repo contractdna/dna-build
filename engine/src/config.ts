@@ -21,6 +21,8 @@ export type Deployment = Record<"safe" | "poolManager" | "token" | "hook" | "reg
   roles?: Address; delay?: Address;
   /** the engine's code update path: the DstackApp and its owner, the TimelockController the Safe schedules through */
   dstackApp?: Address; codeTimelock?: Address;
+  /** the Genome Vaults NFT (contracts/src/GenomeVaults.sol); absent: the vaults are not live, and nothing says they are */
+  genomeVaults?: Address;
   /** public labels for addresses the treasury sends DNA to (address → a few plain words, no digits or links, e.g.
    *  "growth team"); the treasury posts look back to `treasuryFromBlock` */
   labels?: Record<string, string>; treasuryFromBlock?: number;

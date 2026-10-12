@@ -13,8 +13,9 @@ import { addressOf, balances, pub } from "./tx.ts";
 import { onChainEvent } from "./x.ts";
 import { announceAddresses, failClosedChecks, gameEventAbi } from "./games.ts";
 import { onTimelockLogs, timelockAddresses } from "./upgrades.ts";
+import { vaultEventAbi, vaultsAddress } from "./vaults.ts";
 
-const events = [...abi.registryAbi, ...abi.hookAbi, ...gameEventAbi];
+const events = [...abi.registryAbi, ...abi.hookAbi, ...gameEventAbi, ...vaultEventAbi];
 const swapEvent = abi.poolManagerAbi.find((x) => x.type === "event" && x.name === "Swap")!;
 const short = (a: string) => `${a.slice(0, 6)}…${a.slice(-4)}`;
 const when = (s: bigint) => new Date(Number(s) * 1000).toISOString().replace(".000Z", "Z");
@@ -92,7 +93,7 @@ export async function watchTick() {
   if (head <= last) return;
   const from = last + 1n > head - 100n ? last + 1n : head - 100n; // ≤ 100 blocks after a stall
   const [core, swaps] = await Promise.all([
-    pub.getLogs({ address: [d.registry, d.hook, ...announceAddresses(), ...timelockAddresses()], fromBlock: from, toBlock: head }),
+    pub.getLogs({ address: [d.registry, d.hook, ...announceAddresses(), ...timelockAddresses(), ...(vaultsAddress() ? [vaultsAddress()!] : [])], fromBlock: from, toBlock: head }),
     pub.getLogs({ address: d.poolManager, event: swapEvent, args: { id: d.poolId }, fromBlock: from, toBlock: head }),
   ]);
   // the code timelock's logs apart (its Cancelled(bytes32) is not the registry's Cancelled(uint256)): src/upgrades.ts

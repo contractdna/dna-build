@@ -250,6 +250,25 @@ export function eventVariants(f: F): string[] | null {
       const to = clip(f.label, 40);
       return [`The treasury (the Safe) sent ${dna(f.dnaAmount)} DNA${pct} to ${to ?? "a wallet with no public label"}.`, `The treasury (the Safe) sent ${dna(f.dnaAmount)} DNA${pct} to a wallet.`];
     }
+    // the Genome Vaults (src/vaults.ts): the chain event's numbers; the live count as the contract answered at send time
+    case "vault_minted": {
+      const what = `Genome Vault minted: slot ${n(f.slot)}${typeof f.maxLive === "number" ? ` of ${n(f.maxLive)}` : ""}.`;
+      const locked = typeof f.lockedDna === "number" && `${dna(f.lockedDna)} DNA locked in it until its owner burns it.`;
+      const live = typeof f.live === "number" && `${count(f.live, "vault")} live now.`;
+      return variants([what, locked, live], [locked]);
+    }
+    case "vault_funded": return [Number(f.vaults) > 0
+      ? `Genome Vaults funded: ${eth(f.ethTotal)} ETH from the treasury. ${Number(f.vaults) === 1 ? "The one eligible vault gets" : `Each of the ${n(f.vaults)} eligible vaults gets`} ${eth(f.perVaultEth)} ETH, any remainder from earlier funds included.`
+      : `Genome Vaults funded: ${eth(f.ethTotal)} ETH from the treasury. No vault was eligible yet, so it carries to the next fund.`];
+    case "vault_burned": {
+      const what = `Genome Vault burned${typeof f.slot === "number" ? `: slot ${n(f.slot)} is free again` : ""}.`;
+      const back = typeof f.lockedDna === "number" && `the ${dna(f.lockedDna)} DNA back`;
+      const unclaimed = Number(f.ethReturned) > 0 && `${eth(f.ethReturned)} ETH it had not collected`;
+      // simplification: "is theirs", not "got": a receiver that refuses ETH is credited for a withdraw instead (Owed)
+      const got = back && unclaimed ? `Its owner got ${back}; the ${unclaimed} is theirs too.` : back ? `Its owner got ${back}.` : unclaimed && `The ${unclaimed} is its owner's.`;
+      const live = typeof f.live === "number" && `${count(f.live, "vault")} live now.`;
+      return variants([what, got, live], [live]);
+    }
     // launch day and the once-ever firsts (src/status.ts)
     case "online": return ["The engine is live and runs on its own from here. Its contracts were deployed by the team and connected by the Safe's owners."];
     case "contracts_connected": return ["The Safe's owners connected the registry and the vaults to the hook in a single batch and queued the first fee plates."];

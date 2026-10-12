@@ -1,0 +1,16 @@
+.panel { display: grid; gap: 16px; }
+.actions { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; }
+.slots { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); gap: 12px; }
+.slots li { display: grid; gap: 8px; padding: 10px; border: 1px solid var(--line, rgba(255, 255, 255, 0.12)); border-radius: 10px; min-width: 0; }
+.taken { background: rgba(255, 179, 92, 0.06); }
+.free { opacity: 0.6; }
+.art { aspect-ratio: 1; display: grid; place-items: center; border-radius: 8px; overflow: hidden; background: #0b0d12; }
+.art img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.n { font-family: var(--mono, ui-monospace, monospace); font-size: 28px; opacity: 0.5; }
+.meta { display: grid; gap: 4px; }
+.line { font-size: 13px; overflow-wrap: anywhere; }
+.own { display: grid; gap: 6px; margin-top: 4px; }
+.rules { margin: 0; display: grid; gap: 0; max-width: 880px; }
+.rules div { display: grid; grid-template-columns: 180px minmax(0, 1fr); gap: 24px; padding: 16px 0; border-bottom: 1px solid var(--rule); }
+.rules dt { font-size: 12px; letter-spacing: .08em; text-transform: uppercase; color: var(--ash-text); padding-top: 2px; }
+.rules dd { margin: 0; font-size: 15px; line-height: 1.6; color: var(--silver); }

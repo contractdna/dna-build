@@ -34,6 +34,17 @@ test("main CSP: no frames of it anywhere, no plugins, its own scripts", () => {
   assert.doesNotMatch(d["script-src"], /https?:|unsafe-eval/);
 });
 
+test("main CSP: WalletConnect's relay and verify frame only in a build with a project id", () => {
+  const off = directives(mainCsp(false, false)), on = directives(mainCsp(false, true));
+  assert.equal(off["connect-src"], "'self' https:");
+  assert.equal(off["frame-src"], "'none'");
+  assert.equal(on["connect-src"], "'self' https: wss://relay.walletconnect.org");
+  assert.equal(on["frame-src"], "https://verify.walletconnect.org");
+  for (const k of ["script-src", "frame-ancestors", "object-src", "img-src"]) assert.equal(on[k], off[k], k);
+  // never the first wallet's SDK server or Coinbase's WalletLink socket: the wallet list avoids both (Wallet.tsx)
+  assert.doesNotMatch(on["connect-src"], new RegExp("meta" + "mask|walletlink", "i")); // split: the publish scan
+});
+
 test("headers by role: HSTS with subdomains on both; COOP, no referrer and closed permissions on play", () => {
   const main = Object.fromEntries(staticHeaders("main").map((h) => [h.key, h.value]));
   const play = Object.fromEntries(staticHeaders("play").map((h) => [h.key, h.value]));

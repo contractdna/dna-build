@@ -19,6 +19,7 @@ export const NAMES = {
   mystery: "Mystery mutation",
   rewards: "Idea rewards",
   ideas: "Ideas",
+  vaults: "Genome Vaults",
   safety: "The Safe",
 } as const;
 
@@ -464,6 +465,39 @@ export const CHAPTERS: Chapter[] = [
         { label: "IdeaMarket.sol", href: sol("IdeaMarket") },
         { label: "engine/src/ideas.ts", href: eng("engine/src/ideas.ts") },
         { label: "Rules for ideas", href: "/rules" },
+      ],
+    },
+  },
+  {
+    id: "vaults",
+    title: NAMES.vaults,
+    dumb: [
+      "50 vaults, each an NFT. lock 200k $DNA to mint one, burn it any time and the $DNA comes straight back.",
+      "the Safe sends the vaults ETH from the treasury's fee share, split equally across every eligible vault. a new vault joins at the next fund. nothing is promised.",
+      "sell a vault and its unclaimed ETH goes with it. 50 pieces of art, one per slot, all equal.",
+    ],
+    smart: {
+      lead: "GenomeVaults is an ERC-721 with at most 50 live tokens. A mint locks exactly 200,000 DNA in the contract; a burn returns it with the vault's unclaimed ETH in the same transaction. Only the Safe funds it, over an exact block window of fee inflows, and the ETH is shared per eligible vault through an accumulator.",
+      formula: [
+        "fund(fromBlock, toBlock): fromBlock must equal fundedThrough (no window skipped or paid twice); value + carry split per eligible vault, the remainder carried",
+        "pending(id) = accPerToken − max(debt, accAfter[mintSeq + 1]); a vault minted since the last fund earns from the one after it",
+      ],
+      facts: [
+        { k: "Live vaults", v: "At most 50; a burned slot goes to the next mint, lowest free slot first", at: "GenomeVaults.MAX_LIVE, _takeSlot" },
+        { k: "Deposit", v: "Exactly 200,000 DNA per mint, returned in full by burn; nobody else can move it", at: "GenomeVaults.DEPOSIT, mint, burn" },
+        { k: "Funding", v: "The Safe only, over the block window since the last fund, finalized blocks only. The signers decide the amount; their script proposes half of the treasury's fee share in the window", at: "GenomeVaults.fund, engine/scripts/vault-fund.ts" },
+        { k: "Eligibility", v: "A vault joins at the first fund after its mint and earns from every fund after that", at: "GenomeVaults.pendingCount, eligible" },
+        { k: "Transfer", v: "A standard ERC-721; unclaimed ETH stays with the vault, so a buyer gets it. 2.5% royalty to the Safe", at: "GenomeVaults.ROYALTY_BPS" },
+        { k: "Admin", v: "No owner mint, no upgrade. The Safe can pause new mints only, never a burn or a claim", at: "GenomeVaults.setMintPaused" },
+        { k: "Art", v: "50 images, one per slot, named in on-chain metadata with a strand that grows with what the vault earned", at: "GenomeVaults.tokenURI" },
+        { k: "On X", v: "Every mint, fund and burn is a plain post with its transaction; a reply about the vaults states only what the contract says", at: "engine/src/vaults.ts" },
+      ],
+      notes: ["The vaults earn only what the Safe sends. A fund is a signed Safe transaction over a public block window; nothing here is automatic, and nothing is promised."],
+      links: [
+        { label: "GenomeVaults.sol", href: sol("GenomeVaults") },
+        { label: "engine/src/vaults.ts", href: eng("engine/src/vaults.ts") },
+        { label: "engine/scripts/vault-fund.ts", href: eng("engine/scripts/vault-fund.ts") },
+        { label: "Vaults: the 50 slots, the contract and the collection", href: "/vaults" },
       ],
     },
   },

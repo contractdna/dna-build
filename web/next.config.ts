@@ -4,6 +4,9 @@ import { roleOf, roleRedirects, staticHeaders } from "./security";
 const nextConfig: NextConfig = {
   // pin the workspace root: never infer it from lockfiles outside the repo
   turbopack: { root: __dirname },
+  // wagmi's connectors reach Base's account SDK (never used here, only loaded on demand in the browser), whose Node
+  // entry names optional packages that are not installed; left out of the server bundle so the build resolves nothing
+  serverExternalPackages: ["@base-org/account"],
   // LIVE pages render per request (Postgres), and Next marks dynamic HTML `private, no-store`. Every page is public
   // (no cookies, no per-visitor data), so let a CDN (docs/CAPACITY.md) hold the HTML for 5 s: one render per page per
   // 5 s per edge instead of one per visit. Next keeps a Cache-Control that is already set on a dynamic page

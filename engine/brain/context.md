@@ -68,6 +68,9 @@ DNA is a token on a Uniswap v4 pool whose hook takes a project fee. The fee and 
 - GamePot.MIN_REWARD = 0.01 ether
 - GameFunder.WINDOW = 7 days
 - GameFunder.MAX_POP = 64
+- GenomeVaults.MAX_LIVE = 50
+- GenomeVaults.DEPOSIT = 200_000 ether
+- GenomeVaults.ROYALTY_BPS = 250
 
 ## Engine policy (published defaults; code clamps every proposal to these)
 - fee vector bounds [min, max]: {"base":[10000,30000],"mult":[0,18000],"cap":[10000,35000]}
@@ -99,6 +102,11 @@ DNA is a token on a Uniswap v4 pool whose hook takes a project fee. The fee and 
 - dev-tester: claude-sonnet-5-5, backup claude-opus-5-5
 - dev-fixer: claude-sonnet-5-5, backup claude-opus-5-5
 - dev-review: claude-opus-5-5, backup claude-fable-5-1
+
+## Genome Vaults (contracts/src/GenomeVaults.sol)
+- An NFT, at most GenomeVaults.MAX_LIVE live at once. Minting locks exactly GenomeVaults.DEPOSIT DNA in the vaults contract; the owner burns the vault at any time and gets the DNA back with the vault's unclaimed ETH in the same transaction. A burned slot goes to the next mint.
+- Only the Safe funds the vaults: `fund(fromBlock, toBlock)` over an exact block window (the Safe's signers decide the amount; their script proposes half of the treasury's fee share in it, and the contract enforces no amount), split equally across the eligible vaults. A vault minted since the last fund joins at the next one and earns from every fund after that. Unclaimed ETH stays with the vault when it is sold; a sale pays GenomeVaults.ROYALTY_BPS to the Safe.
+- No owner mint, no upgrade, nobody can take deposited DNA except the owner by burning; the Safe can pause new mints only, never a burn or a claim. Nothing is promised about what a vault earns. All vaults are equal: never rank them.
 
 ## Rules for Sequencer builds
 - A new game is a standalone contract: no power over the hook, the fees or any other contract; only the Safe can pause it; no user deposits until a higher ladder level.

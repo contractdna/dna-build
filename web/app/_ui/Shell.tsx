@@ -14,6 +14,7 @@ const NAV = [
   { label: "News", href: "/announcements", match: ["/announcements"] },
   { label: "Play", href: "/play", match: ["/play"] },
   { label: "Trade", href: "/trade", match: ["/trade"] },
+  { label: "Vaults", href: "/vaults", match: ["/vaults"] },
   { label: "How it works", href: "/how-it-works", match: ["/how-it-works"] },
   { label: "Sequencer", href: "/sequencer", match: ["/sequencer"] },
   { label: "Docs", href: "/docs", match: ["/docs"] },

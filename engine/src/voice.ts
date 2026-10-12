@@ -114,6 +114,10 @@ const FIELDS: Record<string, readonly string[]> = {
   // the treasury's DNA (src/status.ts treasuryFacts): never the recipient's address (digits), its public label if any
   treasury_buy: ["dnaAmount", "ethSpent", "supplyPct"],
   treasury_transfer: ["dnaAmount", "supplyPct", "label", "soldEth"],
+  // the Genome Vaults (src/vaults.ts): the event's numbers; the live count and the constants as read at send time
+  vault_minted: ["slot", "live", "maxLive", "lockedDna"],
+  vault_funded: ["ethTotal", "vaults", "perVaultEth"],
+  vault_burned: ["slot", "ethReturned", "live", "maxLive", "lockedDna"],
   seq_started: ["title"],
   // live idea mode (src/config.ts IDEA_MODE): every step of a build, and every verdict on an idea, in public; `why` is
   // the brain's reason (model-written: screened here, dropped when it does not pass)
@@ -653,6 +657,9 @@ export const PREDICTION = [
   // a stance or a trade dressed as taste; an entry only in its trading sense (a journal entry is fine)
   /\b(bullish|bearish|cheap|accumulat(e|es|ed|ing)|exit liquidity)\b/i,
   /\b(best|good|great|nice|perfect|early|cheap|last|solid|prime)\s+(entry|entries)\b|\b(entry|entries)\s+(here|now|point|points|zone|price|level)\b/i,
+  // a promised return ("guaranteed passive income", "risk-free yield") and a price said to move ("the price keeps rising")
+  /\b(guaranteed|guarantees?|passive|risk[- ]?free|assured|steady|reliable|stable)\s+(\w+\s+){0,2}(income|yields?|returns?|profits?|apy|apr|earnings|gains?|payouts?|dividends?)\b|\b(income|yields?|returns?|profits?|apy|apr|earnings|gains?|payouts?|dividends?)\s+(is|are|will be)\s+(guaranteed|assured|risk[- ]?free|passive|steady|reliable|stable)\b/i,
+  /\bprice\b(?!\s+impact)(\s+\w+){0,4}\s+(keeps?|kept|is|are|has been|will|goes|going)\s+(\w+\s+){0,1}(increas\w*|ris\w*|climb\w*|grow\w*|up(?!\s+to\b)|higher|soar\w*)\b/i,
 ];
 /** An airdrop (or any reward, points, allocation or list spot for holders) is only ever refused: a sentence naming one
  *  next to a promise word fails. "points" after a number is the canary's fee band, not a promise. */

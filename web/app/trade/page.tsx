@@ -3,6 +3,7 @@ import { LIVE } from "../_data/flags";
 import { getClones, getPool } from "../_data/source";
 import { Shell } from "../_ui/Shell";
 import { PageHead, Section, short, ui } from "../_ui/ui";
+import { WalletProvider } from "../_ui/Wallet";
 import { CopyAddress } from "../treasury/CopyAddress";
 import { poolId, poolKey, UNREAD } from "./swap";
 import { SwapBox } from "./SwapBox";
@@ -34,7 +35,7 @@ export default async function TradePage() {
         />
 
         <Section title="Swap" note={pool ? "Uniswap v4 · Universal Router" : LIVE ? undefined : "pre-launch"}>
-          <SwapBox token={pool?.token ?? null} hook={pool?.hook ?? null} />
+          <WalletProvider><SwapBox token={pool?.token ?? null} hook={pool?.hook ?? null} /></WalletProvider>
         </Section>
 
         <Section title="The official pool">
