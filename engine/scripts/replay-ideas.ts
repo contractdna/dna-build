@@ -56,7 +56,7 @@ const { TRYOUT_SELF } = await import("../src/tryout.ts");
 const { model } = await import("../src/models.ts");
 const { mechanicsFor } = await import("../src/mechanics.ts");
 const { allyIssues, chooseShapes, claimFacts, claimIssues, classifyMention, draftInCharacter, factNumbers, factSheet, intentOf, judgeCall, parrotIssue, pickBest, postFilter, promiseIssue, shapesFor, voiceIssues } = await import("../src/voice.ts");
-const { bundleIssues, intakeFactOf } = await import("../src/x.ts");
+const { bundleIssues, ideaFallback, intakeFactOf, REPEAT_REPLY } = await import("../src/x.ts");
 
 const calls: CallRow[] = [];
 const failures: string[] = [];
@@ -156,16 +156,19 @@ const replies = await pool(rows, 6, async (r): Promise<Reply> => {
     { cls: r.cand?.class ?? null, understood: v?.understood ?? null, plain: v?.plain ?? null, instead: v?.instead ?? null }, true);
   const topic = cls.data.topic;
   const facts = factSheet({ event: "reply", category: "idea", topic, question: cls.data.question || undefined, mechanics: mechanicsFor(topic, false), ...fact });
+  // src/x.ts sendOne: a repeat gets the fixed text; no draft passing, or no writer answer, gets code's plain verdict
+  if (facts.verdict === "a repeat") return { kind: "idea", facts, text: REPEAT_REPLY };
+  const fallback = ideaFallback(facts);
   const allowed = factNumbers(facts);
-  const filter = (text: string) => [...postFilter(text, allowed, 0, { intent: intentOf(facts), priceJoke: false, claim: claimFacts(facts) }), ...claimIssues(facts, text), ...allyIssues(facts, text), ...promiseIssue(text),
+  const filter = (text: string) => [...postFilter(text, allowed, 0, { intent: intentOf(facts), priceJoke: false, claim: claimFacts(facts), one: true }), ...claimIssues(facts, text), ...allyIssues(facts, text), ...promiseIssue(text),
     ...voiceIssues(facts, text, { linked: false, mention: r.m.text }), ...[parrotIssue(facts, text)].filter((x): x is string => !!x), ...bundleIssues(text)];
   const shapes = chooseShapes(shapesFor("reply", facts, undefined), [], "reply");
   const w = await ask(`writer ${r.m.id}`, () => draftInCharacter(facts, [], filter, null, undefined, shapes));
-  if (!w) return { kind: "idea", facts };
+  if (!w) return { kind: "idea", facts, ...(fallback ? { text: `(fallback) ${fallback}` } : {}) };
   const passing = w.candidates.filter((c) => !c.issues.length);
   const j = passing.length >= 2 ? await ask(`reply judge ${r.m.id}`, () => llm(judgeCall(facts, passing.map((c) => c.text), []))) : null;
   const best = pickBest(w.candidates, j?.data ?? null);
-  return { kind: "idea", facts, text: best?.text, issues: best ? undefined : [...new Set(w.candidates.flatMap((c) => c.issues))] };
+  return { kind: "idea", facts, text: best?.text ?? (fallback ? `(fallback) ${fallback}` : undefined), issues: best ? undefined : [...new Set(w.candidates.flatMap((c) => c.issues))] };
 });
 
 // ---------------------------------------------------------------- the report

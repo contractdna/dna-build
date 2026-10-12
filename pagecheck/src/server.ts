@@ -86,7 +86,9 @@ async function runSite(r: Request, o: typeof PAGECHECK): Promise<Answer> {
         const all: CheckResult = { ok: true, violations: [], requests: [], runs: [], notes: [] };
         const allowedLinks = ownLinks(o.web);
         for (const route of r.routes!) {
-          const c = await check({ origin: r.origin, slug: "site", game: zero, factory: zero, rpc: anvil.url, chromium: o.chromium, backend: { url: site.url }, path: route, site: true, allowedLinks, ...siteSettings(!!r.deep, r.routes!.length) });
+          // a route the change adds (its page.tsx is among its files) has its words screened too
+          const textScreen = typeof r.files![`app${route}/page.tsx`] === "string";
+          const c = await check({ origin: r.origin, slug: "site", game: zero, factory: zero, rpc: anvil.url, chromium: o.chromium, backend: { url: site.url }, path: route, site: true, allowedLinks, textScreen, ...siteSettings(!!r.deep, r.routes!.length) });
           all.violations.push(...c.violations.map((v) => ({ ...v, run: `${route} ${v.run}` })));
           all.requests.push(...c.requests);
           all.runs.push(...c.runs.map((x) => `${route} ${x}`));

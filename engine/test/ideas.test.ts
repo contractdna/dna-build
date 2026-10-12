@@ -110,6 +110,11 @@ test("screen: genuine ideas are fee, build or impossible; impossible and the res
   const { DEFAULT_PROMPTS } = await import("../src/persona.ts");
   assert.ok(DEFAULT_PROMPTS["x-reader"].includes("A plain question or a friendly message is never bait"));
   assert.ok(/friendly messages are never bait/.test(readFileSync(new URL("../../persona/bundle.md", import.meta.url), "utf8")));
+  // a fair complaint about what DNA does is never abuse (the live reader skipped this one as "slurs or harassment")
+  const complaint = "\"Why you replying on scam bots with scam links?\" is a state_question.";
+  assert.ok(DEFAULT_PROMPTS["x-reader"].includes(`however blunt, is never abuse: ${complaint}`));
+  const bundle = readFileSync(new URL("../../persona/bundle.md", import.meta.url), "utf8");
+  assert.ok(/asking why I answer scam bots/.test(bundle));
   assert.deepEqual(screenDecision({ ...base, screen: "fee" }), { status: "candidate", class: "fee", score: 21, title: base.title, body: base.body, reason: "genuine fee idea, score 21 of 30 (clarity 7, feasibility 8, value 6)" });
   assert.equal((screenDecision({ ...base, screen: "build" }) as { class: string }).class, "build");
   assert.deepEqual(screenDecision({ ...base, screen: "impossible" }), { status: "screened", reason: "impossible: it needs a change to the immutable hook or token, minting, custody of user funds, or something illegal" });

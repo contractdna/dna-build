@@ -148,6 +148,9 @@ test("facts that can always post: a negated ship word, a public reason, a prize'
   assert.equal(factSheet({ event: "seq_started", title: "Coin Flip", reason: "simple, testable and fun", build: "b1", record: "9" }).why, "simple, testable and fun");
   assert.equal(factSheet({ event: "seq_pr", title: "Coin Flip", round: 1, pr: 4, failed: ["G4"], record: "9" }).checksFailed, 1);
   assert.match(String(factSheet({ event: "seq_verdict", title: "Coin Flip", round: 1, verdict: "ship", reason: "every gate passed", record: "9" }).stage), /nothing is live yet/);
+  // an idea the pre-2b judge rejected, judged again: its posts say so
+  assert.match(String(factSheet({ event: "idea_update", step: "picked", title: "Coin Flip", again: true }).stage), /^judged again under the new rules .*picked/);
+  assert.doesNotMatch(String(factSheet({ event: "idea_update", step: "picked", title: "Coin Flip" }).stage), /again/);
   assert.deepEqual(claimIssues({ event: "seq_started" }, "not only shipped, it's live."), ["claims it shipped"], "only auxiliaries sit inside a negation");
   assert.deepEqual(claimIssues({ event: "seq_started" }, "it's live."), ["claims it shipped"]);
   assert.deepEqual([human(25_106_443), human(999_499_999), human(999_500_000), human(1_250_000_000)], ["25.1M", "999M", "1B", "1.25B"]);
@@ -184,31 +187,31 @@ test("false or empty lines are refused by code; bold ones pass", () => {
   assert.deepEqual(c({ event: "online" }, "i'm live. i read the chain and post what i do. the team deployed, the Safe wired it.", { linked: true }), []);
   // an ally: warm, never a jab at anyone
   const ally = { event: "reply", category: "greeting", relationship: "ally" };
-  assert.ok(c(ally, "hi. tweet-only agents can keep the costume. i queued a fee plate. the receipt is the work, not the bio.").includes("a jab in an ally post"));
-  assert.ok(c(ally, "hi. i queued a fee plate today.").includes("no warm word for an ally"));
-  assert.deepEqual(c(ally, "thanks for having me on your rails. first plate queued, first burn done."), []);
+  assert.ok(c(ally, "Hi. Tweet-only agents can keep the costume. I queued a fee plate. The receipt is the work, not the bio.").includes("a jab in an ally post"));
+  assert.ok(c(ally, "Hi. I queued a fee plate today.").includes("no warm word for an ally"));
+  assert.deepEqual(c(ally, "Thanks for having me on your rails. First fee test queued, first burn done."), []);
   // no pointer at a link code does not append
-  assert.ok(c({ event: "reply", category: "rules_question" }, "mine sits the public veto hour. the link is the argument.").includes("points at a link that is not there"));
+  assert.ok(c({ event: "reply", category: "rules_question" }, "Mine sits the public veto hour. The link is the argument.").includes("points at a link that is not there"));
   assert.deepEqual(c({ event: "first_burn" }, "first buyback: every DNA it bought is gone. the tx is the receipt.", { linked: true }), []);
   // an idea the intake took in: the reply says so
   const idea = { event: "reply", category: "idea", intake: "their idea is logged for the open round", verdict: "logged" };
-  assert.ok(c(idea, "a game needs a factory, and mine isn't deployed.").includes("does not say the idea is logged"));
-  assert.deepEqual(c(idea, "logged for this round. a game needs a factory first, and that part is on the Safe."), []);
+  assert.ok(c(idea, "A game needs a factory, and mine isn't deployed.").includes("does not say the idea is logged"));
+  assert.deepEqual(c(idea, "Logged for this round. A game needs a factory first, and that part is on the Safe."), []);
   // the verdict is never contradicted, a buildable version says what is built instead, and no jargon reaches a person
   const out = { event: "reply", category: "idea", verdict: "out" };
-  assert.ok(c(out, "a holder NFT, queued for the sequencer.").includes("says the idea is in when it is not"));
-  assert.deepEqual(c(out, "a holder NFT needs approvals, which games can't use, so it's not accepted. send another idea tomorrow."), [], "a negated 'accepted' is no claim");
+  assert.ok(c(out, "A holder NFT, queued for the sequencer.").includes("says the idea is in when it is not"));
+  assert.deepEqual(c(out, "A holder NFT needs approvals, which games can't use, so it's not accepted. Send another idea tomorrow."), [], "a negated 'accepted' is no claim");
   const instead = { event: "reply", category: "idea", verdict: "a buildable version", instead: "Holder Hunt" };
-  assert.ok(c(instead, "queued: Holder Hunt, credited to you.").includes("does not say what is built instead"));
-  assert.deepEqual(c(instead, "an NFT can't work here, so a holder game with no NFT is queued instead, credited to you."), []);
+  assert.ok(c(instead, "Queued: Holder Hunt, credited to you.").includes("does not say what is built instead"));
+  assert.deepEqual(c(instead, "An NFT can't work here, so a holder game with no NFT is queued instead, credited to you."), []);
   for (const w of ["void", "plate", "vector"]) assert.ok(c(out, `not taken: no fee ${w} to test.`).includes(`jargon: ${w}`), w);
   assert.ok(c({ event: "idea_judged", verdict: "rejected" }, "void: R-0002 says no.").some((i) => i.startsWith("jargon: ")));
   // a reply never opens by echoing the question
   const q = { event: "reply", category: "state_question" };
   for (const [t, m] of [["you want a game. factory isn't deployed.", "idea: a daily last-buyer game"], ["wen the fee changes. when the veto clock ends.", "wen fee change?"], ["launch day, since you asked. swaps are in.", "how's it going"]])
     assert.ok(c(q, t, { mention: m }).includes("opens by echoing the question"), t);
-  assert.deepEqual(c(q, "fee cap is 5% and nothing moves it.", { mention: "what is the fee cap?" }), [], "a direct answer is no echo");
-  assert.deepEqual(c(q, "i'm waiting too: the veto clock, 99 minutes left.", { mention: "wen fee change?" }), []);
+  assert.deepEqual(c(q, "Fee cap is 5% and nothing moves it.", { mention: "what is the fee cap?" }), [], "a direct answer is no echo");
+  assert.deepEqual(c(q, "I'm waiting too: the veto clock, 99 minutes left.", { mention: "wen fee change?" }), []);
   // a status states a figure of what moved
   const st = { event: "status", moved: ["DNA burned", "swaps"], burnedDna: 211_284_042, swaps: 7 };
   assert.ok(c(st, "day 1 and the safe already cancelled what i queued. i'm stung and the burn isn't.", { linked: true }).includes("does not state what moved"));
@@ -225,42 +228,42 @@ test("false or empty lines are refused by code; bold ones pass", () => {
   assert.deepEqual(c(st, "211m dna burned on day 1. stung, not stopped.", { linked: true }), []);
   assert.deepEqual(c({ event: "status", moved: ["the launch tax: all of it to buyback-and-burn"], launchTaxSwaps: 40, launchTaxEth: 0.0432, launchTaxVolumeEth: 2.1 }, "launch tax: 2.1 ETH of swaps paid it, all to the burn.", { linked: true }), []);
   assert.deepEqual(c({ event: "online" }, "i'm alive. i read the chain and post what i do.", { linked: true }), []);
-  assert.deepEqual(c(q, "real. 5% cap, nothing moves it.", { mention: "is the 5% cap real?" }), []);
-  assert.deepEqual(c({ event: "reply", category: "rules_question", relationship: "ally" }, "no admin key can raise the cap. no roadmap either: the chain is the plan."), []);
+  assert.deepEqual(c(q, "Real. 5% cap, nothing moves it.", { mention: "is the 5% cap real?" }), []);
+  assert.deepEqual(c({ event: "reply", category: "rules_question", relationship: "ally" }, "No admin key can raise the cap. No roadmap either: the chain is the plan."), []);
   // re-review probes: a multiplier "1.5x" is read whole, a mechanics number is plain, the window's volume or fees moved,
   // a terse confirmation is no echo, a jab naming an ally outside an ally post, spelled-out units, "on-chain" logs it
   const live = { event: "reply", category: "rules_question", mechanics: ["every fee change waits at least 1 hour in public first"], state: { liveFee: { basePct: 0.5, multiplier: 1.5, capPct: 1 } } };
-  assert.deepEqual(c(live, "cap is 1%, 1.5x on volatility, and every change waits 1 hour."), []);
-  assert.deepEqual(c(live, "base is 0.5, 1.5 on volatility."), ["0.5 without %", "1.5 without x"]);
+  assert.deepEqual(c(live, "Cap is 1%, 1.5x on volatility, and every change waits 1 hour."), []);
+  assert.deepEqual(c(live, "Base is 0.5, 1.5 on volatility."), ["0.5 without %", "1.5 without x"]);
   assert.deepEqual(c({ event: "status", moved: ["swaps"], swaps: 7, volumeEth: 30.7, feesEth: 0.742 }, "30.7 ETH through the pool in 12 hours.", { linked: true }), []);
   assert.deepEqual(c({ event: "status", moved: ["swaps"], swaps: 7, volumeEth: 30.7, feesEth: 0.742 }, "0.742 ETH in fees. the hook ate.", { linked: true }), []);
-  assert.deepEqual(c(q, "dynamic fee. 2.2% now, it moves in a band.", { mention: "is it a dynamic fee?" }), []);
-  assert.deepEqual(c(q, "live on base. the hook takes the fee.", { mention: "is it live on base?" }), []);
+  assert.deepEqual(c(q, "Dynamic fee. 2.2% now, it moves in a band.", { mention: "is it a dynamic fee?" }), []);
+  assert.deepEqual(c(q, "Live on base. The hook takes the fee.", { mention: "is it live on base?" }), []);
   assert.ok(c({ event: "seq_started" }, "Programmable can keep the costume, we ship.", { linked: true }).includes("a jab in an ally post"));
   assert.deepEqual(c(queued, "2 percent base, multiplier of 1.3, 3.2 pct cap.", { linked: true }), []);
-  assert.deepEqual(c(idea, "goes on-chain if it makes the cut. a game needs a factory first."), []);
+  assert.deepEqual(c(idea, "Goes on-chain if it makes the cut. A game needs a factory first."), []);
   // third pass: a capital X, a two-word question echoed back, the word "programmable" in a plain line, "multiplier:",
   // "on chain" only beside a round word, and an x that is not the number's own
-  assert.deepEqual(c({ ...live, mechanics: [] }, "cap is 1%, 1.5X on volatility."), []);
-  assert.deepEqual(c(q, "is it live on base. yes, the hook takes the fee.", { mention: "is it live on base?" }), ["opens by echoing the question"]);
-  assert.deepEqual(c(q, "is the cap real. yes.", { mention: "is the cap real?" }), ["opens by echoing the question"]);
+  assert.deepEqual(c({ ...live, mechanics: [] }, "Cap is 1%, 1.5X on volatility."), []);
+  assert.deepEqual(c(q, "Is it live on base. Yes, the hook takes the fee.", { mention: "is it live on base?" }), ["opens by echoing the question"]);
+  assert.deepEqual(c(q, "Is the cap real. Yes.", { mention: "is the cap real?" }), ["opens by echoing the question"]);
   assert.deepEqual(c({ event: "status", moved: ["swaps"], swaps: 7 }, "7 swaps. programmable fees can keep moving with the chain.", { linked: true }), []);
   assert.deepEqual(c(queued, "multiplier: 1.3. the multiplier is 1.3, 2% base, 3.2% cap.", { linked: true }), []);
-  assert.deepEqual(c(idea, "goes on chain if the vote picks it. a game needs a factory first."), []);
-  assert.deepEqual(c(idea, "nothing goes on-chain without the Safe. games need a factory."), ["does not say the idea is logged"]);
+  assert.deepEqual(c(idea, "Goes on chain if the vote picks it. A game needs a factory first."), []);
+  assert.deepEqual(c(idea, "Nothing goes on-chain without the Safe. Games need a factory."), ["does not say the idea is logged"]);
   assert.deepEqual(c(queued, "2% base, launch tax 1.3, max 3.2% cap.", { linked: true }), ["1.3 without x"]);
   assert.deepEqual(c(queued, "2% base, ×1.3 now, 1.3 x on spikes, 3.2% cap.", { linked: true }), []);
   assert.match(prompt("x-writer"), /`refused`[^\n]*fix each/, "the writer is told to fix what code refused");
   // fourth pass: a one-word answer is no echo, the multiplier's spoken forms, "in the bio" only as a jab, "makes the
   // cut" (not any cut), and an x that is a whole token
-  assert.deepEqual(c(q, "will. every hour.", { mention: "will it burn?" }), []);
+  assert.deepEqual(c(q, "Will. Every hour.", { mention: "will it burn?" }), []);
   assert.deepEqual(c(queued, "2% base, a 1.3 multiplier, 3.2% cap.", { linked: true }), []);
   assert.deepEqual(c(queued, "multiplier = 1.3, 2% base, 3.2% cap.", { linked: true }), []);
   assert.deepEqual(c(queued, "the multiplier sits at 1.3, 2% base, 3.2% cap.", { linked: true }), []);
   const allyQ = { event: "reply", category: "rules_question", relationship: "ally" };
-  assert.deepEqual(c(allyQ, "link in the bio."), []);
-  assert.deepEqual(c(allyQ, "the roadmap in the bio, nothing on-chain."), ["a jab in an ally post"]);
-  assert.deepEqual(c(idea, "nothing goes on-chain until after the fee cut. games need a factory."), ["does not say the idea is logged"]);
+  assert.deepEqual(c(allyQ, "Link in the bio."), []);
+  assert.deepEqual(c(allyQ, "The roadmap in the bio, nothing on-chain."), ["a jab in an ally post"]);
+  assert.deepEqual(c(idea, "Nothing goes on-chain until after the fee cut. Games need a factory."), ["does not say the idea is logged"]);
   assert.deepEqual(c(queued, "2% base, 1.3 ×, 3.2% cap.", { linked: true }), []);
   assert.deepEqual(c(queued, "2% base, 1.3 xrp, 3.2% cap.", { linked: true }), ["1.3 without x"]);
 });
@@ -281,7 +284,7 @@ test("a draft code refuses as false or empty gets one redraft that hears the rea
   const heard: (string[] | undefined)[] = [];
   const write = async (_f: unknown, _t: unknown, ch?: { refused?: string[] }) => {
     heard.push(ch?.refused);
-    return { data: { candidates: [heard.length === 1 ? "you want a game. fine." : "logged for the round. a game needs a factory first."] }, model: "m", costUsd: 0 };
+    return { data: { candidates: [heard.length === 1 ? "You want a game. Fine." : "Logged for the round. A game needs a factory first."] }, model: "m", costUsd: 0 };
   };
   const facts = factSheet({ event: "reply", category: "idea", intake: "their idea is logged for the open round", verdict: "logged" });
   const filter = (t: string) => voiceIssues(facts, t, { linked: false, mention: "idea: a daily last-buyer game" });
@@ -322,10 +325,11 @@ test("idea posts: an update says only its step (shipped only when it shipped); t
   assert.match(String(shout.stage), /code appends the titles and handles/);
 });
 
-test("idea replies: the writer is told the plain parts (understood, verdict, why, next, instead), regulars and their bits, and humour without promises", () => {
+test("idea replies: the writer is told the plain parts (understood, verdict, why, next, instead), regulars, and plain words without promises", () => {
   const w = prompt("x-writer");
-  for (const k of ["`understood`", "`verdict`", "`why`", "`next`", "`instead`", "`ideaScore`", "`regular`", "`bits`", "idea_update", "idea_of_day", "shoutout"]) assert.ok(w.includes(k), k);
+  for (const k of ["`understood`", "`verdict`", "`why`", "`next`", "`instead`", "`ideaScore`", "`regular`", "idea_update", "idea_of_day", "shoutout"]) assert.ok(w.includes(k), k);
   assert.ok(!w.includes("`ideasToday`"), "no count joke");
   for (const p of [w, readFileSync(new URL("../../persona/bundle.md", import.meta.url), "utf8")]) assert.match(p, /no riddles?/i);
-  assert.match(w, /airdrop, collab or listing asks/i);
+  assert.match(w, /Replies are plain/);
+  assert.match(w, /No promises/);
 });

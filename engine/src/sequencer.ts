@@ -1,4 +1,4 @@
-// The Sequencer in the enclave: the AI dev team's builds, several at once (SEQ_PACE), from the idea queue to a live game.
+// The Sequencer in the enclave: its builds, several at once (SEQ_PACE), from the idea queue to a live game.
 // Each step reads and writes one signed `seq_build` row per build (table seq_build: at most one active build of an idea,
 // by a unique index), so a crash resumes where it stopped; every step is idempotent.
 //  idle       → open (SEQ_OPEN_DELAY_MIN after launch, default 0: at once), engine live, fewer than SEQ.maxInflight builds
@@ -34,10 +34,10 @@
 // Any end (shipped, killed, skipped) releases the reservation with a row dated on the reservation's day, so the dev
 // spend of a build nets to exactly its rounds' real costs. An outage before the verdict (GitHub, a model provider,
 // RPC providers disagreeing, a deadline) skips the build; after it the ship path waits and retries.
-// A build has a kind (the brain's choice at `idle`): a game, as above, or a site change (the site's own pages and public
-// docs, no wallet). A site change goes the same way with its own gates (G1, G2, G11, G12, and G15 on the main site's
-// pages), its ship record names the exact files it changes, and once the public hour passed it is merged and released;
-// there is nothing to deploy or fund. A module (a fee or split policy) is merged the same way and only proposed to the
+// A build has a kind (the brain's choice at `idle`): a game, as above, or a site change (new pages of the site in a new
+// route folder, no wallet). A site change goes the same way with its own gates (G1, G2, G11, G12, and G15 on the main
+// site's pages), its ship record names the exact files it adds, and once the public hour passed it is merged and
+// released; there is nothing to deploy or fund. It is announced as live only once the site serves it (siteServe). A module (a fee or split policy) is merged the same way and only proposed to the
 // Safe (code hash, address, bounds, the registry calls); the engine sends none of them. An engine change is never
 // merged here: its build ends `handed`, its pull request left open for an owner. With no idea queued, the brain may pick
 // one of its own open risks (the self-file) to fix as a site change, a module or an engine change (improve, once a day).
@@ -49,7 +49,7 @@ import { createHash, randomBytes } from "node:crypto";
 import { type Address, getAddress, getCreate2Address, type Hex, keccak256, stringToHex } from "viem";
 import { effective, type Row, trustedRows, vetoed } from "./approve.ts";
 import type { Rubric } from "./brain.ts";
-import { d, IDEAS_LIVE, LLM, SEQ_PACE } from "./config.ts";
+import { d, IDEAS_LIVE, LLM, LOG_BASE_URL, SEQ_PACE } from "./config.ts";
 import { edb as sql } from "./db.ts";
 import { ENCLAVE } from "./enclave.ts";
 import { Defer, type Handler } from "./jobs.ts";
@@ -66,7 +66,7 @@ import type { SeqFacts } from "./announce.ts";
 const HOUR = 3600_000;
 const DAY = 24 * HOUR;
 export const SEQ = {
-  // after LLM_LAUNCH_AT (a compose literal): SEQ_OPEN_DELAY_MIN minutes, default 0 (the dev team starts with the launch;
+  // after LLM_LAUNCH_AT (a compose literal): SEQ_OPEN_DELAY_MIN minutes, default 0 (the sequencer starts with the launch;
   // not an allowed env in the enclave, so the enclave uses the default)
   openAfterMs: Number(process.env.SEQ_OPEN_DELAY_MIN || 0) * 60_000,
   maxRounds: 4,
@@ -83,9 +83,15 @@ export const SEQ = {
   evictMinAgeMs: 8 * HOUR, // a game is evicted for a new one only once it has been live this long
   pagesDailyWaitMs: 6 * HOUR, // the daily live page check waits for builds going at most this long
   ownIdeas: false, // with no idea queued, may the brain build a fix for one of its own open risks? Off: people's ideas only
-  // does the website deploy from the build repository's `release` branch? Off: it doesn't yet, so a site change would
-  // never reach the site. The brain's pick of one is then a no-build, and nothing says a site change shipped or is live
+  // does the website deploy from the build repository's `release` branch? Off, a site change would never reach the
+  // site: the brain's pick of one is then a no-build, and nothing says a site change shipped or is live. Off until the
+  // site guard's next round (a page must not be able to render a script or an off-site link) ships
   siteLive: false,
+  // a released site change is announced (and its idea's author told it is live) only once the site serves it: the
+  // health route names the merge or a later commit and each new page answers 200. Not served this long after the
+  // release branch holds it (or the release branch not there this long after the first look): one alert, no announcement
+  siteServeMs: 30 * 60_000,
+  siteReleaseMs: 3 * HOUR, // covers a release record's own hour and the hourly job that then moves the branch
   idleMs: 48 * HOUR, // no players this long ⇒ retire
   playersWindowBlocks: 14_400n, // ≈ 48 h of 12 s blocks
   tokenWarnDays: 14,
@@ -137,7 +143,7 @@ export function specIssues(spec: string): string[] {
 export const reworksLeft = (round: number) => Math.max(0, SEQ.maxRounds - round);
 
 // ---------------------------------------------------------------- spec amendments
-/** A spec amendment the dev team's lead proposed: why the spec can't be built as written, and the smallest change. */
+/** A spec amendment the sequencer's lead proposed: why the spec can't be built as written, and the smallest change. */
 export type Amendment = { reason: string; change: string };
 /** The amendment in a build's report, if any (model output: data, cut to the plan's limits). */
 export function amendmentOf(report: unknown): Amendment | undefined {
@@ -194,6 +200,9 @@ export type BuildData = {
   shipSeq?: string; mergeSha?: string; game?: { address: Address; codehash: Hex; deployedAt: string }; fund?: { queued: boolean; why?: string; amount?: string };
   releaseSeq?: string; released_ff?: boolean; rewarded?: boolean; why?: string; endedAt?: string; deepChecked?: string;
   deployed?: boolean; deployedOnce?: boolean; deployFails?: number; codeWaits?: number; badMerge?: string; // the deploy mined; failed deploys; minutes waited for its code; a merge never to be released
+  /** a site change: when the engine first looked for it on the site, and first saw the release branch hold it; `served`:
+   *  when the site was seen serving it (only then is it announced, and told as live) */
+  serve?: { since: string; onRelease?: string }; served?: string;
 };
 export type Status = "decided" | "dispatched" | "gated" | "verdict" | "shipping" | "shipped" | "handed" | "killed" | "skipped";
 export type BuildRow = { id: string; status: Status; round: number; data: BuildData };
@@ -218,13 +227,13 @@ export const activeBuilds = async () => (await builds(sql`status = any(${ACTIVE}
 /** The newest build on its way, if any. */
 export const activeBuild = async () => (await activeBuilds()).at(-1) ?? null;
 /** Where an idea's newest build stands, for the person who gave it: a game is live once its build is shipped, a site
- *  change once its release record is in effect (its public hour over, not vetoed); a module never by us (the Safe
- *  decides). null: no signed build for it. */
+ *  change once the site was seen serving it (siteServed, the same check that lets it be announced); a module never by
+ *  us (the Safe decides). null: no signed build for it. */
 export async function ideaShip(idea: string): Promise<{ target: Kind; live: boolean } | null> {
   const [r] = await builds(sql`data->>'idea' = ${idea}`, 5);
   if (!r) return null;
   const target = kindOf(r.data);
-  const live = target === "game" ? r.status === "shipped" : target === "site" ? !!(r.data.mergeSha && (await releaseInEffect(r.data.mergeSha))) : false;
+  const live = target === "game" ? r.status === "shipped" : target === "site" ? !!(r.data.mergeSha && r.data.served) : false;
   return { target, live };
 }
 /** Every shipped build (its game live or retired). */
@@ -296,7 +305,7 @@ export const SEQ_DEPS = {
   models: async (): Promise<Order["models"]> => {
     const { activeModel } = await import("./swap.ts");
     const { model } = await import("./models.ts");
-    // the dev team runs Claude only (the Agent SDK): a swapped-in model of another family falls back to the registry's
+    // the sequencer runs Claude only (the Agent SDK): a swapped-in model of another family falls back to the registry's
     const claude = (id: string) => /^anthropic\/claude-[a-z0-9.-]+$/.test(id);
     return Object.fromEntries(await Promise.all(DEV_ROLES.map(async (r) => {
       const id = slugOf(await activeModel(`dev-${r}` as never));
@@ -339,6 +348,16 @@ export const SEQ_DEPS = {
     return (await import("./pages.ts")).checkBuild({ slug: r.data.slug, files: texts, factory: d.gameFactory!, safe: d.safe, initCode: g.game!.initCode, salt: body.salt!, gameAbi: gameAbiOf(texts, r.data.slug) }, true);
   },
   shipCancel: async (build: string, shipSeq: string, why: string) => { await (await import("./pages.ts")).shipCancel(build, shipSeq, why); },
+  /** GET a path on the website (LOG_BASE_URL): its status, and its body read as JSON when `json` (at most 64 KB). 10 s,
+   *  no redirect followed (a redirect is its own status). */
+  siteGet: async (path: string, json = false): Promise<{ status: number; body?: unknown }> => {
+    const r = await fetch(`${LOG_BASE_URL.replace(/\/+$/, "")}${path}`, { signal: AbortSignal.timeout(10_000), redirect: "manual", headers: { "cache-control": "no-cache" } });
+    if (!json) { await r.body?.cancel().catch(() => {}); return { status: r.status }; }
+    const t = await r.text();
+    let body: unknown;
+    try { body = t.length <= 65_536 ? JSON.parse(t) : undefined; } catch { body = undefined; }
+    return { status: r.status, body };
+  },
   /** M1 (src/approve.ts): in effect / vetoed */
   effective: (row: Row) => effective(row),
   vetoed: (row: Row) => vetoed(row),
@@ -472,6 +491,12 @@ async function online() {
   if (rec) await SEQ_DEPS.announce({ event: "seq_online", record: rec.seq });
 }
 
+/** How a site idea's kill reason starts while the website does not take site changes (the live engine wrote "the dev
+ *  team's changes"): such an idea goes back to the queue once it does. */
+const NO_SITE = "no-build: the website does not take";
+/** The site ideas killed for the website went back to the queue in this process (simplification: once a process, not
+ *  every minute; a restart looks once more, which finds nothing: the note replaced their kill reason). */
+let requeued = false;
 async function start(now: number): Promise<string> {
   if (!seqOpen(now)) return `closed: the Sequencer opens ${SEQ.openAfterMs / 60_000} min after launch`;
   if ((await SEQ_DEPS.mode()) !== "live") return "waiting: the engine is not live";
@@ -485,8 +510,13 @@ async function start(now: number): Promise<string> {
   if ((await builds(sql`status = 'skipped' and data->>'why' like ${`${REFUSED}%`} and data->>'endedAt' > ${new Date(now - SEQ.refusedCooldownMs).toISOString()}`, 1)).length)
     return `waiting: GitHub refused a dispatch in the last ${SEQ.refusedCooldownMs / 60_000} min`;
   const q = await SEQ_DEPS.queue();
+  // the site ideas killed while the website did not take site changes are built now (their kill reason starts so)
+  if (SEQ.siteLive && !requeued) {
+    for (const id of await q.requeueKilled(NO_SITE, "queued again: the website now takes the sequencer's changes")) await SEQ_DEPS.alert(`Sequencer: idea ${id} is back in the queue, now that the website takes site changes.`, `alert:seq:site-requeued:${id}`);
+    requeued = true;
+  }
   const [idea] = await q.buildQueue(1);
-  // the dev team builds only from people's ideas: an empty queue waits (its own open risks only when SEQ.ownIdeas)
+  // the sequencer builds only from people's ideas: an empty queue waits (its own open risks only when SEQ.ownIdeas)
   if (!idea) return SEQ.ownIdeas ? improve(now) : "nothing queued: waiting for people's ideas";
   // a person's idea only: an X author or an IdeaMarket submitter on record (never one the engine submitted itself)
   if (!idea.source) {
@@ -518,7 +548,7 @@ async function start(now: number): Promise<string> {
   const kind: Kind = b.decision.target === "site" || b.decision.target === "module" ? b.decision.target : "game";
   if (kind === "site" && !SEQ.siteLive) {
     await SEQ_DEPS.alert(`Sequencer: the brain picked a site change for idea ${idea.id}, but the website does not deploy from the build repository's release branch; the idea is not built.`, `alert:seq:nosite:${idea.id}`);
-    await q.setBuildStatus(idea.id, "queued", "killed", "no-build: the website does not take the dev team's changes yet");
+    await q.setBuildStatus(idea.id, "queued", "killed", `${NO_SITE} the sequencer's changes yet`);
     return `no-build: ${idea.id} (the website does not take site changes yet)`;
   }
   // a module needs the module kit in this image (it ships with the image before the brain can pick one): else no-build
@@ -616,7 +646,7 @@ export function orderOf(r: BuildRow, baseSha: string, models: Order["models"], n
 }
 
 async function dispatchRound(r: BuildRow, now: number): Promise<string> {
-  // the dev team's spend is metered at models.json prices: an unpriced model would be charged a guess, so no order
+  // the sequencer's spend is metered at models.json prices: an unpriced model would be charged a guess, so no order
   // goes out until every model has a price (the build waits in `decided`)
   const models = await SEQ_DEPS.models();
   const missing = unpriced(Object.values(models));
@@ -685,7 +715,7 @@ async function intake(r: BuildRow, now: number): Promise<string> {
     }
   }
   const pr = await gh.pullOn(branchOf(o));
-  if (!pr || pr.state !== "open") return next(r, ["the dev team stopped without a pull request this round"]);
+  if (!pr || pr.state !== "open") return next(r, ["the sequencer stopped without a pull request this round"]);
   o.pr = pr.number; // known before the deadline below, so end() closes it
   if (now - since > SEQ.orderMs) return end(r, "skipped", `${o.id}: not gated within 4 h`);
   const order = await orderBody(o);
@@ -1016,9 +1046,16 @@ async function ship(r: BuildRow, now: number): Promise<string> {
   if (!row || row.seq !== r.data.shipSeq) throw Object.assign(new Error(`ship ${r.id}: the signed ship record is missing`), { final: true });
   const body = JSON.parse(row.body) as ShipRecord;
   const gh = await SEQ_DEPS.github();
-  // the enclave's own cancel and the Safe's veto stop every step below: the merge, the deploy, the fund, the release
-  if ((await trustedRows("ship-cancel", `ship:${r.id}`, 1)).length) return stopShip(r, "the enclave cancelled its ship (a page check failed in the public hour)", body.predicted);
-  if (await SEQ_DEPS.vetoed(row)) return stopShip(r, "the Safe owners vetoed the ship", body.predicted);
+  // the enclave's own cancel and the Safe's veto stop every step below: the merge, the deploy, the fund, the release. A
+  // site change the release branch already holds (serve.onRelease: seen there, not just asked for) only waits for the
+  // site to serve it: nothing here can take it back (an owner reverts it on main), so it is never told as stopped; a
+  // veto then is one alert to the owners
+  const released = body.target === "site" && !!r.data.serve?.onRelease;
+  if (!released && (await trustedRows("ship-cancel", `ship:${r.id}`, 1)).length) return stopShip(r, "the enclave cancelled its ship (a page check failed in the public hour)", body.predicted);
+  if (await SEQ_DEPS.vetoed(row)) {
+    if (!released) return stopShip(r, "the Safe owners vetoed the ship", body.predicted);
+    await SEQ_DEPS.alert(`Sequencer: site change "${r.data.title.slice(0, 80)}" (${r.id}) was vetoed after its release (${r.data.mergeSha}): revert it on main.`, `alert:seq:site-vetoed:${r.id}`);
+  }
   if (!r.data.mergeSha) {
     // the public hour's deep page check (7 days simulated, three profiles): nothing merges before it passed
     if (!r.data.deepChecked) {
@@ -1158,6 +1195,8 @@ async function ship(r: BuildRow, now: number): Promise<string> {
     await saveBuild(r);
   }
   await releaseReservation(r);
+  // a site change is live only once the site serves it: until then it waits here (Defer), on its way
+  const unserved = !isGame && body.target !== "module" && SEQ.siteLive ? await siteServe(r, body.paths ?? [], now) : null;
   await saveBuild({ ...r, status: "shipped" });
   if (body.target === "module") {
     // the Sequencer's part ends here: the Safe decides whether this code hash is ever approved, registered or tested
@@ -1172,11 +1211,50 @@ async function ship(r: BuildRow, now: number): Promise<string> {
       await SEQ_DEPS.alert(`Sequencer: site change "${r.data.title.slice(0, 80)}" is merged and released (${r.data.mergeSha}), but the website does not deploy from release, so it is not live and was not announced.`, `alert:seq:site-not-live:${r.id}`);
       return `shipped: ${r.id} (site, released at ${r.data.mergeSha}; the website does not deploy it)`;
     }
+    if (unserved) return `shipped: ${r.id} (site, released at ${r.data.mergeSha}; not served, not announced: ${unserved})`;
     await SEQ_DEPS.announce({ event: "seq_released", build: r.id, title: r.data.title, target: "site", record: row.seq });
     return `shipped: ${r.id} (site, released at ${r.data.mergeSha})`;
   }
   await SEQ_DEPS.announce({ event: "seq_shipped", build: r.id, title: r.data.title, slug: r.data.slug, game: body.predicted, fundEth: r.data.fund?.queued ? Number(r.data.fund.amount) / 1e18 : null, record: row.seq });
   return `shipped: ${r.id} at ${body.predicted}`;
+}
+
+/** Does the site serve this site change: its health names the merge or a later commit (RAILWAY_GIT_COMMIT_SHA), and each
+ *  of its new pages answers 200 there (a query only the check uses, so no cached answer from before the deploy). Not
+ *  yet: why (a deploy still building, a page answering 500 while it warms up: every miss is waited on, SEQ.siteServeMs
+ *  is the one bound). */
+export async function siteServed(sha: string, paths: string[]): Promise<{ ok: true } | { ok: false; why: string }> {
+  const h = await SEQ_DEPS.siteGet("/api/health", true).catch((e) => ({ status: 0, body: undefined, error: (e as Error).message }));
+  const commit = (h.body as { commit?: unknown } | undefined)?.commit;
+  if (h.status !== 200 || typeof commit !== "string" || !/^[0-9a-f]{40}$/.test(commit)) return { ok: false, why: `the site's health names no deployed commit (status ${h.status || "none"})` };
+  if (!(await (await SEQ_DEPS.github()).contains(commit, sha))) return { ok: false, why: `the site serves ${commit.slice(0, 12)}, which does not hold ${sha.slice(0, 12)}` };
+  const { siteRoutes } = await import("./pages.ts");
+  for (const route of siteRoutes(paths, paths)) {
+    const g = await SEQ_DEPS.siteGet(`${route}?served=${sha.slice(0, 12)}`).catch(() => ({ status: 0 }));
+    if (g.status !== 200) return { ok: false, why: `${route} answers ${g.status || "nothing"} on the deployed commit` };
+  }
+  return { ok: true };
+}
+/** A released site change, before it is called live: null once the site serves it (marked on its row). Not yet: Defer a
+ *  minute, up to SEQ.siteServeMs after the release branch first held it (SEQ.siteReleaseMs after the first look while
+ *  the branch does not); then one alert to the owners and why it is not announced. */
+async function siteServe(r: BuildRow, paths: string[], now: number): Promise<string | null> {
+  if (r.data.served) return null;
+  const sha = r.data.mergeSha!;
+  const gh = await SEQ_DEPS.github();
+  const s = (r.data.serve ??= { since: new Date(now).toISOString() });
+  if (!s.onRelease && (await gh.contains(await gh.refSha("release"), sha))) s.onRelease = new Date(now).toISOString();
+  await saveBuild(r);
+  const c = s.onRelease ? await siteServed(sha, paths) : { ok: false as const, why: "the release branch does not hold it yet" };
+  if (c.ok) {
+    r.data.served = new Date(now).toISOString();
+    await saveBuild(r);
+    return null;
+  }
+  const late = s.onRelease ? now - Date.parse(s.onRelease) >= SEQ.siteServeMs : now - Date.parse(s.since) >= SEQ.siteReleaseMs;
+  if (!late) throw new Defer(60_000, `${r.id}: not served yet: ${c.why}`);
+  await SEQ_DEPS.alert(`Sequencer: site change "${r.data.title.slice(0, 80)}" (${r.id}) is released at ${sha} but the site has not picked it up: ${c.why.slice(0, 200)}. It was not announced.`, `alert:seq:site-not-served:${r.id}`);
+  return c.why;
 }
 
 // ---------------------------------------------------------------- release (M2)
@@ -1337,7 +1415,7 @@ async function retireStep(now: number) {
     if (!live) {
       out[game] = await chain.sweep(game).catch((e) => `sweep: ${(e as Error).message.slice(0, 100)}`);
       // announced once (the site record and the X outbox both dedupe by key)
-      if (pending) await SEQ_DEPS.announce({ event: "game_retired", build: b.id, title: b.data.title, slug: b.data.slug, game, days: Math.max(1, Math.round((now - Date.parse(b.data.game.deployedAt)) / DAY)), returnedEth: null, record: pending.seq, rule: (JSON.parse(pending.body) as RetireRecord).rule });
+      if (pending) await SEQ_DEPS.announce({ event: "game_retired", build: b.id, title: b.data.title, slug: b.data.slug, game, days: Math.max(1, Math.round((now - Date.parse(b.data.game.deployedAt)) / DAY)), returnedEth: null, record: pending.seq, rule: (JSON.parse(pending.body) as RetireRecord).rule, idleHours: SEQ.idleMs / HOUR });
       continue;
     }
     if (pending) {
@@ -1411,4 +1489,4 @@ export const pagesDailyHandler: Handler = {
     return (await import("./pages.ts")).dailyPages(await shippedGames());
   },
 };
-export const _test = { start, dispatchRound, intake, verdict, shipRecord, ship, releaseStep, retireStep, dailyPost, liveGames, ZERO };
+export const _test = { start, dispatchRound, intake, verdict, shipRecord, ship, releaseStep, retireStep, dailyPost, liveGames, ZERO, requeueAgain: () => { requeued = false; } };

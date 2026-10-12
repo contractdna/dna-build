@@ -35,7 +35,7 @@ const SPLIT = [
 ];
 
 const GAMES = [
-  { name: "Holder jackpot", c: "var(--amber)", href: "/play", go: "Play", facts: ["≥ 1,000 DNA average", "up to 3 ETH a draw", "every 12 h to 3 d"],
+  { name: "Holder jackpot", c: "var(--amber)", href: "/play", go: "Play", facts: ["≥ 1,000 DNA average", "up to 3 ETH a draw", "every 12 to 24 h"],
     text: "Hold DNA and you're in, no sign-up. 10 winners split each draw equally, picked by Chainlink and paid automatically." },
   { name: "Staking", c: "var(--teal)", href: "/play", go: "Play", facts: ["≥ 10,000 DNA", "×2 / ×2.5 / ×3", "up to ×4 with a streak"],
     text: "Stake 10,000+ DNA for 12 hours, 3 days or 7 days to count ×2 to ×3, plus a streak up to ×4. Staking pays nothing out. It makes your DNA count more." },
@@ -51,7 +51,7 @@ const GAMES = [
 
 const CHECKS = [
   { href: "/live", name: "Watch it work", text: "What the AI is doing now, and why." },
-  { href: "/sequencer", name: "See the whole engine", text: "One map of ideas, the brain, the dev team, the public hour and the money." },
+  { href: "/sequencer", name: "See the whole engine", text: "One map of ideas, the brain, the sequencer, the public hour and the money." },
   { href: "/proof", name: "Check the machine", text: "The AI's key lives in a sealed machine. Your browser can check it." },
   { href: "/memory", name: "Read its memory", text: "Every test, kept or killed, and what it taught." },
   { href: "/announcements", name: "Follow the news", text: "Every draw, vote, reward and test, with its transaction." },
@@ -64,7 +64,7 @@ export default function HowItWorksPage() {
       <div className={ui.page}>
         <PageHead hero="how" back={null} sample={false}
           title="How it works"
-          lede="DNA is an Ethereum token whose Uniswap hook keeps changing. An AI tests each change on real trades and keeps only what works. Its dev team, the Sequencer, builds new games from the best ideas. All in public, inside limits nobody can change."
+          lede="DNA is an Ethereum token whose Uniswap hook keeps changing. An AI tests each change on real trades and keeps only what works. The sequencer builds new games from the best ideas. All in public, inside limits nobody can change."
           aside={<Link className={ui.link} href="/docs">Prefer it short or in full detail? The docs →</Link>}
         />
 
@@ -99,8 +99,8 @@ export default function HowItWorksPage() {
 
         <Section title="The Sequencer" note={<Link className={ui.link} href="/sequencer">See the map →</Link>}>
           <p className={`${ui.prose} ${ui.muted}`}>
-            The fee loop tunes the hook. The Sequencer, the AI&apos;s dev team, builds new games and modules. The brain picks an idea, the dev
-            team writes the contract, the page and the tests, a tester attacks them, and the brain decides whether it ships. The deploy and its
+            The fee loop tunes the hook. The sequencer builds new games and modules. The brain picks an idea, the sequencer
+            writes the contract, the page and the tests, a tester attacks them, and the brain decides whether it ships. The deploy and its
             funding wait one public hour. It&apos;s switched on and builds from the first winning idea.
           </p>
         </Section>

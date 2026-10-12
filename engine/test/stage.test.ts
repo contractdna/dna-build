@@ -53,7 +53,7 @@ test("stage-x --dry: every event and reply category through the writer and the p
   assert.match(drawn.calls[0].posted, /\nproof \S+\/play\/draw\/12\nhttps:\/\/etherscan\.io\/tx\/0x[0-9a-f]{64}$/);
   const reply = j.events.find((e: { event: string }) => e.event === "reply idea");
   assert.equal(reply.suffix, null); // replies carry no link
-  assert.equal(j.mentions.rows.length, 16);
+  assert.equal(j.mentions.rows.length, 17);
   assert.deepEqual(j.mentions.code.map((c: { optOut?: boolean }) => c.optOut), [true, true, false, undefined]);
   assert.ok(j.tone.dropped > 0 && j.tone.kept.length > 0);
   assert.ok(j.spentUsd > 0 && j.spentUsd <= 3);

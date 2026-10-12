@@ -225,7 +225,7 @@ test("the engine's constants mirror the contracts' (a contract change must updat
     ["play/page.tsx", "Stake 10,000+ DNA for 12 hours (×2), 3 days (×2.5) or 7 days (×3)"], ["play/page.tsx", "×1.25 after 2 days, ×1.5 after 5, ×2 after 10"], ["play/page.tsx", "Never above ×4"],
     ["play/page.tsx", `No wallet holds more than ${capFor(null) / 100}% of the tickets (${JACKPOT_POLICY.capBps / 100}% once a recent draw had ${10_000 / JACKPOT_POLICY.capBps}+ wallets)`], ["play/page.tsx", `Fewer than ${10_000 / capFor(null)} eligible wallets: no draw`],
     ["play/page.tsx", "Sent to each winner automatically"], ["play/page.tsx", "10 different wallets per draw, equal shares. The prize is at least 0.25 ETH and at most 3 ETH."], ["play/page.tsx", "has 7 days to claim"],
-    ["play/page.tsx", "Once a week the AI seals a hidden fee mutation"], ["play/page.tsx", "Stakers vote for 24 hours"], ["play/page.tsx", "votes open at 1%"], ["play/page.tsx", "Every 12 hours to 3 days"], ["play/page.tsx", "once it's 12 hours old"],
+    ["play/page.tsx", "Once a week the AI seals a hidden fee mutation"], ["play/page.tsx", "Stakers vote for 24 hours"], ["play/page.tsx", "votes open at 1%"], ["play/page.tsx", "Every 12 to 24 hours"], ["play/page.tsx", "once it's 12 hours old"],
     ["play/page.tsx", "The Safe has 1 hour to veto it"]] as const) {
     assert.ok(web(file).includes(s), `${file}: ${s}`);
   }

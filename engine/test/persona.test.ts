@@ -107,7 +107,7 @@ test("persona: every model call keeps code's `agent:` tag first, on the defaults
   assert.deepEqual(run({ DNA_PERSONA: hostile }), tags, "a bundle never replaces a tag");
 });
 
-test("persona: every engine file that holds or loads a model prompt is out of the dev team's reach", async () => {
+test("persona: every engine file that holds or loads a model prompt is out of the sequencer's reach", async () => {
   const { scopeIssue } = await import("../src/seq-gates.ts");
   const src = new URL("../src/", import.meta.url).pathname;
   const holders = readdirSync(src).filter((f) => f.endsWith(".ts") && /prompt\("|sys\("|"agent: |DEFAULT_PROMPTS/.test(readFileSync(join(src, f), "utf8")));

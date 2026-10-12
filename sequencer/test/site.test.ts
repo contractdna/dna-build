@@ -23,10 +23,10 @@ const order = (base: string, over: Partial<Order> = {}): Order => ({
 });
 const PLAN = {
   title: "Questions", interface: [], tests: ["read it on a phone"],
-  tasks: [{ goal: "Write the questions page.", files: ["web/app/questions/page.tsx", "web/app/questions/questions.module.css"] }, { goal: "Write the public doc.", files: ["docs/QUESTIONS.md"] }],
+  tasks: [{ goal: "Write the questions page.", files: ["web/app/questions/page.tsx"] }, { goal: "Style the questions page.", files: ["web/app/questions/questions.module.css"] }],
 };
 const PAGE = `import Link from "next/link";\nimport s from "./questions.module.css";\nexport const metadata = { title: "Questions" };\nexport default function Q() { return <main className={s.q}><h1>Questions</h1><Link href="/rules">The rules</Link></main>; }\n`;
-const FILES: Record<string, string> = { "web/app/questions/page.tsx": PAGE, "web/app/questions/questions.module.css": ".q { color: inherit; }\n", "docs/QUESTIONS.md": "# Questions\n" };
+const FILES: Record<string, string> = { "web/app/questions/page.tsx": PAGE, "web/app/questions/questions.module.css": ".q { color: inherit; }\n" };
 const BODY = "A questions page with plain answers about who decides what ships and what the Safe can veto.";
 
 const made: string[] = [];
@@ -75,7 +75,8 @@ test("lead → workers → the gates' checks → review; a patch of the change's
   g("add", "-A"); g("commit", "-qm", "change");
   const changes = parseRaw(g("diff", "--raw", "-z", "--no-abbrev", "-M", base, "HEAD"));
   for (const c of changes) c.size = FILES[c.path].length;
-  const run = await runGates({ kind: "site", slug: "questions-7", changes, files: FILES, baseHasSlug: false, prBody: r.prBody!, kit: "/nonexistent", order: { seed: "s" } });
+  const basePaths = g("ls-tree", "-r", "--name-only", base).split("\n").filter(Boolean);
+  const run = await runGates({ kind: "site", slug: "questions-7", changes, files: FILES, baseHasSlug: false, basePaths, prBody: r.prBody!, kit: "/nonexistent", order: { seed: "s" } });
   assert.deepEqual(run.results.filter((x) => !x.ok), []);
 });
 
@@ -110,6 +111,26 @@ for (const [what, file] of [["the wallet guard", "web/app/_ui/guard.ts"], ["an A
     const r = await build(order(base), dir, t.driver, {});
     assert.equal(r.ok, false);
     assert.match(r.why, new RegExp(`outside the change's reach: ${file.replace(/[.]/g, "\\.")}`));
+    assert.deepEqual(t.calls.map((c) => c.role), ["lead"]);
+  });
+}
+
+for (const [what, file, want] of [
+  ["edits an existing page", "web/app/rules/page.tsx", /the plan does not add a new route: web\/app\/rules\/page\.tsx: an existing file/],
+  ["adds a file beside an existing page", "web/app/rules/Note.tsx", /the plan does not add a new route: web\/app\/rules\/Note\.tsx: web\/app\/rules\/ already exists/],
+] as const) {
+  test(`planted: a plan that ${what} stops before any worker`, async () => {
+    const { dir } = checkout();
+    made.push(dir);
+    // a base with a page of its own
+    put(dir, "web/app/rules/page.tsx", "export default function R() { return null; }\n");
+    execFileSync("git", ["-C", dir, "add", "-A"]);
+    execFileSync("git", ["-C", dir, "-c", "user.name=t", "-c", "user.email=t@t", "-c", "commit.gpgsign=false", "commit", "-qm", "rules page"]);
+    const base = execFileSync("git", ["-C", dir, "rev-parse", "HEAD"]).toString().trim();
+    const t = team(dir, { plan: { ...PLAN, tasks: [...PLAN.tasks, { goal: "Touch the rules page a little.", files: [file] }] } });
+    const r = await build(order(base), dir, t.driver, {});
+    assert.equal(r.ok, false);
+    assert.match(r.why, want);
     assert.deepEqual(t.calls.map((c) => c.role), ["lead"]);
   });
 }

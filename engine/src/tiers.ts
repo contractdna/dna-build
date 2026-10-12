@@ -103,9 +103,25 @@ const LINK = /https?:\/\/|www\.|\b[a-z0-9-]+\.(xyz|io|app|com|net|org|finance|si
 const OURS_OR_X = /^https?:\/\/((www|mobile)\.)?(x\.com|twitter\.com|genomedna\.xyz)(\/|$)/i;
 export function phishing(text: string, urls?: (string | undefined)[]) {
   const t = text.normalize("NFKC").replace(/[\u200b-\u200d]/g, "").replace(/genomedna\.xyz/gi, " ");
-  // X's url entities name where each link goes; with none, any link in the text counts (fail closed)
-  const linked = urls?.length ? urls.some((u) => !!u && !OURS_OR_X.test(u)) : LINK.test(t);
-  return SECRET_ASK.test(t) || (linked && LURE.test(t));
+  return SECRET_ASK.test(t) || (linksOut(t, urls) && LURE.test(t));
+}
+/** A link that leaves X and our site: X's url entities name where each link goes; with none, any link in the text
+ *  counts (fail closed). */
+export const linksOut = (text: string, urls?: (string | undefined)[]) =>
+  urls?.length ? urls.some((u) => !!u && !OURS_OR_X.test(u)) : LINK.test(text.normalize("NFKC").replace(/genomedna\.xyz/gi, " "));
+
+/** Spam by its shape (code, before any model): after the @handles, nothing but cashtags, hashtags, links, emoji and at
+ *  most one short word ("gm", "lfg"), or a cashtag beside a link with no question in it ("$deepthoughts8 https://t.co/\u2026",
+ *  "Locked in $DNA #contractdna https://t.co/\u2026"). Any link in the text counts here, X's own too (a bot's image or
+ *  quote). A question mark keeps a short one ("wen?"), and so does a contract ask ("ca"). */
+const CASHTAG = /\$[a-z][a-z0-9_]*/i;
+export const SPAM_SHAPE = "spam: tickers, tags, links or emoji";
+export function spamShape(text: string) {
+  const t = text.normalize("NFKC").replace(/[\u200b-\u200d]/g, "").replace(/@\w+/g, " ");
+  const asks = t.includes("?");
+  if (CASHTAG.test(t) && LINK.test(t) && !asks) return true;
+  const words = t.replace(/https?:\/\/\S+|www\.\S+/gi, " ").replace(/[$#][\p{L}\p{N}_]+/gu, " ").match(/[\p{L}\p{N}]+/gu) ?? [];
+  return words.length === 0 || (words.length === 1 && [...words[0]].length <= 3 && !asks && !/^ca$/i.test(words[0]));
 }
 
 /** `at`: when our reply went out (ms); otherwise its snowflake id says. */

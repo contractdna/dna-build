@@ -132,6 +132,6 @@ test("built server, maintenance off: / and /trade render, /token.png the same by
       assert.doesNotMatch(await res.text(), /We'll be right back\./);
     }
     assert.ok(Buffer.from(await (await fetch(`${base}/token.png`)).arrayBuffer()).equals(TOKEN));
-    assert.deepEqual(await (await fetch(`${base}/api/health`)).json(), { live: false });
+    assert.deepEqual(await (await fetch(`${base}/api/health`)).json(), { live: false, commit: null });
   });
 });

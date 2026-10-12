@@ -1,7 +1,7 @@
 // Public announcements: everything that matters reaches the site at once and X by priority.
 //  - The site: one `announce` log record per event key, with a plain-text title built by code from the fact sheet (no
 //    model), the tx link and, where there is one, a proof link.
-//  - X: the outbox drains by priority (money > ballot / mystery results and games > the dev team and experiments >
+//  - X: the outbox drains by priority (money > ballot / mystery results and games > the sequencer and experiments >
 //    status, recap and milestones > everything else) within the daily cap, keeping the day's last post for a digest
 //    of what did not fit (src/x.ts). Nothing is dropped.
 import { IDEAS_LIVE, LLM, LOG_BASE_URL, X } from "./config.ts";
@@ -22,7 +22,7 @@ export const PRIORITY: Record<string, number> = {
   update_queued: 0.9, update_allowed: 0.9, update_running: 0.9, update_cancelled: 0.9, change_queued: 0.9, change_cancelled: 0.9, change_done: 0.9, day_changes: 3,
   // the Sequencer: a new game and a retired one go to X with the games; a day with nothing good enough too
   seq_shipped: 2, game_retired: 2, seq_nothing_today: 3,
-  // the AI dev team: switched on (once), a build started (round 1) and one that missed the bar; self-improvement only
+  // the sequencer: switched on (once), a build started (round 1) and one that missed the bar; self-improvement only
   // once it ships (a site change live), is proposed to the Safe (a module), or is handed to the owners (an engine change)
   seq_online: 3, site_changed: 3, seq_started: 3, seq_killed: 3, seq_released: 3, seq_handoff: 3,
   // module code the Safe approved by hash (a chain event): it can be registered, nothing is live yet
@@ -65,7 +65,7 @@ export type SeqFacts =
   | { event: "seq_pr"; build: string; title: string; round: number; pr: number; failed: string[]; record: string }
   | { event: "seq_verdict"; build: string; title: string; round: number; verdict: "ship" | "rework" | "kill"; reason: string; record: string }
   | { event: "seq_shipped"; build: string; title: string; slug: string; game: string; fundEth: number | null; record: string }
-  | { event: "game_retired"; build: string; title: string; slug: string; game: string; days: number; returnedEth: number | null; record: string; rule?: "idle" | "evict" }
+  | { event: "game_retired"; build: string; title: string; slug: string; game: string; days: number; returnedEth: number | null; record: string; rule?: "idle" | "evict"; idleHours?: number }
   | { event: "seq_nothing_today"; day: string; tried: number; record: string }
   | { event: "seq_released"; build: string; title: string; target: "site" | "module"; record: string }
   | { event: "seq_handoff"; build: string; title: string; pr: number; record: string };
@@ -141,8 +141,11 @@ export function titleOf(f: Record<string, unknown>, raw: Record<string, unknown>
       return `Jackpot window ${f.window}: ${f.winners} ${f.winners === 1 ? "winner" : "winners"}, ${n(f.shareEth)} ETH each${who ? `: ${who}` : ""}${f.claimable ? `; ${f.claimable} claimable for ${f.claimDays} days` : ""}`;
     }
     case "jackpot_voided": return `Jackpot window ${f.window}: the draw was not settled in 7 days; ${n(f.prizeEth)} ETH returned to the pot`;
-    case "prize_claimed": return `Jackpot prize #${f.drawId}: the ${n(f.prizeEth)} ETH share was claimed`;
-    case "prize_expired": return `Jackpot prize #${f.drawId}: ${n(f.prizeEth)} ETH not claimed in ${f.claimDays} days, returned to the pot`;
+    // a claim id is a draw's share or an idea reward whose push failed; no `kind` yet, so the wording names both
+    case "prize_claimed": case "prize_expired": {
+      const what = f.kind === "prize" ? `Jackpot prize #${f.drawId}` : f.kind === "reward" ? `Idea reward (claim #${f.drawId})` : `Claim #${f.drawId} (a jackpot share or an idea reward)`;
+      return f.event === "prize_claimed" ? `${what}: ${n(f.prizeEth)} ETH was claimed` : `${what}: ${n(f.prizeEth)} ETH not claimed in ${f.claimDays} days, went to the jackpot pot`;
+    }
     case "reward_paid": {
       const to = typeof args.to === "string" && /^0x[0-9a-fA-F]{40}$/.test(args.to) ? ` to ${args.to.slice(0, 6)}…${args.to.slice(-4)}` : "";
       return `Idea reward paid: ${n(f.rewardEth)} ETH${to}${f.claimable ? `; the wallet could not take it: claim #${f.claim} within ${f.claimDays} days` : ""}`;
@@ -170,7 +173,7 @@ export function titleOf(f: Record<string, unknown>, raw: Record<string, unknown>
       : f.change === "cancel" ? `X account ${f.xUserId} cancelled its pending wallet change; ${f.wallet} stays` : `X account ${f.xUserId} linked its payout wallet ${f.wallet}`;
     // the Sequencer (src/announce.ts SeqFacts)
     // titles and reasons are model-written: plain() on every one; the X-bound lines drop a title with a link in it
-    case "seq_building": return `The AI dev team started building "${plain(f.title, 120)}"${Number(f.round) > 1 ? ` (round ${f.round})` : ""}`;
+    case "seq_building": return `The sequencer started building "${plain(f.title, 120)}"${Number(f.round) > 1 ? ` (round ${f.round})` : ""}`;
     case "seq_pr": {
       const failed = (Array.isArray(f.failed) ? f.failed : []).filter((g): g is string => typeof g === "string" && /^G\d{1,2}$/.test(g));
       return `"${plain(f.title, 120)}", round ${f.round}: pull request #${f.pr} is up; ${failed.length ? `${failed.length} ${failed.length === 1 ? "check" : "checks"} failed (${failed.join(", ")})` : "every check passed"}`;
@@ -187,13 +190,15 @@ export function titleOf(f: Record<string, unknown>, raw: Record<string, unknown>
     }
     case "game_retired": {
       const t = xTitle(f.title);
-      const back = typeof f.returnedEth === "number" ? `; ${n(f.returnedEth)} ETH went back to the treasury` : "";
+      const back = typeof f.returnedEth === "number" ? `; ${n(f.returnedEth)} ETH went back to the treasury (the Safe)` : "";
       // an eviction: a new game took its slot (at most 3 live), not a game nobody played
       if (f.rule === "evict") return `${t ?? "A game"} was retired to make room for a new game: it had the fewest players of the live games${back}. Anything won stays claimable`;
-      return `${t ?? "A game"} was retired after ${f.days} days without players${back}. Anything won stays claimable`;
+      // the idle rule: live idleHours or more and nobody played in the last idleHours (`days`: its age)
+      const idle = typeof f.idleHours === "number" ? `no players in its last ${f.idleHours} hours` : "no recent players";
+      return `${t ?? "A game"} was retired: ${idle}, after ${f.days} ${f.days === 1 ? "day" : "days"} live${back}. Anything won stays claimable`;
     }
-    case "seq_handoff": return `An engine change the AI dev team made waits for an owner's review: "${plain(f.title, 120)}" (pull request #${Number(f.pr)}). It runs only after an owner merges it and the code timelock passes`;
-    case "seq_released": return f.target === "module" ? `A fee or split module the AI dev team made waits for the Safe: "${plain(f.title, 120)}". Nothing changes until the Safe approves it` : `A site change the AI dev team made is live: "${plain(f.title, 120)}"`;
+    case "seq_handoff": return `An engine change the sequencer made waits for an owner's review: "${plain(f.title, 120)}" (pull request #${Number(f.pr)}). It runs only after an owner merges it and the code timelock passes`;
+    case "seq_released": return f.target === "module" ? `A fee or split module the sequencer made waits for the Safe: "${plain(f.title, 120)}". Nothing changes until the Safe approves it` : `A site change the sequencer made is live: "${plain(f.title, 120)}"`;
     case "seq_nothing_today": return Number(f.tried) > 0 ? "Nothing good enough today: no new game shipped" : "No new game today: nothing was ready to build";
     case "treasury_buy": return `The treasury (the Safe) bought ${e(f.dnaAmount)} DNA on the pool for ${e(f.ethSpent)} ETH${typeof f.supplyPct === "number" ? ` (${e(f.supplyPct)}% of supply)` : ""}`;
     case "treasury_transfer": {
@@ -202,21 +207,21 @@ export function titleOf(f: Record<string, unknown>, raw: Record<string, unknown>
       return typeof f.soldEth === "number" ? `The treasury (the Safe) sold ${e(f.dnaAmount)} DNA${pct} on the pool for ${e(f.soldEth)} ETH` : `The treasury (the Safe) sent ${e(f.dnaAmount)} DNA${pct} to ${to}`;
     }
     case "site_changed": { const s = plain(f.summary, 200); return `The website changed: ${plain(f.title, 60)}${s ? `. ${s}` : ""}`; }
-    case "seq_online": return "The AI dev team is switched on: it builds one idea at a time, and a game ships only after every check and one public hour";
+    case "seq_online": return "The sequencer is switched on: it builds up to 3 ideas at once, and a game ships only after every check and one public hour";
     case "seq_started": {
       const t = xTitle(f.title), why = clipReason(f.reason, 200);
-      return `${t ? `The AI dev team started building ${t}` : "The AI dev team started a new build"}${why ? `. Why this one: ${why}` : ""}`;
+      return `${t ? `The sequencer started building ${t}` : "The sequencer started a new build"}${why ? `. Why this one: ${why}` : ""}`;
     }
-    case "seq_declined": { const t = xTitle(f.title); return `The AI dev team will not build ${t ?? "an accepted idea"}: ${clipReason(f.reason, 200) || "no reason given"}`; }
+    case "seq_declined": { const t = xTitle(f.title); return `The sequencer will not build ${t ?? "an accepted idea"}: ${clipReason(f.reason, 200) || "no reason given"}`; }
     case "idea_judged": {
-      const t = xTitle(f.title), why = clipReason(f.reason, 200);
+      const t = xTitle(f.title), why = clipReason(f.reason, 200), again = f.again === true ? "Judged again under the new rules: " : "";
       // a variant: the idea could not be built as written; its closest buildable version (the title) is queued instead
-      if (f.verdict === "queued" && f.instead) return `Idea #${Number(f.idea)} can't be built as written; its closest buildable version${t ? ` ${t}` : ""} is queued for the sequencer, credited to its author${why ? `: ${why}` : ""}`;
-      return f.verdict === "queued" ? `Idea ${t ?? `#${Number(f.idea)}`} was accepted and is queued for the sequencer${why ? `: ${why}` : ""}` : `Idea ${t ?? `#${Number(f.idea)}`} was not taken${why ? `: ${why}` : ""}`;
+      if (f.verdict === "queued" && f.instead) return `${again}Idea #${Number(f.idea)} can't be built as written; its closest buildable version${t ? ` ${t}` : ""} is queued for the sequencer, credited to its author${why ? `: ${why}` : ""}`;
+      return f.verdict === "queued" ? `${again}Idea ${t ?? `#${Number(f.idea)}`} was accepted and is queued for the sequencer${why ? `: ${why}` : ""}` : `${again}Idea ${t ?? `#${Number(f.idea)}`} was not taken${why ? `: ${why}` : ""}`;
     }
     case "idea_of_day": return `Idea of the day: ${xTitle(f.title) ?? "an idea from X"}, scored ${n(f.score)} of ${n(f.scoreOf)}`;
     case "shoutout": return `Weekly shoutout to the top ${count(f.givers, "idea-giver", "idea-givers")} on X (${count(f.ideas, "idea", "ideas")} this week)`;
-    case "seq_killed": return `The AI dev team tried ${xTitle(f.title) ?? "a build"} for ${count(f.rounds, "round", "rounds")}; it did not make the bar and nothing shipped`;
+    case "seq_killed": return `The sequencer tried ${xTitle(f.title) ?? "a build"} for ${count(f.rounds, "round", "rounds")}; it did not make the bar and nothing shipped`;
     case "module_approved": {
       const h = typeof f.codehash === "string" && /^0x[0-9a-fA-F]{64}$/.test(f.codehash) ? ` ${f.codehash.slice(0, 6)}…${f.codehash.slice(-4)}` : "";
       return `The Safe approved ${f.kind === "split" ? "split" : "fee"} module code${h}. It can now be registered and tested on a plate; the live fee is unchanged`;
@@ -227,8 +232,8 @@ export function titleOf(f: Record<string, unknown>, raw: Record<string, unknown>
       const t = f.testing as { stage?: string; plate?: string } | undefined;
       const dev = (f.devTeam ?? {}) as { stage?: string; round?: number; title?: string };
       const title = xTitle(dev.title);
-      const team = dev.stage === "idle" || !dev.stage ? "the dev team is idle"
-        : `the dev team is ${dev.stage === "shipping" ? "shipping" : "building"}${title ? ` ${title}` : ""}${dev.round ? ` (round ${dev.round})` : ""}`;
+      const team = dev.stage === "idle" || !dev.stage ? "the sequencer is idle"
+        : `the sequencer is ${dev.stage === "shipping" ? "shipping" : "building"}${title ? ` ${title}` : ""}${dev.round ? ` (round ${dev.round})` : ""}`;
       return `Last ${f.hours} h: ${count(f.swaps, "swap", "swaps")}, ${e(f.volumeEth)} ETH volume, ${e(f.feesEth)} ETH in fees, ${e(f.burnedDna)} DNA burned; buyback pot ${e(f.buybackPotEth)} ETH${typeof f.jackpotPotEth === "number" ? `, jackpot pot ${e(f.jackpotPotEth)} ETH` : ""}; `
         + `${count(f.gamesLive, "game", "games")} live; ${feeLine(fee)}${t?.stage ? ` (${t.stage} on plate ${t.plate})` : ""}; ${team}`
         + (typeof f.launchTaxEth === "number" ? `; ${count(f.launchTaxSwaps, "swap", "swaps")} paid the launch tax (${e(f.launchTaxVolumeEth)} ETH volume): ${e(f.launchTaxEth)} ETH sent to buyback-and-burn` : "");

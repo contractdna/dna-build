@@ -507,7 +507,7 @@ describe("forge-backed gates", { skip }, () => {
     assert.ok(run.game?.initCode.startsWith("0x60"));
   });
 
-  test("the reference game the dev team copies (contracts/{src,test}/games/example) passes every gate", async () => {
+  test("the reference game the sequencer copies (contracts/{src,test}/games/example) passes every gate", async () => {
     const S = "contracts/src/games/reference/Example.sol", T = "contracts/test/games/reference/Example.t.sol";
     const f: Record<string, string> = {
       [S]: readFileSync(join(KIT, "src/games/example/Example.sol"), "utf8"),

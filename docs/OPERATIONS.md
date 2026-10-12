@@ -22,7 +22,7 @@ One OpenRouter account with one key per consumer, and one small xAI key (routing
 |---|---|---|
 | `OPENROUTER_API_KEY_ENGINE` | engine (an enclave allowed env) | every engine model call except server-side search |
 | `XAI_API_KEY` | engine (an enclave allowed env) | server-side search only, web and X (`research`, `x-scout`) |
-| `OPENROUTER_API_KEY_SEQUENCER` | the Sequencer's GitHub build environment | the dev team (Claude Agent SDK) |
+| `OPENROUTER_API_KEY_SEQUENCER` | the Sequencer's GitHub build environment | the sequencer (Claude Agent SDK) |
 | `OPENROUTER_API_KEY_STUDIO` | studio, only with `STUDIO_VIA=openrouter` | post images and their rubric |
 
 Keep each key in the operating system's secret store and pipe it straight into Railway, the CVM's encrypted env or the GitHub secret;

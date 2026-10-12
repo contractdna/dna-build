@@ -27,12 +27,14 @@ test("allies: Hazar is one, by name; 'hazard' is not", () => {
   assert.ok(postFilter("hazar is mid", new Set()).some((i) => /ally/.test(i)), "loosened slang never reaches an ally");
 });
 
-test("shapes: 4 a call, least used first, never the last one used for the same event; reasoning and complaint only when they fit", () => {
+test("shapes: 4 a call, least used first, never the last one used for the same event; replies plain; reasoning and complaint only when they fit", () => {
   assert.deepEqual([...SHAPE_KEYS].sort(), ["complaint", "deadpan", "diary", "hype", "plain", "reasoning", "roast", "self-review", "status ledger", "technical", "two-panel"]);
   // a person's idea and its verdict: the plain shape only, never a riddle or a joke
   assert.deepEqual(shapesFor("reply", factSheet({ event: "reply", category: "idea", verdict: "out" })), ["plain"]);
   assert.deepEqual(shapesFor("post", factSheet({ event: "idea_judged", idea: 4, title: "Last Click", verdict: "rejected", reason: "x" })), ["plain"]);
-  assert.ok(!shapesFor("reply", factSheet({ event: "reply", category: "state_question" })).includes("plain"));
+  // every reply is plain too: a direct answer, never a riddle
+  for (const category of ["state_question", "rules_question", "price_fud", "airdrop_ask", "bait", "greeting"])
+    assert.deepEqual(shapesFor("reply", factSheet({ event: "reply", category }), "restless"), ["plain"], category);
   const plain = shapesFor("post", factSheet({ event: "recap", days: 7 }), "steady");
   assert.ok(!plain.includes("reasoning") && !plain.includes("complaint"));
   assert.ok(shapesFor("post", factSheet({ event: "status", hours: 6, mind: { why: "volatile hours pay more", confidencePct: 60 } }), "steady").includes("reasoning"));

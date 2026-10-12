@@ -769,7 +769,7 @@ test("X: a jackpot draw posts the winners and the share from the fact sheet; cod
   const r = await xM.sendHandler.run(job()) as { tweetId: string };
   assert.ok(r.tweetId);
   const post = fakes.calls.findLast((c) => c.path === "/2/tweets")!.body.text as string;
-  assert.equal(post, `Synthetic post about a jackpot drawn event.\nproof https://genomedna.xyz/play/draw/9\nhttps://etherscan.io/tx/${h}`, "the proof page (every winner's full address) and the tx, appended by code");
+  assert.equal(post, `Jackpot window 9 drawn: 2 winners, 0.05 ETH each (0.1 ETH in all). 1 prize can be claimed within 7 days.\nproof https://genomedna.xyz/play/draw/9\nhttps://etherscan.io/tx/${h}`, "the proof page (every winner's full address) and the tx, appended by code");
   const [rec] = await sql<{ doc: { facts: Record<string, unknown> } }[]>`select doc from log where kind = 'x_post' and doc->>'status' = 'attempt' order by seq desc limit 1`;
   const { bounds: _, day: _d, first: _f, earlier: _e, hoursSinceLaunch: _h, ...facts } = rec.doc.facts;
   assert.deepEqual(facts, { event: "jackpot_drawn", window: 9, winners: 2, shareEth: 0.05, prizeEth: 0.1, claimable: 1, claimDays: 7 }, "paid out = share × winners; the unfilled ranks went back to the pot");

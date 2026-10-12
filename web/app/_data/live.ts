@@ -8,6 +8,7 @@ import { activeModules, compact, eth, FEED_EVENTS, fmtParam, OPS, SEQ_STAGES, sh
 import { FEE, PROJECT_FEE_CAP } from "./launchFee";
 import * as m from "./mock";
 import { abiOf, type Ship } from "../play/gameSource";
+import { drawable, type ParamsAnchor, type ParamsRec, prizeOf, topUpOf } from "../play/jackpot";
 
 export { FEED_EVENTS, toFeed };
 import type { Announcement, SeqEvent, AutonomyLevel, Clone, Leakage, Epoch, Experiment, Flow, Hex, Idea, Intervention, JournalEntry, MemoryEntry, Module, Pipeline, QueuedOp, SecurityItem, SplitShare, Thread, ThreadStep, Vault } from "./types";
@@ -464,8 +465,12 @@ type Game = {
 };
 export type PlayLive = {
   jackpot: {
-    potEth: string; prizeEth: string /* an upper bound: the draw first tops the VRF subscription up from the pot */;
+    potEth: string;
+    prizeEth: string | null; // about what a draw now pays (min(pot − VRF top-up, 3 ETH)); null: under the gate, the draw waits
+    gateEth: string; // the least pot a draw needs: 0.25 ETH + the VRF top-up
     window: number; windowEndsAt: string | null; stage: "window open" | "list posted" | "drawing" | "settling";
+    drawn: boolean; // this window's rules were anchored before it opened (engine paramsOf); else it is never drawn
+    next: { window: number; endsAt: string; drawn: boolean }; // the window after this one
     lastWin: { window: number; shareEth: string; at: string; winners: { rank: number; account: Hex; pushed: boolean }[] } | null;
   };
   locked: { dna: string; positions: number; stakedPct: number; votesOpen: boolean };
@@ -478,17 +483,24 @@ const staked = (locked: string, supply: string | undefined) => {
   const s = BigInt(supply ?? "0");
   return { stakedPct: s > BigInt(0) ? Number((BigInt(locked) * BigInt(10_000)) / s) / 100 : 0, votesOpen: s > BigInt(0) && BigInt(locked) * BigInt(100) >= s };
 };
-const PRIZE_CAP = BigInt("3000000000000000000"); // GamePot.PRIZE_CAP (3 ETH)
 const MYSTERY = ["", "sealed", "revealed", "queued for testing", "rejected by the safety checks", "broken (not revealed in time)", "cancelled by the Safe"];
 /** LIVE /play from the indexer's game snapshot + finalized game events; undefined until the contracts are deployed. */
 export const getPlay = memo(async (): Promise<PlayLive | undefined> => {
   const g = (await state<{ game?: Game }>("chain"))?.game;
-  if (!g?.pot) return undefined;
+  // window 0: deployed but not initialized by the Safe yet, so no window is open (falls into the unread copy)
+  if (!g?.pot || Number(g.pot.windowId) === 0) return undefined;
   const p = g.pot;
   const [lastWin] = await rows(["Drawn"], true, 1);
   const won = lastWin ? await db()<ChainRow[]>`select block::int as block, log_index, tx, at, address, event, args from chain_log where event = 'Winner' and tx = ${lastWin.tx} order by log_index` : [];
   const supply = (await state<{ totalSupply?: string }>("chain"))?.totalSupply;
-  const prize = BigInt(p.jackpotPot) < PRIZE_CAP ? BigInt(p.jackpotPot) : PRIZE_CAP;
+  // simplification: the indexer's snapshot has no VRF subscription balance, so the top-up is taken as the whole SUB_MIN
+  // (exact before the first draw: the subscription starts empty); a funded subscription only makes the prize larger
+  const { gate, prize } = prizeOf(BigInt(p.jackpotPot), topUpOf());
+  // which windows get drawn: each window's newest params record and params anchor (the engine's signed log)
+  const w = Number(p.windowId), refs = [w, w + 1].flatMap((x) => [`jackpot:params:${x}`, `jackpot:params-anchor:${x}`]);
+  const recs = new Map<string, Args>((await db()<{ ref: string; doc: Args; seq: string }[]>`select distinct on (ref) ref, doc, seq::text as seq from log
+    where kind = 'game' and ref = any(${refs}) order by ref, log.seq desc`).map((r) => [r.ref, { ...r.doc, _seq: r.seq }]));
+  const drawnOf = (x: number, start: number) => drawable(recs.get(`jackpot:params:${x}`) as ParamsRec | undefined, recs.get(`jackpot:params-anchor:${x}`) as ParamsAnchor | undefined, start);
   // ballot: the newest proposal, tallies from each position's latest vote (a re-vote moves its weight)
   const [bp] = await rows(["BallotProposed"], true, 1);
   let ballot: PlayLive["ballot"] = null;
@@ -521,7 +533,11 @@ export const getPlay = memo(async (): Promise<PlayLive | undefined> => {
   }
   return {
     jackpot: {
-      potEth: eth(p.jackpotPot), prizeEth: eth(prize.toString()), window: Number(p.windowId), windowEndsAt: Number(p.windowEnd) ? iso(p.windowEnd) : null,
+      potEth: eth(p.jackpotPot), prizeEth: prize === null ? null : eth(prize.toString()), gateEth: eth(gate.toString()),
+      window: w, windowEndsAt: Number(p.windowEnd) ? iso(p.windowEnd) : null,
+      drawn: drawnOf(w, Number(p.windowStart)),
+      // a late roll never moves a start: window w + 1 runs from this window's end for one drawInterval
+      next: { window: w + 1, endsAt: iso(Number(p.windowEnd) + Number(p.drawInterval)), drawn: drawnOf(w + 1, Number(p.windowEnd)) },
       stage: p.draw.fulfilledAt ? "settling" : p.draw.reqId !== "0" ? "drawing" : p.draw.window !== "0" ? "list posted" : "window open",
       lastWin: lastWin ? { window: Number(lastWin.args.window), shareEth: eth(lastWin.args.share), at: lastWin.at.toISOString(),
         winners: won.map((r) => ({ rank: Number(r.args.rank), account: r.args.account, pushed: String(r.args.prizeId) === "0" })) } : null,

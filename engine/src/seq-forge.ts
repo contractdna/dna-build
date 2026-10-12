@@ -251,7 +251,7 @@ export function failedTest(name: string, t: { status: string; reason?: string | 
 
 export type GateInput = {
   slug: string; changes: Change[]; files: Record<string, string>; baseHasSlug: boolean; prBody: string; kit: string;
-  /** the base's paths (a site change: no new file named like one of them but for case) */
+  /** the base's paths (a site change: its files, their folders and its pages' URLs must be new there) */
   basePaths?: string[];
   /** an engine change: the changed files' texts at the base (what G16 compares against) */
   baseFiles?: Record<string, string>;

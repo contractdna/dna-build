@@ -4,8 +4,8 @@
 // AST/ABI/bytecode); src/seq-forge.ts builds the workspace and runs forge (tests, mutants, gas, fork sim).
 //  G1 paths, G2 deps, G3 Solidity patterns, G4 bytecode, G5 ABI/structure, G11 web, G12 text/secrets, G13 address,
 //  G14 identity. Every gate has planted-violation fixtures (test/seq-gates.test.ts).
-// Each order kind has its own reach (scopeIssue): a game its three new folders, a site change the site's pages and the
-// public docs. Behind every kind's reach stands one list no order ever reaches (NEVER).
+// Each order kind has its own reach (scopeIssue): a game its three new folders, a site change new files in a new route
+// folder of the site. Behind every kind's reach stands one list no order ever reaches (NEVER).
 import { createHash } from "node:crypto";
 import { posix } from "node:path";
 import ts from "typescript";
@@ -38,9 +38,10 @@ export function parseRaw(raw: string): (Change & { sha: string })[] {
 export const SLUG = /^[a-z][a-z0-9-]{2,30}$/;
 /** Slugs no build may take: the reference game, the page template, Next's names and the game templates' folders. */
 export const RESERVED = new Set(["example", "template", "layout", "api", "daily-checkin", "last-buyer", "raffle"]);
-/** The only folders a build may write: a game's own three; a site change's pages and docs (scopeIssue narrows them). */
+/** The only folders a build may write: a game's own three; a site change's pages (scopeIssue and siteNewIssues narrow
+ *  them to new files in a new route folder). */
 export const roots = (slug: string, kind: Kind = "game") =>
-  kind === "site" ? ["web/app/", "docs/"]
+  kind === "site" ? ["web/app/"]
     : kind === "engine" ? ["engine/src/", "engine/test/"]
     : kind === "module" ? [`contracts/src/modules/${slug}/`, `contracts/test/modules/${slug}/`]
       : [`contracts/src/games/${slug}/`, `contracts/test/games/${slug}/`, `web/app/g/${slug}/`];
@@ -79,16 +80,14 @@ const neverIssue = (path: string) => NEVER.find(([re]) => re.test(path))?.[1];
 
 /** A site change's files: page.tsx, PascalCase components, CSS modules and lowercase .ts modules, in plain route
  *  folders; never the site's data, game, API or proof code, its shared shell and scene, or the security and Sequencer
- *  pages. Docs: docs/<name>.md, but not the docs that tell people how to verify, operate or build with DNA (in any
- *  case), and no new doc named like an existing one but for case. */
+ *  pages. Only new files, in a folder new at the base (siteNewIssues). No docs: nothing on the site renders docs/. */
 const SITE_OFF = /^web\/app\/(_data|_live|_ui|_dna|g|api|proof|security|sequencer|play)\//; // play: the game panel sends transactions
-const SITE_DIR = /^([a-z0-9_][a-z0-9_-]*|\([a-z0-9-]+\))$/; // no dynamic segment: every page a change reaches can be opened as it is
+// no route group (it could take any URL, / included), no private or dynamic folder: every page a change adds is a plain
+// URL of its own that can be opened as it is
+const SITE_DIR = /^[a-z0-9][a-z0-9-]*$/;
 const SITE_NAME = /^(page\.tsx|[A-Z][A-Za-z0-9]*\.tsx|[A-Za-z0-9_-]+\.module\.css|[a-z][a-z0-9-]*\.ts)$/;
-const DOC = /^docs\/[A-Za-z0-9_-]+\.md$/;
 /** An engine change's files: a source file, a test, or a test fixture (the parts no order reaches are in NEVER). */
 const ENGINE_FILE = /^engine\/(src\/[a-z][a-z0-9-]*\.ts|test\/[a-z][a-z0-9-]*(\.test)?\.ts|test\/fixtures\/([a-z0-9_-]+\/)*[a-z0-9_-]+\.(json|txt))$/;
-// [b]: the publish guard (src/anonymity.ts) refuses that doc's plain name in a published file; this matches it as written
-const DOCS_OFF = /^docs\/(verify|security-model|run[b]ook|operations|sequencer)\.md$/i;
 
 /** Why `path` is out of an order's reach (null: within it). */
 export function scopeIssue(kind: Kind, slug: string, path: string): string | null {
@@ -97,21 +96,22 @@ export function scopeIssue(kind: Kind, slug: string, path: string): string | nul
   if (never) return `never reachable (${never})`;
   if (kind === "game" || kind === "module") return under(path, roots(slug, kind)) ? null : `outside the ${kind}'s folders`;
   if (kind === "engine") return ENGINE_FILE.test(path) ? null : "not an engine source or test file (engine/src/<name>.ts, engine/test/<name>.test.ts or a test fixture)";
-  if (path.startsWith("docs/")) return DOC.test(path) && !DOCS_OFF.test(path) ? null : "not a public doc (docs/<name>.md; not the verify, security, operations or Sequencer docs)";
-  if (!path.startsWith("web/app/")) return "outside the site's pages and public docs";
+  if (!path.startsWith("web/app/")) return "outside the site's pages";
   if (SITE_OFF.test(path)) return "the site's data, shared shell, games, API, proof, security or Sequencer pages";
   const parts = path.slice("web/app/".length).split("/");
   const name = parts.pop()!;
-  if (!parts.every((p) => SITE_DIR.test(p))) return "a folder that is not a plain route";
   if (NEXT_FILES.test(name) || !SITE_NAME.test(name)) return "not page.tsx, a PascalCase component, a CSS module or a lowercase .ts module";
+  if (!parts.length) return "not in a route folder (a site change adds a new route folder under web/app/)";
+  if (!parts.every((p) => SITE_DIR.test(p))) return "a folder that is not a plain route (no route group, private or dynamic folder)";
   return null;
 }
 
 // ---------------------------------------------------------------- G1 paths
 
 /** G1: a game (or a module): every change is a new regular text file inside its own folders, which are new at the base. A
- *  site change: files added, changed or removed, each regular text within its reach (scopeIssue). Nothing in NEVER,
- *  ever. */
+ *  site change: new regular text files only, within its reach (scopeIssue), in a folder new at the base and never on a
+ *  URL an existing page serves (siteNewIssues). An engine change: files added, changed or removed within its reach.
+ *  Nothing in NEVER, ever. */
 export function pathGate(changes: Change[], slug: string, baseHasSlug: boolean, kind: Kind = "game", base: { paths: string[] } = { paths: [] }): GateResult {
   if (kind === "site" || kind === "engine") return scopedPathGate(changes, slug, kind, base.paths);
   const out: string[] = [];
@@ -141,22 +141,23 @@ function scopedPathGate(changes: Change[], slug: string, kind: Kind, basePaths: 
   const out: string[] = [];
   if (!SLUG.test(slug)) out.push(`name ${JSON.stringify(slug)} is not valid`);
   if (changes.length === 0) out.push("no changes");
-  const lower = new Map(basePaths.map((p) => [p.toLowerCase(), p]));
   for (const c of changes) {
     for (const p of c.oldPath ? [c.path, c.oldPath] : [c.path]) {
       const why = scopeIssue(kind, slug, p);
       if (why) out.push(`${p}: ${why}`);
     }
     if (c.status === "D") continue;
-    // a new file named like an existing one but for case (docs/Verify.md beside docs/VERIFY.md)
-    const twin = lower.get(c.path.toLowerCase());
-    if (c.status !== "M" && twin && twin !== c.path) out.push(`${c.path}: named like ${twin} but for case`);
     if (c.status === "T") out.push(`${c.path}: its type changed`);
     if (c.mode === "120000") out.push(`${c.path}: a symlink`);
     else if (c.mode === "160000") out.push(`${c.path}: a submodule`);
     else if (c.mode !== "100644") out.push(`${c.path}: file mode ${c.mode} (only 100644)`);
     if (c.binary) out.push(`${c.path}: a binary file`);
     if (c.size > MAX_FILE) out.push(`${c.path}: ${c.size} bytes (max ${MAX_FILE})`);
+  }
+  // a site change only adds pages: nothing that exists is changed, renamed or removed (the home page, the trade page)
+  if (kind === "site") {
+    for (const c of changes) if (c.status !== "A") out.push(`${c.path}: ${c.status === "D" ? "deleted" : c.status === "R" ? "renamed" : c.status === "C" ? "copied" : "changed"} (a site change only adds new files)`);
+    out.push(...siteNewIssues(changes.filter((c) => c.status === "A").map((c) => c.path), basePaths));
   }
   // a test goes only with its code: removing engine/test/<name>… needs engine/src/<name>.ts removed in the same change
   if (kind === "engine") {
@@ -171,6 +172,45 @@ function scopedPathGate(changes: Change[], slug: string, kind: Kind, basePaths: 
     out.push("an engine change needs its tests: add or change a test in engine/test/");
   }
   return gate("G1", "paths", out);
+}
+
+/** A base page's or route handler's URL segments (route groups and parallel slots dropped); null: not a route (a file
+ *  in a private folder, or no page or route file). */
+const routeOf = (path: string): string[] | null => {
+  if (!/^web\/app\/(.+\/)?(page|route)\.[jt]sx?$/.test(path)) return null;
+  const segs = path.slice("web/app/".length).split("/").slice(0, -1);
+  return segs.some((x) => x.startsWith("_")) ? null : segs.filter((x) => !/^(\(.*\)|@.*)$/.test(x));
+};
+/** Does the route `e` (segments as written, dynamic ones in brackets) serve the plain URL `n`? */
+const serves = (e: string[], n: string[]) => {
+  for (let i = 0; i < e.length; i++) {
+    if (/^\[\[\.\.\..+\]\]$/.test(e[i])) return n.length >= i; // an optional catch-all
+    if (/^\[\.\.\..+\]$/.test(e[i])) return n.length > i; // a catch-all
+    if (i >= n.length || (!/^\[.+\]$/.test(e[i]) && e[i] !== n[i])) return false;
+  }
+  return e.length === n.length;
+};
+/** Why new site files may not be added at this base: each must be new, in a folder new at the base (never beside an
+ *  existing page or in a folder the site already has), and a new page must take no URL an existing page or route
+ *  serves (a dynamic segment or a catch-all included: a static page would win over it). With no base paths, nothing
+ *  can be checked: refused. */
+export function siteNewIssues(paths: string[], basePaths: string[]): string[] {
+  if (!basePaths.length) return ["no base tree to check the site change against"];
+  const out: string[] = [];
+  const files = new Set(basePaths);
+  const dirs = new Set(basePaths.flatMap((p) => p.split("/").slice(0, -1).map((_, i, a) => `${a.slice(0, i + 1).join("/")}/`)));
+  const routes = basePaths.map(routeOf).filter((r): r is string[] => r !== null);
+  for (const p of paths) {
+    if (!p.startsWith("web/app/")) continue; // scopeIssue says why
+    if (files.has(p)) { out.push(`${p}: an existing file (a site change only adds new files)`); continue; }
+    const dir = p.slice(0, p.lastIndexOf("/") + 1);
+    if (dirs.has(dir)) out.push(`${p}: ${dir} already exists (a site change puts its files in a new route folder)`);
+    if (posix.basename(p) !== "page.tsx") continue;
+    const url = dir.slice("web/app/".length).split("/").filter(Boolean);
+    const taken = routes.find((e) => serves(e, url));
+    if (taken) out.push(`${p}: /${url.join("/")} is a URL the existing route /${taken.join("/")} serves`);
+  }
+  return out;
 }
 
 // ---------------------------------------------------------------- G2 deps
@@ -584,6 +624,44 @@ const SITE_STRINGS = BANNED_STRINGS.filter((re) => !/approve|permit/.test(re.sou
 const ADDRESS = /0x[0-9a-fA-F]{40}/;
 /** A game's page files together, in UTF-8 bytes: about 12× the largest template (game.json's ABI is most of it). */
 const MAX_PAGE = 200_000;
+/** A site page's link or source: a path on the site written out (a literal, or a template whose text starts with one),
+ *  so the URL can never be built into another site ("/" + "/x.example", a tab or a backslash after the slash). */
+const SITE_URL_ATTRS = new Set(["href", "xlinkHref", "src"]);
+const SITE_PATH = /^\/[A-Za-z0-9_.~%?#=&-]/;
+const sitePath = (e: ts.Expression | undefined): boolean => {
+  while (e && ts.isParenthesizedExpression(e)) e = e.expression;
+  if (!e) return false;
+  if (ts.isStringLiteralLike(e)) return e.text === "/" || SITE_PATH.test(e.text) || /^#[A-Za-z0-9_-]*$/.test(e.text);
+  return ts.isTemplateExpression(e) && SITE_PATH.test(e.head.text);
+};
+/** What a site page may not name at all (beyond BANNED_IDS): the raw-HTML prop's parts and the element cloner that
+ *  could hand it to a tag. */
+const SITE_IDS = new Set(["__html", "dangerouslySetInnerHTML", "cloneElement"]);
+/** A site page's attributes that are off whatever their value: next/link's `as` overrides the href the gate read. */
+const SITE_ATTRS_OFF = new Set(["as"]);
+
+/** A site page's tag: a lowercase intrinsic (never BANNED_TAGS or <style>), or a plain name this file binds only as an
+ *  import (G2 holds the sources), a function declaration or a const arrow. `const S = ("scr" + "ipt") as "div"; <S>`
+ *  renders a <script> (the site's CSP allows inline scripts), so a name bound any other way, and a member (<x.y>), is
+ *  refused. `seen`: the file's names already read. */
+function siteTagIssue(sf: ts.SourceFile, tag: ts.JsxTagNameExpression, seen: Map<string, boolean>): string | null {
+  if (!ts.isIdentifier(tag)) return `<${tag.getText(sf)}> (a tag is a plain name)`;
+  const name = tag.text;
+  if (/^[a-z]/.test(name)) return BANNED_TAGS.has(name) || name === "style" ? `<${name}>` : null;
+  let ok = seen.get(name);
+  if (ok === undefined) {
+    let good = 0, other = 0;
+    walk(sf, (n) => {
+      if (!ts.isIdentifier(n) || n.text !== name) return;
+      const p = n.parent;
+      if (((ts.isImportSpecifier(p) || ts.isImportClause(p) || ts.isFunctionDeclaration(p)) && p.name === n) || (ts.isVariableDeclaration(p) && p.name === n && !!p.initializer && ts.isArrowFunction(p.initializer) && !!(ts.getCombinedNodeFlags(p) & ts.NodeFlags.Const))) good++;
+      else if ((ts.isVariableDeclaration(p) || ts.isParameter(p) || ts.isBindingElement(p) || ts.isFunctionExpression(p) || ts.isClassLike(p) || ts.isNamespaceImport(p) || ts.isEnumDeclaration(p) || ts.isTypeParameterDeclaration(p)) && p.name === n) other++;
+    });
+    ok = good > 0 && other === 0;
+    seen.set(name, ok);
+  }
+  return ok ? null : `<${name}> is not an import, a function declaration or a const arrow of this file`;
+}
 
 /** G11: the static tripwire on the game's page. Only page.tsx, PascalCase components, CSS modules and game.json, at most
  *  MAX_PAGE bytes together, and no Next file convention; every .tsx starts with "use client" (game code never runs on the server); page.tsx exports
@@ -591,8 +669,12 @@ const MAX_PAGE = 200_000;
  *  computed member access (only a numeric literal key); no tags that load, navigate or post (meta, link, base, object,
  *  embed, form, frames, scripts) and no attributes that do; no strings (template parts included) naming wallet methods,
  *  approvals, URLs (protocol-relative too) or addresses (game.json holds the one address). G15 and the CSP stand behind
- *  it. A site change's code is held to the same reach rules, but may run on the server (no "use client" needed), its
- *  page.tsx may also export its metadata, and its file names are G1's. */
+ *  it. A site change's code is held to the same reach rules, and more: it renders on the server only (no "use client",
+ *  no on… handler attribute), its page.tsx may also export its metadata (one const, a title and a description, the name
+ *  used nowhere else), no JSX spread, no <style>, no namespaced attribute, no `as`, every tag an intrinsic or a name
+ *  the file binds as an import, a function or a const arrow (siteTagIssue), every href and src a path on the site
+ *  written out, and its text and strings pass the public text screen (no handles, cashtags or other sites); its file
+ *  names are G1's. */
 export function webGate(files: Record<string, string>, slug: string, kind: Kind = "game"): GateResult {
   const out: string[] = [];
   const site = kind === "site";
@@ -618,24 +700,50 @@ export function webGate(files: Record<string, string>, slug: string, kind: Kind 
     const sf = ts.createSourceFile(path, text, ts.ScriptTarget.Latest, true, name.endsWith(".ts") ? ts.ScriptKind.TS : ts.ScriptKind.TSX);
     const where = (n: ts.Node) => `${path}:${sf.getLineAndCharacterOfPosition(n.getStart()).line + 1}`;
     const first = sf.statements[0];
+    // a site page is server-rendered HTML only: no client code on the main site
+    if (site && sf.statements.some((st) => ts.isExpressionStatement(st) && ts.isStringLiteral(st.expression) && st.expression.text === "use client")) out.push(`${path}: "use client" (a site page renders on the server only)`);
     if (!site && (!first || !ts.isExpressionStatement(first) || !ts.isStringLiteral(first.expression) || first.expression.text !== "use client")) out.push(`${path}: must start with "use client" (game code never runs on the server)`);
     if (name === "page.tsx") {
+      let metaExports = 0;
       for (const st of sf.statements) {
         const named = (ts.canHaveModifiers(st) && (ts.getModifiers(st) ?? []).some((m) => m.kind === ts.SyntaxKind.ExportKeyword) && !(ts.getModifiers(st) ?? []).some((m) => m.kind === ts.SyntaxKind.DefaultKeyword)) || ts.isExportDeclaration(st);
         const metadata = site && ts.isVariableStatement(st) && st.declarationList.declarations.every((x) => ts.isIdentifier(x.name) && x.name.text === "metadata");
         if (named && !metadata) out.push(`${where(st)}: page.tsx exports only its default${site ? " and its metadata" : ""} (no route segment config)`);
+        // the metadata is a title and a description: nothing else of it reaches the page's head (no icons, links, verification or other meta)
+        if (named && metadata) {
+          metaExports++;
+          if (!((st as ts.VariableStatement).declarationList.flags & ts.NodeFlags.Const)) out.push(`${where(st)}: metadata is a const`);
+          for (const x of (st as ts.VariableStatement).declarationList.declarations) {
+            const o = x.initializer;
+            const ok = o && ts.isObjectLiteralExpression(o) && o.properties.every((q) => ts.isPropertyAssignment(q) && ts.isIdentifier(q.name) && (q.name.text === "title" || q.name.text === "description"));
+            if (!ok) out.push(`${where(st)}: metadata is an object with a title and a description only`);
+          }
+        }
+      }
+      // and the name appears nowhere else: not changed after the check ((metadata as Metadata).openGraph = …)
+      if (site) {
+        let uses = 0;
+        walk(sf, (n) => { if (ts.isIdentifier(n) && n.text === "metadata") uses++; });
+        if (uses > metaExports) out.push(`${path}: metadata is named only as its one const export`);
       }
     }
+    const tags = new Map<string, boolean>();
     const visit = (n: ts.Node) => {
       if (ts.isIdentifier(n) || ts.isPrivateIdentifier(n)) {
         // an attribute's name on a site page (<details open>) reaches no global; its value is still read
         const attrName = site && ts.isJsxAttribute(n.parent) && n.parent.name === n;
         const local = LOCAL_OK.has(n.text) && ts.isIdentifier(n) && localName(n);
-        if (BANNED_IDS.has(n.text) && !attrName && !local) out.push(`${where(n)}: ${n.text}`);
+        if ((BANNED_IDS.has(n.text) || (site && SITE_IDS.has(n.text))) && !attrName && !local) out.push(`${where(n)}: ${n.text}`);
       } else if (ts.isStringLiteralLike(n) || ts.isJsxText(n) || n.kind === ts.SyntaxKind.TemplateHead || n.kind === ts.SyntaxKind.TemplateMiddle || n.kind === ts.SyntaxKind.TemplateTail) {
         const s = (n as ts.LiteralLikeNode).text;
         for (const re of site ? SITE_STRINGS : BANNED_STRINGS) if (re.test(s)) out.push(`${where(n)}: string matching ${re}`);
         if (ADDRESS.test(s)) out.push(`${where(n)}: an address literal (only game.json holds the game's address)`);
+        // a site page's words and strings, as the public text screen reads a post (an import's path is no text)
+        const spec = (ts.isImportDeclaration(n.parent) || ts.isExportDeclaration(n.parent)) && n.parent.moduleSpecifier === n;
+        if (site && !spec) {
+          for (const i of publicTextIssues(s)) out.push(`${where(n)}: ${i === "url" ? "another site's name or link" : `a ${i}`} in the page's text`);
+          if (SITE_IDS.has(s.trim())) out.push(`${where(n)}: ${s.trim()}`);
+        }
       } else if (ts.isNumericLiteral(n) || ts.isBigIntLiteral(n)) {
         if (/^0x[0-9a-f]{30,}/i.test(n.text)) out.push(`${where(n)}: a long hex literal`);
       } else if (n.kind === ts.SyntaxKind.ImportKeyword && ts.isCallExpression(n.parent)) {
@@ -645,12 +753,28 @@ export function webGate(files: Record<string, string>, slug: string, kind: Kind 
       } else if (ts.isTaggedTemplateExpression(n)) {
         out.push(`${where(n)}: tagged template`);
       } else if (ts.isJsxOpeningElement(n) || ts.isJsxSelfClosingElement(n)) {
-        // intrinsic elements only (lowercase, as React reads them); a capitalised tag is a component, e.g. next/link's <Link>
-        const tag = n.tagName.getText(sf);
-        if (/^[a-z]/.test(tag) && BANNED_TAGS.has(tag)) out.push(`${where(n)}: <${tag}>`);
+        if (site) {
+          const issue = siteTagIssue(sf, n.tagName, tags);
+          if (issue) out.push(`${where(n)}: ${issue}`);
+        } else {
+          // intrinsic elements only (lowercase, as React reads them); a capitalised tag is a component, e.g. next/link's <Link>
+          const tag = n.tagName.getText(sf);
+          if (/^[a-z]/.test(tag) && BANNED_TAGS.has(tag)) out.push(`${where(n)}: <${tag}>`);
+        }
+      } else if (site && ts.isJsxAttribute(n) && !ts.isIdentifier(n.name)) {
+        // a namespaced attribute (xlink:href) is not the href the gate reads
+        out.push(`${where(n)}: a namespaced attribute ${n.name.getText(sf)}`);
       } else if (ts.isJsxAttribute(n) && ts.isIdentifier(n.name)) {
-        if (BANNED_ATTRS.has(n.name.text)) out.push(`${where(n)}: attribute ${n.name.text}`);
+        if (BANNED_ATTRS.has(n.name.text) || (site && SITE_ATTRS_OFF.has(n.name.text))) out.push(`${where(n)}: attribute ${n.name.text}`);
         if (/^on[A-Z]/.test(n.name.text) && n.initializer && ts.isStringLiteral(n.initializer)) out.push(`${where(n)}: inline event handler string`);
+        else if (site && /^on[A-Z]/i.test(n.name.text)) out.push(`${where(n)}: event handler ${n.name.text} (a site page renders on the server only)`);
+        const v = n.initializer && ts.isJsxExpression(n.initializer) ? n.initializer.expression : (n.initializer as ts.Expression | undefined);
+        if (site && SITE_URL_ATTRS.has(n.name.text) && !sitePath(v)) out.push(`${where(n)}: ${n.name.text} must be a path on this site, written out ("/rules", or \`/journal/\${day}\`)`);
+      } else if (site && ts.isJsxSpreadAttribute(n)) {
+        out.push(`${where(n)}: a spread attribute (write each attribute out)`);
+      } else if (site && (ts.isPropertyAssignment(n) || ts.isShorthandPropertyAssignment(n)) && (ts.isIdentifier(n.name) || ts.isStringLiteral(n.name)) && SITE_URL_ATTRS.has(n.name.text) && !(ts.isPropertyAssignment(n) && sitePath(n.initializer))) {
+        // a link handed to a shared component ({ back: { href: "/lab", label } })
+        out.push(`${where(n)}: ${n.name.text} must be a path on this site, written out`);
       }
       ts.forEachChild(n, visit);
     };

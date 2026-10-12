@@ -5,7 +5,7 @@ import { test } from "node:test";
 import { CT, CT_STAGE, ctSlots, ctVerdict, dueSlot, planDay, topicLine, watchOf } from "../src/ct.ts";
 import { PRIORITY, priorityOf } from "../src/announce.ts";
 import { prompt } from "../src/persona.ts";
-import { allyIssues, claimIssues, factNumbers, factSheet, flatTake, parrotIssue, postFilter, shapesFor, voiceIssues, WRITER, writerCall, writerSystem } from "../src/voice.ts";
+import { allyIssues, claimIssues, factNumbers, factSheet, flatTake, parrotIssue, postFilter, shapesFor, unclearReflection, voiceIssues, WRITER, writerCall, writerSystem } from "../src/voice.ts";
 
 const MIN = 60_000;
 const hourOf = (at: number) => { const d = new Date(at); return d.getUTCHours() + d.getUTCMinutes() / 60; };
@@ -94,7 +94,8 @@ test("guards: a take's fact sheet keeps only its own fields; v4 and the day are 
 
 test("guards: every hard line holds on a take", () => {
   assert.deepEqual(guards("Everyone wants an AI that sounds honest. I'd settle for an AI whose v4 hook can't change its own cap."), []);
-  assert.deepEqual(guards("CT says hooks are live everywhere now. mine is fixed in code, which is the point"), [], "live and fixed are words, not claims");
+  assert.deepEqual(guards("CT says hooks are live everywhere now. Mine is fixed in code, which is the point."), [], "live and fixed are words, not claims");
+  assert.ok(guards("CT says hooks are live everywhere now. mine is fixed in code").includes("starts a sentence in lower case"), "a take is plain: sentence case");
   const refused: [string, RegExp][] = [
     ["$DNA will pump once CT notices", /price prediction|banned "pump"/],
     ["buy the dip, AI tokens are early", /price prediction/],
@@ -117,20 +118,28 @@ test("guards: every hard line holds on a take", () => {
   for (const [t, re] of refused) assert.ok(guards(t).some((i) => re.test(i)), `${t} → ${guards(t).join("; ") || "passed"}`);
 });
 
-test("guards: the writer gets the take task and the take shapes; other posts keep the plain writer", () => {
+test("guards: the writer gets the take task, the plain register and the plain shape; other posts keep the voice", () => {
   const call = writerCall(facts, []);
   assert.equal(call.system, writerSystem(facts));
   assert.ok(call.system.startsWith("agent: x-writer\n") && call.system.includes(prompt("x-ct")), "the x-ct task, under code's tag");
   assert.ok(call.system.indexOf(prompt("x-ct")) > call.system.indexOf(prompt("x-writer")), "after the writer's own task");
   assert.equal(writerSystem({ event: "status" }), WRITER);
-  assert.deepEqual(shapesFor("post", facts), ["deadpan", "two-panel", "complaint"]);
+  assert.deepEqual(shapesFor("post", facts), ["plain"]);
 });
 
-test("filler: a take goes out only when the judge scores it alive, witty and fresh", () => {
-  const score = (alive: number, wit: number, freshness: number) => ({ hook: 4, alive, wit, clarity: 4, freshness });
+test("filler: a take goes out only when the judge scores it alive, clear and fresh (a plain take needs no wit)", () => {
+  const score = (alive: number, clarity: number, freshness: number) => ({ hook: 4, alive, wit: 1, clarity, freshness });
   const j = { scores: [score(4, 4, 4), score(4, 2, 4)], best: 0 };
   assert.equal(flatTake(j, 0, 2), null);
-  assert.equal(flatTake(j, 1, 2), "flat take: alive 4, wit 2, freshness 4");
+  assert.equal(flatTake(j, 1, 2), "flat take: alive 4, clarity 2, freshness 4");
   assert.equal(flatTake(null, 0, 1), "flat take: no judge score", "no judge, no take");
   assert.equal(flatTake(j, 0, 3), "flat take: no judge score", "scores that do not line up with the drafts");
+});
+
+test("the nightly reflection goes out on X only when the judge scores it clear", () => {
+  const score = (clarity: number) => ({ hook: 1, alive: 1, wit: 1, clarity, freshness: 1 });
+  const j = { scores: [score(4), score(2)], best: 0 };
+  assert.equal(unclearReflection(j, 0, 2), null, "clear: posted, whatever its other scores");
+  assert.equal(unclearReflection(j, 1, 2), "unclear reflection: clarity 2");
+  assert.equal(unclearReflection(null, 0, 1), null, "no judge: the filters alone, as before");
 });

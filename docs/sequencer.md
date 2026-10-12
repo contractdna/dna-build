@@ -1,6 +1,6 @@
 # The Sequencer
 
-The Sequencer is DNA's AI dev team: it builds new games (a contract and a page) in public. This document says what
+The Sequencer builds new games (a contract and a page) in public. This document says what
 keeps a game's code and its page from hurting anyone. The game contracts' rules are in `contracts/docs/games.md`.
 
 ## Who holds what
@@ -9,7 +9,7 @@ keeps a game's code and its page from hurting anyone. The game contracts' rules 
 |---|---|---|
 | The engine's enclave (attested) | the keys that deploy games and queue their funding; its log key; a GitHub token | sign build orders, merge a build that passed its own gates, deploy it, queue its funding, move the site's `release` branch |
 | The `verify` job (`.github/workflows/sequencer.yml`) | no secret; the job's read-only token (contents, actions) | refuse an order that isn't the enclave's, isn't fresh, or already has another run |
-| The `build` job | the dev team's model key only (environment `seq-build`) | read the checkout and write the game's own folders; no push rights |
+| The `build` job | the sequencer's model key only (environment `seq-build`) | read the checkout and write the game's own folders; no push rights |
 | The `publish` job | the bot App's key only (environment `seq-publish`) | one commit on `seq/*`, a pull request |
 | Pull request checks (`sequencer-gates.yml`, `ci.yml`) | nothing | advise; the enclave runs every gate again and decides |
 
@@ -17,7 +17,7 @@ The model key and the bot key are never in the same job, and no pull request job
 GitHub. The repository's administrators can change GitHub settings and push branches: the enclave's records and the
 watchdog make that visible, but GitHub itself is not part of the attested system.
 
-## The dev team
+## How the sequencer builds
 
 One order is one round of one build, signed by the enclave's log key and refused unless it is fresh and run once
 (every job refuses a re-run). The same signed order dispatched again inside its 20-minute window is refused too: the
@@ -93,31 +93,41 @@ stand-ins for the model API and GitHub, with the real Agent SDK in between.
 
 ## Changes to the site
 
-Besides new games, the brain can order a change to DNA's own website: its pages (`web/app/`) and its public docs
-(`docs/*.md`). The order says which kind it is, and the enclave signs it like any other.
+Besides new games, the brain can order a change to DNA's own website: a new page (`web/app/`). The order says which
+kind it is, and the enclave signs it like any other. The website deploys from the build repository's `release` branch
+(`SEQ.siteLive`, a code constant; off, the brain's pick of a site change is a no-build with an alert to the owners).
 
-Not yet switched on: the website does not deploy from the build repository's `release` branch, so a released site change
-would never reach it. Until it does (`SEQ.siteLive`, a code constant), the brain's pick of a site change is a no-build
-with an alert to the owners, and a site change released before the switch is not announced.
-
-- **What it may touch.** Pages, components, CSS modules and plain `.ts` modules in route folders under `web/app/`, and
-  the public docs. Never the site's data layer, its shared shell and scene, the game pages, the API routes, the proof,
-  security, Sequencer and play pages, the root layout, any layout, route or middleware file, the wallet guard and helper,
-  the server and content-policy settings, packages, or the docs on verifying DNA, its security model and its
-  operations, and this file (in any case; nor a new doc named like one of them but for case). A page removed by the
-  change is removed from the page check's build too.
-- **Its gates.** The paths (G1; no dynamic route segment, so every page a change reaches can be opened as it is), the
+- **What it may touch.** New files only: a page, components, CSS modules and plain `.ts` modules in a route folder that
+  is new at the base, under `web/app/`. Nothing that exists is changed, renamed or removed (the home page and the trade
+  page included), no file goes beside an existing page or in a folder the site already has, and a new page never takes
+  a URL an existing page serves (no route group, which could take `/`, and no static page under a dynamic one, which
+  would win over it). Never the site's data layer, its shared shell and scene, the game pages, the API routes, the
+  proof, security, Sequencer and play pages, any layout, route or middleware file, the wallet guard and helper, the
+  server and content-policy settings, packages, or the docs (nothing on the site renders `docs/`).
+- **Its gates.** The paths (G1, against the base's tree; no dynamic, private or grouped folder, so every page a change
+  adds can be opened as it is), the
   imports (G2, an allowlist: react, next/link, next/image, types from next, the shared UI, the shell and its icons, the
   data layer's public read side `_data/source`, `types`, `flags`, `chain`, the fee constants `launchFee`,
   and files in the page's own folder), the code
-  (G11: the same reach rules as a game page; a site page may run on the server, so it never sees `process`, the network
-  or a server action), the text (G12), and the page check (G15): the main site is built with the change and every page
+  (G11: the same reach rules as a game page, and a site page is server-rendered HTML only: no `"use client"`, no `on…`
+  handler attribute, no spread attribute or `<style>`, no namespaced attribute or `as`, every tag an intrinsic or a
+  name the file binds as an import, a function or a const arrow, metadata one const holding only a title and a
+  description, every `href` and `src`
+  a path on the site written out, and its words and strings pass the same screen as a public post: no handles, no
+  cashtags, no other site's name or link; it never sees `process`, the network or a server action), the text (G12),
+  and the page check (G15): the main site is built with the change and every page
   it touches (or, under a page, its nearest page) is opened in the same headless browser. A site page has no wallet at
   all: any wallet request, any call off the site, a link off the site other than the shell's own (as the browser
   resolves it, so an encoded or assembled address is caught too), a frame or a popup stops it.
 - **Then the same path as a game.** The brain's verdict, one public hour in which the Safe can veto, the page check
   again during that hour, then the merge (exactly the files the ship record names) and the `release` branch. There is
   nothing to deploy or fund.
+- **Live means served.** A site change is announced as live, and its idea's author told so, only once the site serves
+  it: the site's `/api/health` names the deployed commit (`RAILWAY_GIT_COMMIT_SHA`), which must be the merge or a later
+  commit on top of it, and each new page answers 200. Until then the engine checks again every minute (a page that
+  answers 500 or nothing is waited on like a deploy still building); after 30 minutes without it (counted from when
+  the release could first deploy), the owners get one alert and nothing is announced. A veto once the release branch
+  holds the change takes nothing back: the owners get one alert to revert it on main.
 - **What the check can't see.** The page check runs a change's pages over a simulated day at most (24 hours in the
   public hour). A page written to render differently after that, or on a date or a condition the check does not
   reach, would pass, and nothing checks the site's released pages again each day, as it does game pages. Code review
@@ -190,7 +200,7 @@ interfaces; `.github/` (workflows and repository settings); the measured compose
 personality file; the enclave's lockdown,
 configuration and mode switch; keys; owner approvals and signatures; the signed log; the transaction guards (with the
 agent key's queue and its op table); what the engine posts and its owners' channel, the chain reads it judges, its
-GitHub client and the brain; the Sequencer's own gates, the dev team's workflow code and the page check; the
+GitHub client and the brain; the Sequencer's own gates, its workflow code and the page check; the
 spend caps, money paths and what may be published; the site's security layer; dependency files; and the tests that
 hold all of these in place. The gates refuse each of these on their own, behind each kind's own reach, and each has a
 planted test.
@@ -319,7 +329,7 @@ then (a step-by-step with a check per item comes with the rehearsal):
 - `main`, on the public repository: a ruleset with pull requests required, required approvals 0, require review
   from Code Owners on (`.github/CODEOWNERS`), dismiss stale approvals on push, require approval of the most recent
   reviewable push, the enclave's gate status and CI required, no force pushes or deletion. Neither the Sequencer's App
-  nor the enclave's token is in its bypass list. The code owners own everything but what the dev team may change (a
+  nor the enclave's token is in its bypass list. The code owners own everything but what the sequencer may change (a
   game's or a module's own folders, the site's pages and components, the public docs). The enclave merges games, site
   changes and modules through pull requests. The required gate status stops other collaborators, not the holder of the
   enclave's token.
@@ -332,9 +342,8 @@ then (a step-by-step with a check per item comes with the rehearsal):
 - `seq/**`: created and updated only by the bot App.
 - Actions: the default token read-only, Actions can't approve pull requests, outside contributors' runs need
   approval, only pinned actions.
-- The `publish` job runs with no `GITHUB_TOKEN` permissions at all (`permissions: {}`), and still checks out the
-  repository. That works only while the repository is public. The rehearsal on a throwaway public repository
-  (`dna-sandbox`) must confirm it; if the checkout fails there, the job gets `contents: read` instead.
+- The `publish` job's `GITHUB_TOKEN` has `contents: read` only, for the checkout; every write goes through the
+  App token.
 - Environments `seq-build` (the model key, and `SEQ_PROMPTS`: the team's wording, base64 of `# Prompt seq.<id>`
   sections; unset, the neutral defaults in `sequencer/src/roles.ts` apply) and `seq-publish` (the App id and key): `main` only. No repository-level
   secrets.

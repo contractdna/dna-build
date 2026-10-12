@@ -1,4 +1,4 @@
-# The Sequencer (DNA's AI dev team) builds one game per signed order from the engine's enclave (repository_dispatch,
+# The Sequencer builds one game per signed order from the engine's enclave (repository_dispatch,
 # so this file always runs from main). Three jobs, each holding at most one credential, none of them able to push to main:
 #  verify  - no secret: the order must be signed by the enclave's log key (deploy/release.json), fresh, run once (first
 #            attempt, and no other run of this workflow carries its id; read with the job's actions: read token).
@@ -78,7 +78,7 @@ jobs:
           echo "$SOLC_SHA256  $RUNNER_TEMP/solc" | sha256sum -c -
           chmod +x "$RUNNER_TEMP/solc"
       - run: npm ci --prefix engine --no-audit --no-fund && npm ci --prefix sequencer --no-audit --no-fund
-      - name: the dev team builds
+      - name: the sequencer builds
         env:
           OPENROUTER_API_KEY_SEQUENCER: ${{ secrets.OPENROUTER_API_KEY_SEQUENCER }}
           SEQ_PROMPTS: ${{ secrets.SEQ_PROMPTS }}
@@ -93,10 +93,9 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     environment: seq-publish
-    # No GITHUB_TOKEN rights: the App token does the writing. actions/checkout reads with this token, which works with
-    # no permissions only while the repository is public. The dna-sandbox rehearsal must confirm it; if it fails, the
-    # fallback is `contents: read` here (docs/sequencer.md, settings).
-    permissions: {}
+    # GITHUB_TOKEN reads only (actions/checkout); every write goes through the App token (docs/sequencer.md, settings)
+    permissions:
+      contents: read
     steps:
       # main's code publishes; the order's base is only data the patch is applied to
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0

@@ -1,10 +1,11 @@
 // What each kind of order may reach, and what none ever reaches, against planted changes: G1 per kind (with NEVER, the
 // wall behind every kind), and a site change's G2 and G11.
 import assert from "node:assert/strict";
+import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { describe, test } from "node:test";
 import { runGates } from "../src/seq-forge.ts";
-import { type Change, depGate, engineReachGate, NEVER, pathGate, scopeIssue, touchLines, webGate } from "../src/seq-gates.ts";
+import { type Change, depGate, engineReachGate, NEVER, pathGate, scopeIssue, siteNewIssues, touchLines, webGate } from "../src/seq-gates.ts";
 import { KINDS } from "../src/seq-order.ts";
 
 const ROOT = new URL("../..", import.meta.url).pathname;
@@ -50,7 +51,7 @@ describe("never reachable, whatever the kind", () => {
     ["the persona's test", "engine/test/persona.test.ts", /tests of what no order reaches/],
     ["the gates", "engine/src/seq-gates.ts", /own gates/],
     ["the Sequencer", "engine/src/sequencer.ts", /own gates/],
-    ["the dev team's guard", "sequencer/src/guard.ts", /own gates/],
+    ["the sequencer's guard", "sequencer/src/guard.ts", /own gates/],
     ["the page check", "pagecheck/src/check.ts", /own gates/],
     ["the spend caps", "engine/src/llm.ts", /spend caps/],
     ["the measured compose", "deploy/app-compose.json", /measured compose/],
@@ -81,13 +82,48 @@ describe("never reachable, whatever the kind", () => {
 // ---------------------------------------------------------------- site: G1
 
 describe("site: G1 paths", () => {
-  test("pages, components, CSS modules, content modules and public docs: added, changed or removed", () => {
-    const r = pathGate([
-      ch("web/app/faq/page.tsx"), ch("web/app/faq/Answer.tsx"), ch("web/app/faq/faq.module.css"), ch("web/app/docs/content.ts", { status: "M" }),
-      ch("web/app/rules/page.tsx", { status: "M" }), ch("web/app/page.tsx", { status: "M" }),
-      ch("docs/FAQ.md"), ch("docs/ARCHITECTURE.md", { status: "M" }), ch("web/app/xp/page.tsx", { status: "D", mode: "000000" }),
-    ], "faq-page", false, "site");
-    assert.deepEqual(r.issues, []);
+  // the real base: the site as it is in this repository
+  const BASE = { paths: execFileSync("git", ["-C", ROOT, "ls-files"]).toString().split("\n").filter(Boolean) };
+  const site = (cs: Change[]) => pathGate(cs, "instinct-1", false, "site", BASE);
+  test("a new route folder: its page, components, CSS module and .ts module pass (the first accepted idea's /instinct)", () => {
+    assert.ok(BASE.paths.includes("web/app/page.tsx") && !BASE.paths.some((p) => p.startsWith("web/app/instinct/")), "the real site, without the new route");
+    assert.deepEqual(site([ch("web/app/instinct/page.tsx"), ch("web/app/instinct/Reading.tsx"), ch("web/app/instinct/instinct.module.css"), ch("web/app/instinct/lines.ts")]).issues, []);
+    assert.deepEqual(site([ch("web/app/instinct/page.tsx"), ch("web/app/instinct/week/page.tsx")]).issues, [], "a second new route under the new one");
+    assert.deepEqual(site([ch("web/app/lab/notes/page.tsx")]).issues, [], "a new route under an existing one, in a folder of its own");
+  });
+  for (const [what, cs, want] of [
+    ["the home page changed", [ch("web/app/page.tsx", { status: "M" })], /web\/app\/page\.tsx: changed \(a site change only adds new files\)/],
+    ["the trade page changed", [ch("web/app/trade/page.tsx", { status: "M" })], /web\/app\/trade\/page\.tsx: changed/],
+    ["the swap code changed", [ch("web/app/trade/swap.ts", { status: "M" })], /web\/app\/trade\/swap\.ts: changed/],
+    ["an existing page removed", [ch("web/app/xp/page.tsx", { status: "D", mode: "000000" })], /web\/app\/xp\/page\.tsx: deleted/],
+    ["an existing page renamed", [ch("web/app/instinct/page.tsx", { status: "R", oldPath: "web/app/xp/page.tsx" })], /renamed/],
+    ["an existing page written as new", [ch("web/app/rules/page.tsx")], /web\/app\/rules\/page\.tsx: an existing file/],
+    ["a new file beside an existing page", [ch("web/app/trade/Banner.tsx")], /web\/app\/trade\/ already exists/],
+    ["a new component in an existing folder", [ch("web/app/docs/Extra.tsx")], /web\/app\/docs\/ already exists/],
+    ["a file at the site's root", [ch("web/app/Banner.tsx")], /not in a route folder/],
+    ["a route group that would take /", [ch("web/app/(x)/page.tsx")], /not a plain route/],
+    ["a route group around a new page", [ch("web/app/(promo)/instinct/page.tsx")], /not a plain route/],
+    ["a static page that takes a dynamic route's URL", [ch("web/app/journal/2026-10-12/page.tsx")], /\/journal\/2026-10-12 is a URL the existing route \/journal\/\[day\] serves/],
+    ["a private folder", [ch("web/app/instinct/page.tsx"), ch("web/app/instinct/_parts/A.tsx")], /not a plain route/],
+    ["a doc", [ch("docs/FAQ.md")], /docs\/FAQ\.md: outside the site's pages/],
+    ["an existing doc changed", [ch("docs/ARCHITECTURE.md", { status: "M" })], /outside the site's pages/],
+  ] as [string, Change[], RegExp][]) {
+    test(`planted: ${what}`, () => {
+      const r = site(cs);
+      assert.equal(r.ok, false);
+      assert.match(r.issues.join("\n"), want);
+    });
+  }
+  test("a catch-all or an optional catch-all at the base takes every URL under it; a route group's page keeps its URL", () => {
+    const base = { paths: ["web/app/page.tsx", "web/app/wiki/[...slug]/page.tsx", "web/app/(m)/shop/[[...p]]/page.tsx", "web/app/(m)/about/page.tsx"] };
+    const issues = (p: string) => pathGate([ch(p)], "x-1", false, "site", base).issues.join();
+    assert.match(issues("web/app/wiki/new/page.tsx"), /the existing route \/wiki\/\[\.\.\.slug\] serves/);
+    assert.match(issues("web/app/shop/page.tsx"), /the existing route \/shop\/\[\[\.\.\.p\]\] serves/);
+    assert.match(issues("web/app/about/page.tsx"), /the existing route \/about serves/);
+    assert.equal(issues("web/app/wikis/page.tsx"), "");
+  });
+  test("no base tree: nothing to check against, refused", () => {
+    assert.match(pathGate([ch("web/app/instinct/page.tsx")], "instinct-1", false, "site").issues.join(), /no base tree/);
   });
   for (const [what, c, want] of [
     ["an API route", ch("web/app/api/kill/[slug]/route.ts", { status: "M" }), /security layer/],
@@ -106,16 +142,11 @@ describe("site: G1 paths", () => {
     ["an icon", ch("web/app/faq/icon.tsx"), /not page\.tsx/],
     ["global CSS", ch("web/app/globals.css", { status: "M" }), /not page\.tsx/],
     ["a public asset", ch("web/public/x.svg"), /outside the site's pages/],
-    ["the verify doc", ch("docs/VERIFY.md", { status: "M" }), /not a public doc/],
-    ["the verify doc in lower case", ch("docs/verify.md"), /not a public doc/],
     ["the shared shell", ch("web/app/_ui/Shell.tsx", { status: "M" }), /shared shell/],
     ["the scene", ch("web/app/_dna/DNA.tsx", { status: "M" }), /shared shell/],
     ["the security page", ch("web/app/security/page.tsx", { status: "M" }), /security or Sequencer pages/],
     ["the Sequencer page", ch("web/app/sequencer/page.tsx", { status: "M" }), /security or Sequencer pages/],
-    ["the security model", ch("docs/SECURITY-MODEL.md", { status: "M" }), /not a public doc/],
-    ["the operations doc", ch("docs/OPERATIONS.md", { status: "M" }), /not a public doc/],
-    ["the Sequencer's own rules", ch("docs/sequencer.md", { status: "M" }), /not a public doc/],
-    ["a doc in a subfolder", ch("docs/notes/x.md"), /not a public doc/],
+    ["the Sequencer's own rules", ch("docs/sequencer.md", { status: "M" }), /outside the site's pages/],
     ["the engine", ch("engine/src/watch.ts", { status: "M" }), /outside the site's pages/],
     ["a dot-dot path", ch("web/app/faq/../../security.ts"), /not a plain path/],
     ["a folder that is not a route", ch("web/app/FAQ Page/page.tsx"), /not a plain route/],
@@ -127,24 +158,24 @@ describe("site: G1 paths", () => {
     ["a type change", ch("web/app/faq/page.tsx", { status: "T" }), /type changed/],
   ] as [string, Change, RegExp][]) {
     test(`planted: ${what}`, () => {
-      const r = pathGate([ch("web/app/faq/page.tsx"), c], "faq-page", false, "site");
+      const r = pathGate([ch("web/app/faq/page.tsx"), c], "faq-page", false, "site", BASE);
       assert.equal(r.ok, false);
       assert.match(r.issues.join("\n"), want);
     });
   }
-  test("planted: a new doc named like an existing one but for case", () => {
-    const base = { paths: ["docs/FAQ.md", "docs/ARCHITECTURE.md"] };
-    assert.match(pathGate([ch("docs/faq.md")], "faq-page", false, "site", base).issues.join(), /named like docs\/FAQ\.md but for case/);
-    assert.deepEqual(pathGate([ch("docs/FAQ.md", { status: "M" }), ch("docs/HELP.md")], "faq-page", false, "site", base).issues, []);
-  });
   test("no changes, a bad name", () => {
-    assert.match(pathGate([], "faq-page", false, "site").issues.join(), /no changes/);
-    assert.match(pathGate([ch("docs/FAQ.md")], "FAQ", false, "site").issues.join(), /not valid/);
+    assert.match(pathGate([], "faq-page", false, "site", BASE).issues.join(), /no changes/);
+    assert.match(pathGate([ch("web/app/faq/page.tsx")], "FAQ", false, "site", BASE).issues.join(), /not valid/);
   });
   test("scopeIssue is G1's rule, one path at a time", () => {
     assert.equal(scopeIssue("site", "x", "web/app/faq/page.tsx"), null);
     assert.match(scopeIssue("site", "x", "web/app/_ui/guard.ts") ?? "", /never reachable/);
+    assert.match(scopeIssue("site", "x", "docs/FAQ.md") ?? "", /outside the site's pages/);
     assert.match(scopeIssue("game", "dice", "web/app/faq/page.tsx") ?? "", /outside the game's folders/);
+  });
+  test("siteNewIssues is G1's base rule for a plan's files (the build checks its plan with it)", () => {
+    assert.deepEqual(siteNewIssues(["web/app/instinct/page.tsx", "web/app/instinct/Reading.tsx"], BASE.paths), []);
+    assert.match(siteNewIssues(["web/app/page.tsx"], BASE.paths).join(), /an existing file/);
   });
 });
 
@@ -208,11 +239,57 @@ describe("site: G2 dependencies", () => {
   }
 });
 
+/** The first accepted idea's page as a site change would write it: a new static route reading the data layer's getters,
+ *  with a component, a CSS module and a .ts module of its own folder. */
+const INSTINCT: Record<string, string> = {
+  "web/app/instinct/page.tsx": `import type { Metadata } from "next";
+import Link from "next/link";
+import { getJournal, getLab } from "../_data/source";
+import { Shell } from "../_ui/Shell";
+import { PageHead, Section, ui } from "../_ui/ui";
+import { Reading } from "./Reading";
+import s from "./instinct.module.css";
+import { headline } from "./lines";
+
+export const metadata: Metadata = { title: "Instinct · DNA", description: "What DNA leans toward right now, read from its journal and its lab." };
+
+export default async function InstinctPage() {
+  const [journal, lab] = await Promise.all([getJournal().catch(() => []), getLab().catch(() => undefined)]);
+  const last = journal.at(0);
+  return (
+    <Shell>
+      <div className={ui.page}>
+        <PageHead title="Instinct" lede="What DNA leans toward right now." back={{ href: "/lab", label: "Lab" }} />
+        <Section title="Today">
+          <Reading line={headline(lab?.experiments.length ?? 0)} />
+          {last ? <Link className={s.more} href={\`/journal/\${last.date}\`}>The latest journal entry</Link> : <p className={s.quiet}>Nothing written yet.</p>}
+          <a className={s.up} href="#main">Back to the top</a>
+        </Section>
+      </div>
+    </Shell>
+  );
+}
+`,
+  "web/app/instinct/Reading.tsx": `import s from "./instinct.module.css";
+
+export function Reading({ line }: { line: string }) {
+  return <p className={s.reading}>{line}</p>;
+}
+`,
+  "web/app/instinct/instinct.module.css": ".reading { font-size: 1.25rem; }\n.more, .up { text-decoration: underline; }\n.quiet { opacity: 0.7; }\n",
+  "web/app/instinct/lines.ts": `export const headline = (n: number) => (n === 0 ? "No experiment is running, so it is watching." : \`\${n} experiments are running, so it is testing.\`);
+`,
+};
+
 describe("site: G11 code", () => {
+  test("a new static route reading the data layer (/instinct, the first accepted idea) passes G1, G2 and G11", () => {
+    const basePaths = execFileSync("git", ["-C", ROOT, "ls-files"]).toString().split("\n").filter(Boolean);
+    const changes = Object.entries(INSTINCT).map(([path, t]) => ch(path, { size: t.length }));
+    assert.deepEqual([...pathGate(changes, "instinct-1", false, "site", { paths: basePaths }).issues, ...depGate(INSTINCT, "instinct-1", "site").issues, ...webGate(INSTINCT, "instinct-1", "site").issues], []);
+  });
   test("a server page with its metadata passes: no \"use client\" needed, an attribute named open is no global", () => {
     assert.deepEqual(webGate(page(OK_PAGE), "faq", "site").issues, []);
     assert.deepEqual(webGate({ "web/app/faq/faq.module.css": ".q { color: red; }" }, "faq", "site").issues, []);
-    assert.deepEqual(webGate({ "docs/FAQ.md": "<script>window.x</script>" }, "faq", "site").issues, [], "docs are not code");
   });
   for (const [what, body, want] of [
     ["window", `export default function P() { return <p>{window.location.href}</p>; }`, /window/],
@@ -230,17 +307,52 @@ describe("site: G11 code", () => {
     ["an address", `export default function P() { return <p>0x5FbDB2315678afecb367f032d93F642f64180aa3</p>; }`, /address literal/],
     ["route segment config", `export const dynamic = "force-dynamic";\nexport default function P() { return null; }`, /exports only its default and its metadata/],
     ["a CSS url()", `.q { background: url(/x.png); }`, /url\(\)/],
+    // a site page is server-rendered HTML only
+    ["a client page", `"use client";\nexport default function P() { return <p>hi</p>; }`, /"use client" \(a site page renders on the server only\)/],
+    ["the click that leaves the site", `"use client";\nimport { useRef } from "react";\nexport default function P() { const r = useRef<HTMLAnchorElement>(null); return <p ref={(a) => { if (a) { a.href = "/" + "/evil.example"; a.click(); } }}>x</p>; }`, /"use client"/],
+    ["an onClick handler", `export default function P() { return <button onClick={() => {}}>Go</button>; }`, /event handler onClick/],
+    ["an onclick attribute", `export default function P() { return <p onclick="x">Go</p>; }`, /onclick/],
+    // its words: what the public text screen refuses in a post
+    ["a handle in the page's text", `export default function P() { return <p>Follow @someone for more</p>; }`, /a handle in the page's text/],
+    ["a cashtag in the page's text", `export default function P() { return <p>Better than $PEPE</p>; }`, /a cashtag in the page's text/],
+    ["a handle in a string", `const who = "@someone";\nexport default function P() { return <p>{who}</p>; }`, /a handle in the page's text/],
+    ["another site's name", `export default function P() { return <p>Claim it at evil.example today</p>; }`, /another site's name or link/],
+    // links stay on the site
+    ["a link built off the site", `export default function P() { return <a href={"/" + "/evil.example"}>x</a>; }`, /href must be a path on this site/],
+    ["a link with a tab after the slash", `export default function P() { return <a href="/\t/evil.example">x</a>; }`, /href must be a path on this site/],
+    ["a link from a variable", `const to = "/rules";\nexport default function P() { return <a href={to}>x</a>; }`, /href must be a path on this site/],
+    ["a template link that starts with the host", `export default function P({ h }: { h: string }) { return <a href={\`/\${h}\`}>x</a>; }`, /href must be a path on this site/],
+    ["a built link handed to a shared component", `import { PageHead } from "../_ui/ui";\nexport default function P() { return <PageHead title="x" lede="y" back={{ href: "/" + "/evil.example", label: "Back" }} />; }`, /href must be a path on this site/],
+    ["a link handed on by its name", `import { PageHead } from "../_ui/ui";\nconst href = "/lab";\nexport default function P() { return <PageHead title="x" lede="y" back={{ href, label: "Back" }} />; }`, /href must be a path on this site/],
+    ["an image from another site", `export default function P() { return <img alt="" src={"/" + "/evil.example/x.png"} />; }`, /src must be a path on this site/],
+    // no raw HTML or head tags by another way
+    ["a spread attribute", `const p = { title: "x" };\nexport default function P() { return <div {...p} />; }`, /a spread attribute/],
+    ["raw HTML by a string key", `import { cloneElement } from "react";\nexport default function P() { return cloneElement(<div />, { ["dangerouslySetInnerHTML"]: { __html: "<b>x</b>" } }); }`, /cloneElement|dangerouslySetInnerHTML|__html/],
+    ["a style tag", `export default function P() { return <style>{"body { display: none }"}</style>; }`, /<style>/],
+    ["metadata beyond a title and a description", `export const metadata = { title: "x", icons: { icon: "/x.png" } };\nexport default function P() { return null; }`, /metadata is an object with a title and a description only/],
+    ["metadata changed after the check", `import type { Metadata } from "next";\nexport const metadata: Metadata = { title: "x" };\n(metadata as Metadata).openGraph = { title: "y" };\nexport default function P() { return null; }`, /metadata is named only as its one const export/],
+    ["metadata as a let", `export let metadata = { title: "x" };\nexport default function P() { return null; }`, /metadata is a const/],
+    // a tag is an intrinsic or a name the file binds as an import, a function or a const arrow
+    ["a script by a variable tag", `const S = ("scr" + "ipt") as "div";\nexport default function P() { return <S>{"alert(1)"}</S>; }`, /<S> is not an import, a function declaration or a const arrow/],
+    ["a tag from a parameter", `export default function P({ T }: { T: "div" }) { return <T>x</T>; }`, /<T> is not an import/],
+    ["an import shadowed by a parameter", `import Link from "next/link";\nexport default function P({ Link }: { Link: "div" }) { return <Link>x</Link>; }`, /<Link> is not an import/],
+    ["a tag by a member", `import * as R from "react";\nexport default function P() { return <R.Fragment>x</R.Fragment>; }`, /a tag is a plain name/],
+    ["a namespaced attribute", `export default function P() { return <a xlink:href="/rules">x</a>; }`, /a namespaced attribute xlink:href/],
+    ["next/link's as", `import Link from "next/link";\nexport default function P() { return <Link href="/rules" as="/x">x</Link>; }`, /attribute as/],
   ] as [string, string, RegExp][]) {
     test(`planted: ${what}`, () => {
       const files = what === "a CSS url()" ? { "web/app/faq/faq.module.css": body } : page(body);
       assert.match(webGate(files, "faq", "site").issues.join("\n"), want);
     });
   }
+  test("a tag the file binds as a function declaration or a const arrow passes, as an imported one does", () => {
+    assert.deepEqual(webGate(page(`import { Section } from "../_ui/ui";\nconst Row = ({ q }: { q: string }) => <p>{q}</p>;\nfunction Head() { return <h1>x</h1>; }\nexport default function P() { return <Section><Head /><Row q="a" /></Section>; }\n`), "faq", "site").issues, []);
+  });
   test("a component (not page.tsx) may export what it likes; the reach rules still hold", () => {
     assert.deepEqual(webGate(page(`export const N = 1;\nexport function A() { return <p>{N}</p>; }\n`, "web/app/faq/Answer.tsx"), "faq", "site").issues, []);
     assert.match(webGate(page(`export function A() { return <p>{document.title}</p>; }\n`, "web/app/faq/Answer.tsx"), "faq", "site").issues.join(), /document/);
   });
-  test("an existing simple page passes as it is (a site change can edit it)", () => {
+  test("an existing simple page passes as written (the shape a new page takes)", () => {
     const p = "web/app/xp/page.tsx";
     const files = { [p]: readFileSync(`${ROOT}${p}`, "utf8") };
     assert.deepEqual([...webGate(files, "x", "site").issues, ...depGate(files, "x", "site").issues], []);
@@ -413,11 +525,14 @@ test("runGates: an engine change runs its static gates only (paths with its test
 });
 
 test("runGates: a site change runs the static gates only (no workspace, no forge)", async () => {
-  const files = { ...page(OK_PAGE), "docs/FAQ.md": "# Questions\n" };
+  const files = { ...page(OK_PAGE), "web/app/faq/faq.module.css": ".q { color: red; }\n" };
   const changes = Object.entries(files).map(([path, t]) => ch(path, { size: t.length }));
-  const run = await runGates({ kind: "site", slug: "faq-page", changes, files, baseHasSlug: false, prBody: "A questions page with plain answers.", kit: "/nonexistent-kit", order: { seed: "a" } });
+  const basePaths = execFileSync("git", ["-C", ROOT, "ls-files"]).toString().split("\n").filter(Boolean);
+  const run = await runGates({ kind: "site", slug: "faq-page", changes, files, baseHasSlug: false, basePaths, prBody: "A questions page with plain answers.", kit: "/nonexistent-kit", order: { seed: "a" } });
   assert.deepEqual(run.results.map((r) => [r.gate, r.ok]), [["G1", true], ["G2", true], ["G11", true], ["G12", true]]);
   assert.equal(run.game, undefined);
-  const bad = await runGates({ kind: "site", slug: "faq-page", changes: [...changes, ch("web/app/_ui/guard.ts", { status: "M" })], files, baseHasSlug: false, prBody: "Fine.", kit: "/nonexistent-kit", order: { seed: "a" } });
+  const bad = await runGates({ kind: "site", slug: "faq-page", changes: [...changes, ch("web/app/_ui/guard.ts", { status: "M" })], files, baseHasSlug: false, basePaths, prBody: "Fine.", kit: "/nonexistent-kit", order: { seed: "a" } });
   assert.equal(bad.results[0].ok, false);
+  const blind = await runGates({ kind: "site", slug: "faq-page", changes, files, baseHasSlug: false, prBody: "A questions page with plain answers.", kit: "/nonexistent-kit", order: { seed: "a" } });
+  assert.match(blind.results[0].issues.join(), /no base tree/, "no base paths: G1 refuses");
 });

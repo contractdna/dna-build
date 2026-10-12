@@ -67,13 +67,13 @@ Owners approve or veto by signing (EIP-191) a 32-byte hash of: the action ("dna/
 
 ## Spending limits
 
-- Up to $300 a day (the AI dev team builds several things a day: up to 3 at once, 5 a day).
+- Up to $300 a day (the sequencer builds several things a day: up to 3 at once, 5 a day).
 - Up to $3,000 a month.
 - Per-job daily limits: research $20, red team $40, everything else $40.
 
 ### Daily budget partition
 
-Each day's limit is split in two, so the Sequencer (the AI dev team) and the rest of the engine can't starve each other:
+Each day's limit is split in two, so the Sequencer and the rest of the engine can't starve each other:
 
 | Day's limit | Sequencer (65%) | Everything else (35%) | One Sequencer order at most |
 |---|---|---|---|
@@ -85,14 +85,14 @@ Each day's limit is split in two, so the Sequencer (the AI dev team) and the res
 - Inside the shared part, research stops at 80% of it and everything else at 100%. The per-budget limits (research $20, red team $40, the rest $40) add up to $100, just under the shared $105, so they are what binds.
 - A build's reservation, each round's charge and the release are rows of the day the build started: a build still running at midnight never takes from the next day's part. While a build runs its day counts the reservation and the rounds charged so far; once it ends it counts exactly what its rounds cost.
 - The monthly limit bounds the total. As the month's spend nears it, work stops in a fixed order: the Sequencer first (at 60% of the month's limit, once the month's total spend reaches $1,800), then research (at 80%, $2,400), then everything else (at 100%, $3,000). A month of full $300 days would be far above it, so the monthly limit is the real ceiling; expected spend is well under it (docs/CAPACITY.md). Keepers never call a model.
-- A build round is charged what its run reports (`report.json`, written by the workflow's own code from the model calls; the dev team can't touch it), never more than the order's ceiling, and the whole ceiling when the report is missing. A forged report could only lower a charge, and forging one takes a GitHub compromise. The real backstop for the Sequencer's spend is the hard limit on its own OpenRouter key.
+- A build round is charged what its run reports (`report.json`, written by the workflow's own code from the model calls; the sequencer can't touch it), never more than the order's ceiling, and the whole ceiling when the report is missing. A forged report could only lower a charge, and forging one takes a GitHub compromise. The real backstop for the Sequencer's spend is the hard limit on its own OpenRouter key.
 - The engine has a rule to hold the daily limit to a share of what the treasury earns (never above the limits above); it is not switched on yet.
 - Each call is checked against these limits before it is made, assuming its most expensive outcome. The provider accounts have their own hard limits as well.
 - A call's cost is what its provider reports for it (OpenRouter's `usage.cost`, xAI's `usage.cost_in_usd_ticks`); when it reports none, the engine prices the tokens with `engine/models.json`. OpenRouter charges the providers' own prices with no markup; its fee (5.5% on card purchases, $0.80 minimum; 5% in crypto) is paid when credits are bought, so it is not part of any call's cost.
 
 ## The Sequencer's models
 
-The Sequencer (the dev team that builds games in GitHub Actions) runs on the Claude Agent SDK, pointed at OpenRouter's Anthropic-compatible endpoint with its own OpenRouter key (`OPENROUTER_API_KEY_SEQUENCER`, a secret of the build environment only). The SDK reads these variables:
+The Sequencer (it builds games in GitHub Actions) runs on the Claude Agent SDK, pointed at OpenRouter's Anthropic-compatible endpoint with its own OpenRouter key (`OPENROUTER_API_KEY_SEQUENCER`, a secret of the build environment only). The SDK reads these variables:
 
 ```bash
 ANTHROPIC_BASE_URL=https://openrouter.ai/api

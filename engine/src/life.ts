@@ -59,7 +59,7 @@ export type PendingInput = {
   promoteRequested: boolean;
   /** a split module is routed (until then the games get no fee share) */
   splitSet: boolean;
-  /** the game factory is deployed (the dev team can ship a game) */
+  /** the game factory is deployed (the sequencer can ship a game) */
   gameFactory: boolean;
   build: { stage: "building" | "shipping"; title?: string } | null;
   /** `fromX`: ideas from X the intake took in for this round (they go on-chain after it closes) */
@@ -72,7 +72,7 @@ const OP_WORDS: Record<string, string> = { SetParams: "new fee parameters", SetS
 const mins = (now: number, at: number) => Math.max(0, Math.ceil((at - now) / 60_000));
 /** A build title a post may carry (digit-free, no link or handle), quoted; else none. */
 const titled = (t: string | undefined) => (t && !/\p{N}/u.test(t) && !/https?:|www\.|@|#|\$/.test(t) ? `"${t.replace(/"/g, "").slice(0, 80)}"` : undefined);
-/** The pending block (pure): what is queued, what waits for the Safe's signers, the dev team, the idea round, a draw.
+/** The pending block (pure): what is queued and what waits on the Safe's signers, a sequencer build, a round or a draw.
  *  `broadcast` (a status, the opening post): the Safe's queued ops and a code update are left out, each has its own post
  *  (src/upgrades.ts); a reply keeps them ("wen?" gets the minutes). */
 export function pendingOf(i: PendingInput, broadcast = false): Pending[] {
@@ -101,7 +101,7 @@ export function pendingOf(i: PendingInput, broadcast = false): Pending[] {
   return out;
 }
 
-/** The pending block now, from the indexed chain, the snapshot, the open run and the dev team's build (code reads only;
+/** The pending block now, from the indexed chain, the snapshot, the open run and the sequencer's build (code reads only;
  *  a failed read leaves its line out, never a guessed one). `event`: the post it is for (pendingOf's broadcast). */
 export async function pendingNow(now = Date.now(), event?: string): Promise<Pending[]> {
   const { d } = await import("./config.ts");

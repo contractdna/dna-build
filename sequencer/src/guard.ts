@@ -1,4 +1,4 @@
-// The path guard every dev-team query runs under (a PreToolUse hook with no matcher: it sees every tool call). A role
+// The path guard every sequencer query runs under (a PreToolUse hook with no matcher: it sees every tool call). A role
 // may read its read roots and write its write roots, nothing else: no absolute paths outside the checkout, no `..`, no
 // symlinks, no /proc. Unknown tools are denied (the query also lists its tools and runs in dontAsk mode).
 import { existsSync, lstatSync, realpathSync } from "node:fs";

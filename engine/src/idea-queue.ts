@@ -40,6 +40,7 @@ export type QueueData = {
   source: IdeaSource | null; // null: an agent-submitted idea with no X author on record (nobody to pay)
   params?: { base: number; mult: number; cap: number }; rubric?: Rubric;
   variant?: { of: string; target: "game" | "site" | "module" }; // a buildable version of the author's idea (`of`: its title), credited to them
+  rejudged?: true; // judged again after the pre-2b judge rejected it (src/ideas.ts REJUDGE)
   thread?: string; opId?: string; why?: string; // fee: its experiment, or why it waits / was skipped
   basis?: Basis; since?: string; // reward: what it rests on, and since when it waits
   reward?: { brain: string; amountWei: string; reason: string; record?: { seq: string; root: Hex; to: Address; amount: string; block?: number }; anchored?: boolean; tx?: string };
@@ -112,6 +113,12 @@ export async function buildStatusOf(id: string): Promise<string | null> {
   return r && (await trusted("idea_queue", r.id, valueOf(r), r.sig)) ? r.status : null;
 }
 export type BuildStatus = "queued" | "building" | "shipped" | "killed";
+/** Build ideas killed with a reason that starts with `why`, back in the queue (once: the note replaces that reason). */
+export async function requeueKilled(why: string, note: string): Promise<string[]> {
+  const back = (await rows("build", "killed", 500)).filter((r) => String(r.data.why ?? "").startsWith(why));
+  for (const r of back) await save({ ...r, status: "queued", data: { ...r.data, why: note } });
+  return back.map((r) => r.id);
+}
 /** The Sequencer moves a build idea along (a note: its build ref or why). */
 export async function setBuildStatus(id: string, from: BuildStatus, to: BuildStatus, note?: string) {
   const [r] = await rows("build", from, 500).then((rs) => rs.filter((x) => x.id === id));

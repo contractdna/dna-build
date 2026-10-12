@@ -26,7 +26,7 @@ export type Variant = z.infer<typeof Variant>;
 export const BrainOut = {
   build: z.object({ decision: z.enum(["build", "no-build"]), target: z.enum(["game", "site", "module"]).optional(), reason: s(400), risks: z.array(s(200)).max(5) }),
   verdict: z.object({ verdict: z.enum(["ship", "rework", "kill"]), reason: s(400), issues: z.array(s(200)).max(8) }),
-  // a spec amendment the dev team's lead proposed (once per build): approved, it is the spec later verdicts check
+  // a spec amendment the sequencer's lead proposed (once per build): approved, it is the spec later verdicts check
   amend: z.object({ approve: z.boolean(), reason: s(400) }),
   retire: z.object({ retire: z.boolean(), reason: s(400) }),
   "model-swap": z.object({ approve: z.boolean(), reason: s(400) }),
@@ -40,7 +40,7 @@ export const BrainOut = {
     })).max(128),
   }),
   reward: z.object({ amountEth: z.number().min(0).max(100), reason: s(400) }), // ETH; code clamps it into the on-chain caps
-  // what to improve next, from the self-file's open risks (no idea in the queue); a spec the dev team builds from
+  // what to improve next, from the self-file's open risks (no idea in the queue); a spec the sequencer builds from
   improve: z.object({ improve: z.boolean(), risk: z.string().max(300), target: z.enum(["site", "module", "engine"]), title: z.string().max(60), spec: z.string().max(4000), rubric: Rubric, reason: s(400) }),
 };
 export type BrainKind = keyof typeof BrainOut;

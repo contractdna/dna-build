@@ -1,4 +1,4 @@
-// Every game template, built the way the dev team builds from one: the lead's plan names it, the workers copy its
+// Every game template, built the way the sequencer builds from one: the lead's plan names it, the workers copy its
 // contract, tests and page into a new game's folders, the build's own suite run and self-check pass on the first test
 // round, and the published result passes the enclave's gates (G1 to G9, G11 to G13) through the real runGates. A held
 // template (kept, not offered to the lead) is gated the same way, copied by a plan that names no template.

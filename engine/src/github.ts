@@ -196,6 +196,16 @@ export async function commitsBetween(base: string, head: string): Promise<{ shas
   const shas = (c.commits ?? []).map((x) => x.sha);
   return { shas, complete: (c.total_commits ?? 0) <= shas.length };
 }
+/** Does `head` hold `sha` (the same commit, or one after it)? A commit GitHub does not know holds nothing. */
+export async function contains(head: string, sha: string): Promise<boolean> {
+  if (head === sha) return true;
+  try {
+    return ["ahead", "identical"].includes((await gh<{ status?: string }>("GET", `/repos/{repo}/compare/${sha}...${head}`)).status ?? "");
+  } catch (e) {
+    if (e instanceof GitHubError && e.status === 404) return false;
+    throw e;
+  }
+}
 /** A branch's head sha. */
 export const refSha = async (branch: string) => (await gh<{ object: { sha: string } }>("GET", `/repos/{repo}/git/ref/heads/${branch}`)).object.sha;
 /** Move `release` forward to `sha`: never a force push (GitHub refuses a non-fast-forward). */

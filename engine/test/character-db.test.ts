@@ -78,9 +78,13 @@ test("every post and reply text is in a log record before the X API call; the wr
   try {
     X.spacingMs = 0;
     const link = (n: number) => `https://etherscan.io/tx/0x${String(n).repeat(64)}`;
-    await xM.enqueueX("char:1", "post", { event: "rolled_back", route: "fee" }, { link: link(1) });
+    // a rollback today (its site record; its own post is code's template): the mood stings
+    await (await import("../src/announce.ts")).announce("char:rb", { event: "rolled_back", route: "fee" });
+    // the writer words the nightly reflection (event posts are code's templates: test/event-posts.test.ts)
+    const reflection = (date: string) => ({ event: "reflection", date, learned: "quiet pools reward patience", tomorrow: "watch the canary closely" });
+    await xM.enqueueX("char:1", "post", reflection("2026-10-10"), { link: link(1) });
     assert.ok(((await xM.sendHandler.run(job())) as { tweetId: string }).tweetId);
-    await xM.enqueueX("char:2", "post", { event: "rolled_back", route: "split" }, { link: link(2) });
+    await xM.enqueueX("char:2", "post", reflection("2026-10-11"), { link: link(2) });
     assert.ok(((await xM.sendHandler.run(job())) as { tweetId: string }).tweetId);
     await putMention("6001", "777");
     X.aiRepliesApproved = true;
@@ -101,20 +105,20 @@ test("every post and reply text is in a log record before the X API call; the wr
     assert.deepEqual((await log.verify(sql)).ok, true);
 
     // the first post had no history; the second repeated its opening, was refused, and the fresh candidate went
-    assert.equal(sent[0], `Synthetic post about a rolled back event.\n${link(1)}`);
-    assert.match(sent[1], /^Zq[a-z]{6} rolled back\.\n/);
+    assert.equal(sent[0], `Synthetic post about a reflection event.\n${link(1)}`);
+    assert.match(sent[1], /^Zq[a-z]{6} reflection\.\n/);
     const second = await attempt(sent[1]);
     assert.deepEqual(second.candidates[1].issues, ['too similar: repeat opening "synthetic post about"']);
     assert.equal(second.draft, sent[1].split("\n")[0]);
     assert.ok((SHAPE_KEYS as readonly string[]).includes(second.shape));
-    // a rollback is mechanics: the technical shape every time (the rotation of the other shapes: test/character.test.ts)
-    assert.deepEqual([second.shape, (await attempt(sent[0])).shape], ["technical", "technical"], "a rollback is told plainly");
+    // the reflection is no event: any open shape (the rotation of the shapes: test/character.test.ts)
+    assert.ok(shapesFor("post", second.facts, "stung").includes(second.shape), second.shape);
     assert.equal(second.mood, "stung", "a rollback today stings");
     // the persona by hash (null here: no persona configured, the neutral default), never its text
     assert.ok("personaSha256" in second && second.personaSha256 === persona.PERSONA.sha256);
     assert.ok(!JSON.stringify(second).includes(persona.PERSONA.voice.split("\n")[1]));
     const input = writerInputs()[1]; // the writer's input for the second post
-    assert.deepEqual(input.character.recent.map((p: { text: string }) => p.text), ["Synthetic post about a rolled back event."]);
+    assert.deepEqual(input.character.recent.map((p: { text: string }) => p.text), ["Synthetic post about a reflection event."]);
     assert.match(input.character.recent[0].at, /^\d{4}-\d{2}-\d{2}T/, "with when it went out");
     assert.ok(Number.isInteger(input.facts.day) && input.facts.day >= 1, "the day of the run on every post");
     assert.deepEqual(input.character.avoid.openings, ["synthetic post about"]);

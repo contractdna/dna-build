@@ -1,4 +1,4 @@
-// A whole order with a scripted dev team (no model calls): the pipeline, the build's own SPEC.json and game.json, the
+// A whole order with a scripted team (no model calls): the pipeline, the build's own SPEC.json and game.json, the
 // patch, the report, the stops; then the published result passes the enclave's gates, the address gate included.
 import assert from "node:assert/strict";
 import { execFileSync, spawnSync } from "node:child_process";

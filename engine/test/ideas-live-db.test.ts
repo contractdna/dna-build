@@ -218,6 +218,65 @@ test("live: switching from rounds mode, an X idea the rounds mode picked but nev
   assert.equal(st.sent, 0);
 });
 
+test("live: every X idea the pre-2b judge rejected is judged again once, 2 a run, through the normal path; a later rejection and a gated row are untouched", { skip }, async () => {
+  const { record } = await import("../src/records.ts");
+  const at = new Date().toISOString();
+  // an X idea judged and rejected in live mode; the pre-2b judge's idea record has no `judge` note
+  const rejected = async (author: string, title: string, body: string, judge?: string) => {
+    const m = await mention(author, `@contractdna ${body}`);
+    await record("intake", m, { mention: m, round: 0, status: "candidate", reason: "genuine build idea; judged now", score: 20, title, body, class: "build", live: true, screen: ideas.SCREEN_VERSION, at });
+    await record("idea", `x:${m}`, { id: 0, round: 0, status: "rejected", live: true, from: "x", kind: "build", title, brain: "1", resolution: "Not taken: reject: no", ...(judge === undefined ? {} : { judge, plain: "it was not clear" }) });
+    await record("intake", m, { mention: m, round: 0, status: "rejected", reason: "reject: no", score: 20, live: true, screen: ideas.SCREEN_VERSION, at });
+    await sql`insert into intake (mention_id, round, status, reason, author_id, score, title, body, title_key) values (${m}, 0, 'rejected', 'reject: no', ${author}, 20, ${title}, ${body}, ${ideas.titleKey(title)})`;
+    return m;
+  };
+  const a = await rejected("501", "Swap raffle", "A raffle game: each swap in the official pool is a ticket.");
+  const b = await rejected("502", "Kite race", "A kite racing game: holders steer kites through gusts, the fastest lap wins a credit.");
+  const c = await rejected("503", "Bowling alley", "A bowling game where strikes earn points on a monthly ladder for holders.");
+  const later = await rejected("504", "Penguin slide", "A sliding penguin game on ice floes, longest slide of the week wins.", "reject: not clear");
+  const g = await mention("505", "@contractdna build a dice game for holders");
+  await record("intake", g, { mention: g, round: 0, status: "gated", reason: "near-duplicate of an idea received in the last 7 days", live: true, screen: ideas.SCREEN_VERSION, at });
+  await sql`insert into intake (mention_id, round, status, reason, author_id) values (${g}, 0, 'gated', 'near-duplicate of an idea received in the last 7 days', '505')`;
+  const ours = (out: Record<string, string>) => Object.keys(out).filter((k) => [a, b, c, later, g].includes(k)).sort();
+
+  const one = await ideas.intakeHandler.run(job()) as Record<string, string>;
+  assert.deepEqual(ours(one), [a, b], "the oldest two this run, never a burst");
+  assert.equal(one[a], "queued", "judged again and accepted: queued for the sequencer");
+  const r = await queueRow(`x:${a}`);
+  assert.equal(r.kind, "build");
+  assert.equal(r.data.rejudged, true);
+  assert.deepEqual(r.data.source, { source: "x", authorId: "501", postId: a }, "credited to the original author");
+  const rec = await doc("idea", `x:${a}`);
+  assert.equal(rec.rejudged, true);
+  assert.equal(rec.status, "accepted");
+  assert.match(rec.resolution, /^Judged again under the new rules\. Accepted and queued for the sequencer/);
+  assert.equal(typeof rec.judge, "string", "the new record is the current judge's");
+  const ia = await doc("intake", a);
+  assert.deepEqual([ia.status, ia.rejudged, ia.backfill], ["queued", true, undefined], "no backfill: no second reply");
+  assert.equal((await sql<{ status: string }[]>`select status from intake where mention_id = ${a}`)[0].status, "queued");
+  assert.match((await doc("announce", `idea:rejudge:x:${a}`)).title, /^Judged again under the new rules: Idea /);
+  assert.equal((await sql`select 1 from x_outbox where reply_to = ${a} or event_key like ${`%${a}%`}`).length, 0, "no new reply to the author");
+
+  const two = await ideas.intakeHandler.run(job()) as Record<string, string>;
+  assert.deepEqual(ours(two), [c], "the rest on the next run");
+  const brains = (await sql`select 1 from log where kind = 'brain'`).length;
+  const three = await ideas.intakeHandler.run(job()) as Record<string, string>;
+  assert.deepEqual(ours(three), [], "each once: a second run does nothing");
+  assert.equal((await sql`select 1 from log where kind = 'brain'`).length, brains, "no model call");
+  assert.equal((await sql`select 1 from log where kind = 'idea' and ref = ${`x:${a}`}`).length, 2, "one new idea record");
+
+  assert.equal((await sql<{ status: string }[]>`select status from intake where mention_id = ${later}`)[0].status, "rejected", "the current judge's rejection stands");
+  assert.equal((await doc("idea", `x:${later}`)).rejudged, undefined);
+  assert.equal((await queueRow(`x:${later}`)), undefined);
+  assert.equal((await sql<{ status: string }[]>`select status from intake where mention_id = ${g}`)[0].status, "gated", "a gated row is untouched");
+  assert.equal(await doc("idea", `x:${g}`), undefined);
+  // a run cut short after the new verdict (its intake record not written): the verdict comes back, no model call
+  const v = await ideas.judgeLive(`x:${a}`, { round: 0, index: -1, title: "x", body: "y" }, null, `x:${a}`, true);
+  assert.equal(v.status, "queued");
+  assert.equal((await sql`select 1 from log where kind = 'brain'`).length, brains);
+  assert.equal(st.sent, 0);
+});
+
 test("live: mentions an earlier gate turned away are screened again from their row, once each, under one idea per author a day", { skip }, async () => {
   const young = { verified_type: "none", created_at: new Date().toISOString(), public_metrics: { followers_count: 3 } };
   const turnedAway = async (author: string, text: string, reason: string) => {

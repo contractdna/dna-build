@@ -30,7 +30,7 @@ test("the self-file's open risks: its section's bullets, at most 10, cut to 300 
 
 test("open SEQ_OPEN_DELAY_MIN after launch (default 0: with the launch), never without a launch time", () => {
   const launch = Date.parse("2026-10-10T12:00:00Z");
-  assert.equal(s.SEQ.openAfterMs, 0, "the dev team starts with the launch");
+  assert.equal(s.SEQ.openAfterMs, 0, "the sequencer starts with the launch");
   assert.equal(s.seqOpen(launch - 1, launch), false);
   assert.equal(s.seqOpen(launch, launch), true);
   assert.equal(s.seqOpen(Date.now(), undefined), false);

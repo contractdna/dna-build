@@ -3,9 +3,10 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { test } from "node:test";
-import { refreshTokenOf, SAME_ASK, sameAsk } from "../src/x.ts";
+import { ideaFallback, refreshTokenOf, SAME_ASK, sameAsk } from "../src/x.ts";
 import { seal, unseal } from "../src/sealed.ts";
-import { allyIssues, factNumbers, factSheet, HARD_BOUNDS, optOutRequest, phraseIssue, postFilter, ROLLBACK_LINE, SCOUT, handlesOf, toneBrief, ToneOut, WRITER, writerCall } from "../src/voice.ts";
+import { PERSONA } from "../src/persona.ts";
+import { allyIssues, draftInCharacter, REFLECTION_REGISTER, TAKE_REGISTER, factNumbers, factSheet, HARD_BOUNDS, optOutRequest, phraseIssue, postFilter, REPLY_REGISTER, replyIssues, ROLLBACK_LINE, SCOUT, shapesFor, handlesOf, toneBrief, ToneOut, voiceIssues, weightedLength, WRITER, writerCall } from "../src/voice.ts";
 
 const facts = factSheet({ event: "queued", op: "SetParams", plate: "B", fee: { basePct: 2.4, multiplier: 0.5, capPct: 3 }, activatesAt: { utcHour: 14, utcMinute: 0 }, opId: 12 });
 const allowed = factNumbers(facts);
@@ -115,7 +116,8 @@ test("fact sheets: allow-list only, hard bounds only, never thresholds / slice /
   assert.equal(f.change, "a canary test: the new fee is charged on a sample of live swaps");
   assert.deepEqual(Object.keys(f).sort(), ["activatesAt", "bounds", "change", "event", "fee", "hours", "opId", "pays", "plate", "platformFeePct"], "no agent address: its digits could only fail the filter");
   const live = factSheet({ event: "test_live", op: "SetShadow", plate: "A", killAt: 0.7 });
-  assert.equal(live.rollback, ROLLBACK_LINE);
+  assert.equal(live.rollback, undefined, "a shadow test charges nothing: no auto-rollback");
+  assert.equal(factSheet({ event: "test_live", op: "SetCanary", plate: "A" }).rollback, ROLLBACK_LINE);
   assert.ok(!("killAt" in live));
   const out = factSheet({ event: "outcome", outcome: "killed", plate: "A", samples: 180, reason: "retention 65% < 70%" });
   assert.deepEqual([out.samples, "reason" in out], [180, false], "a raw reason (it can carry thresholds) never reaches the writer");
@@ -190,4 +192,123 @@ test("the same question from the same person: its words compared, mentions, link
   assert.ok(sameAsk("@contractdna how does the fee work?", "how does the FEE work @contractdna https://x.com/a"));
   assert.ok(!sameAsk("how does the fee work?", "how does the burn work?"));
   assert.ok(!sameAsk("@contractdna", "@contractdna ?"), "nothing asked is never the same ask");
+});
+
+test("idea replies: 'one' in plain prose passes (events keep refusing it); a buildable version may say it is credited or for the sequencer; code's plain verdict when no draft passes", () => {
+  assert.deepEqual(postFilter("It's one idea a day, and this one is in.", new Set(), false, { one: true }), []);
+  assert.deepEqual(postFilter("one idea a day", new Set()), ["number word one"], "an event post still states no number word");
+  assert.deepEqual(postFilter("two ideas a day", new Set(), false, { one: true }), ["number word two"], "only 'one'");
+  for (const t of ["It costs one ETH.", "Send one DNA.", "one wei", "one $DNA", "one-eth"]) assert.ok(postFilter(t, new Set(), false, { one: true }).includes("number word one"), t);
+  const bv = { event: "reply", category: "idea", verdict: "a buildable version" };
+  assert.deepEqual(voiceIssues(bv, "A tradeable NFT can't be built here, so a badge version is credited to you instead.", { linked: false }), []);
+  assert.deepEqual(voiceIssues(bv, "Lined up for the sequencer: a badge version instead.", { linked: false }), []);
+  assert.deepEqual(voiceIssues(bv, "Nice art. A badge version could work instead.", { linked: false }), ["does not say the idea is logged"]);
+  const out = "the full reason is on the site; a new idea is welcome tomorrow (UTC)";
+  const f = { verdict: "out", understood: "mint a new NFT collection and a game for its holders", why: "a safety review found a risk in building it.", next: out };
+  assert.equal(ideaFallback(f), "Understood: mint a new NFT collection and a game for its holders. Verdict: out. A safety review found a risk in building it. The full reason is on the site; a new idea is welcome tomorrow (UTC).");
+  assert.equal(ideaFallback({ verdict: "held back", why: "ideas can't include links", next: "post it again with the idea written out and no link" }), "Verdict: held back. Ideas can't include links. Post it again with the idea written out and no link.", "the tail is the verdict's own next step");
+  assert.equal(ideaFallback({ verdict: "a buildable version", instead: "Soulbound badge", why: "x".repeat(200), understood: "u".repeat(60), next: "it's queued" }), `Verdict: a buildable version. X${"x".repeat(199)}. It's queued.`, "too long: what is built instead, then what we understood, drop first");
+  assert.ok(weightedLength(ideaFallback({ verdict: "out", why: "y".repeat(400), next: out })!) <= 280);
+  // a part the writer's checks would refuse is left out: a jab at unnamed others, a promise, a price call
+  assert.equal(ideaFallback({ verdict: "out", understood: "a game for teams that rug their holders", next: out }), "Verdict: out. The full reason is on the site; a new idea is welcome tomorrow (UTC).");
+  assert.equal(ideaFallback({ verdict: "out", understood: "a coin flip", why: "we'd love to collab on an airdrop instead", next: out }), "Understood: a coin flip. Verdict: out. The full reason is on the site; a new idea is welcome tomorrow (UTC).");
+  assert.equal(ideaFallback({ verdict: "a buildable version", instead: "a game so DNA will pump", next: "it's queued" }), "Verdict: a buildable version. It's queued.");
+  assert.equal(ideaFallback({}), null, "no verdict, nothing to tell");
+});
+
+test("replies are plain: sentence case, a capital I, no mood talk, no persona words; plain answers pass", () => {
+  const reply = factSheet({ event: "reply", category: "bait" });
+  const issues = (t: string) => voiceIssues(reply, t, { linked: false });
+  // the cryptic reply that went out to "@contractdna Stop reply to this bots!"
+  const cryptic = "attendance problem: bait outdrew the swaps. i am grumbling at my own quiet pool, not writing it a fee.";
+  assert.deepEqual(replyIssues(cryptic), ["starts a sentence in lower case", "lower-case i", "talks about its own mood", "jargon: attendance problem"]);
+  assert.deepEqual(issues(cryptic), replyIssues(cryptic), "the reply filter refuses it, and the redraft hears why");
+  for (const [t, why] of [
+    ["the fee cap is 5%.", "starts a sentence in lower case"],
+    ["Fair point. replies to spam are off.", "starts a sentence in lower case"],
+    ["Fair point.\nthe cap holds.", "starts a sentence in lower case"],
+    ["“the cap holds,” as always.", "starts a sentence in lower case"],
+    ["The cap holds, and i checked.", "lower-case i"],
+    ["Honestly, i'm not changing it.", "lower-case i"],
+    ["I'm grumbling at the Safe again.", "talks about its own mood"],
+    ["I am quietly sulking about the veto.", "talks about its own mood"],
+    ["I feel bored by this quiet pool.", "talks about its own mood"],
+    ["Plate B is the one under test.", "jargon: plate"],
+    ["The vector moved overnight.", "jargon: vector"],
+    ["Your mutation made it in.", "jargon: mutation"],
+    ["That's in the genome now.", "jargon: genome"],
+    ["Price talk goes to the fud desk.", "jargon: fud desk"],
+  ]) assert.ok(replyIssues(t).includes(why), `${t} → ${replyIssues(t).join("; ") || "passed"}`);
+  for (const t of [
+    "Fair point. Replies to spam accounts are being switched off.",
+    "No. The fee cap is 5% and it is written into the hook's code, so no key can raise it, mine included.",
+    "I don't talk about price. Every burn and fee change is on chain with its transaction.",
+    "There is no airdrop, and I never ask anyone for a wallet.",
+    "I'm waiting on the Safe's signers too.",
+    "Thanks for the idea: a weekly holder raffle. It is logged for today's round.",
+    "$DNA burns every token the buyback buys.",
+    "ETH from the fees buys DNA, and that DNA is burned.",
+    "@someone Thanks for the idea. It is logged.",
+    "v4 hooks let the fee change inside fixed limits.",
+    "0.3 ETH went to the burn today.",
+    "The mystery mutation opens on Friday.",
+    "¿Qué tal? El límite es 5%.",
+    "费用上限是5%。",
+  ]) assert.deepEqual(issues(t), [], t);
+  // other posts keep their own voice: the check is the plain register's only
+  assert.deepEqual(voiceIssues(factSheet({ event: "status", hours: 6 }), "quiet day. i watched the pool.", { linked: false }), []);
+});
+
+test("the reply writer gets the plain register, never the voice, the bits, the emoji or the tone brief", () => {
+  const facts = factSheet({ event: "reply", category: "bait" });
+  assert.deepEqual(shapesFor("reply", facts, "restless"), ["plain"]);
+  const call = writerCall(facts, ["fr fr", "ngmi"], undefined, undefined, ["plain"]);
+  assert.ok(call.system.includes(REPLY_REGISTER));
+  assert.ok(!call.system.includes(PERSONA.voice), "the voice (lower case, moods, riddles) never reaches a reply");
+  const input = call.input as Record<string, unknown[]>;
+  assert.deepEqual([input.toneBrief, input.bits, input.emoji], [[], [], []]);
+  for (const ex of REPLY_REGISTER.split("\n").flatMap((l) => [...l.matchAll(/"([^"]+)"/g)].map((m) => m[1]))) assert.deepEqual(replyIssues(ex), [], ex);
+  // a post still hears the voice and the tone brief
+  const post = writerCall(factSheet({ event: "status", hours: 6 }), ["fr fr"]);
+  assert.ok(post.system.includes(PERSONA.voice) && !post.system.includes(REPLY_REGISTER));
+  assert.deepEqual((post.input as Record<string, unknown>).toneBrief, ["fr fr"]);
+});
+
+test("a cryptic reply draft gets one redraft that hears why; nothing plain, nothing passes", async () => {
+  const facts = factSheet({ event: "reply", category: "bait" });
+  const heard: (string[] | undefined)[] = [];
+  const drafts = [["attendance problem: bait outdrew the swaps. i am grumbling at my own quiet pool."], ["Fair point. Replies to spam accounts are being switched off."]];
+  const write = async (_f: unknown, _t: unknown, ch?: { refused?: string[] }) => ({ data: { candidates: drafts[heard.push(ch?.refused) - 1] }, model: "m", costUsd: 0 });
+  const filter = (t: string) => voiceIssues(facts, t, { linked: false });
+  const r = await draftInCharacter(facts, [], filter, { recent: [], banned: [], mood: "restless", jokes: [] }, write as never);
+  assert.equal(r.redraft, true);
+  assert.deepEqual(heard[1], ["starts a sentence in lower case", "lower-case i", "talks about its own mood", "jargon: attendance problem"]);
+  assert.deepEqual(r.candidates.map((c) => c.issues.length === 0), [false, true]);
+  // both rounds cryptic: no candidate passes (src/x.ts then skips a non-idea reply; an idea gets code's fallback)
+  drafts[1] = ["i'm sulking. plate says no."];
+  heard.length = 0;
+  const none = await draftInCharacter(facts, [], filter, { recent: [], banned: [], mood: "restless", jokes: [] }, write as never);
+  assert.ok(none.candidates.every((c) => c.issues.length));
+});
+
+test("a take and the nightly reflection are plain too: the register, no voice, bits, emoji or tone brief; cryptic drafts refused", () => {
+  const take = factSheet({ event: "ct", topics: [{ line: "people argue whether hooks should change fees on their own", about: "hooks" }], uniswapVersion: 4 });
+  const night = factSheet({ event: "reflection", date: "2026-10-11", learned: "quiet hours say little about the right fee", tomorrow: "keep the current fee and wait for more swaps" });
+  for (const [facts, register] of [[take, TAKE_REGISTER], [night, REFLECTION_REGISTER]] as const) {
+    assert.deepEqual(shapesFor("post", facts, "restless"), ["plain"], facts.event);
+    const call = writerCall(facts, ["fr fr"]);
+    assert.ok(call.system.includes(register) && !call.system.includes(PERSONA.voice), `${facts.event}: the register, never the voice`);
+    const input = call.input as Record<string, unknown[]>;
+    assert.deepEqual([input.toneBrief, input.bits, input.emoji], [[], [], []], facts.event);
+    for (const ex of register.split("\n").flatMap((l) => [...l.matchAll(/"([^"]+)"/g)].map((m) => m[1]))) assert.deepEqual(voiceIssues(facts, ex, { linked: false }), [], ex);
+  }
+  const cryptic: [Record<string, unknown>, string, string[]][] = [
+    [take, "hooks everywhere, receipts nowhere. i am sulking at the timeline again.", ["starts a sentence in lower case", "lower-case i", "talks about its own mood", "jargon: sulking"]],
+    [take, "Everyone wants a hook. Nobody wants the plate that comes with it.", ["jargon: plate"]],
+    [night, "quiet pool, loud lesson. i'm grumbling, but the vector holds.", ["starts a sentence in lower case", "lower-case i", "talks about its own mood", "jargon: grumbling"]],
+    [night, "Today the dev team shipped nothing new.", ["says dev team"]],
+  ];
+  for (const [facts, t, why] of cryptic) assert.deepEqual(voiceIssues(facts, t, { linked: false }), why, t);
+  assert.deepEqual(voiceIssues(take, "Most hook debates are about features. The better question is which limits nobody can change.", { linked: false }), []);
+  assert.deepEqual(voiceIssues(night, "Today I learned that quiet hours say little about the right fee. Tomorrow I keep the current fee and wait for more swaps.", { linked: false }), []);
 });

@@ -12,7 +12,8 @@
 // Pipeline: chain events and closed experiments → x_outbox (one row per event key; one reply per mention id) →
 // x:send (one item per run: posts ≥ X_POST_SPACING_MIN apart and ≤ X_DAILY_POSTS a UTC day, the launch window's
 // X_LAUNCH_* in the first X_LAUNCH_WINDOW_H after LLM_LAUNCH_AT; replies ≤ X_DAILY_REPLIES)
-// → fact sheet → writer (no tools) → filter → pick → code appends the tx link → post. At-most-once: an `attempt` record
+// → fact sheet → writer (no tools) → filter → pick → code appends the tx link → post; an event post skips the writer:
+// code's template from the fact sheet (src/event-posts.ts). At-most-once: an `attempt` record
 // precedes the POST; a 5xx or a network error after it leaves the item "attempted" (never retried) and alerts.
 // Telegram /mute drops the queue and stops posting until /unmute. Not live: dry_run writes and filters, never posts.
 import { createHash } from "node:crypto";
@@ -33,18 +34,19 @@ import { seal, unseal } from "./sealed.ts";
 import { alert, type ReplyButton, say } from "./telegram.ts";
 import { addressOf, pub } from "./tx.ts";
 import { hookAbi } from "./abi.ts";
-import { allyIssues, appendWeight, type Category, claimFacts, claimIssues, classifyMention, factNumbers, factSheet, feeFacts, linkIssues, OFFICIAL_REPLY, optOutRequest, postFilter, promiseIssue, SCOUT, screenLine, SCRIPTS, TRANSLATE, Translated, nonAscii, scoutTone, toneBrief, TX_URL, weightedLength, WRITER, type CharacterContext, chooseShapes, draftInCharacter, type Drafted, judgeCall, type JudgeOut, parrotIssue, pickBest, shapesFor, voiceIssues } from "./voice.ts";
+import { allyIssues, appendWeight, type Category, claimFacts, claimIssues, classifyMention, factNumbers, factSheet, feeFacts, linkIssues, OFFICIAL_REPLY, optOutRequest, postFilter, PREDICTION, promiseIssue, SCOUT, screenLine, SCRIPTS, TRANSLATE, Translated, nonAscii, scoutTone, toneBrief, TX_URL, UNNAMED_JAB, weightedLength, WRITER, type CharacterContext, chooseShapes, draftInCharacter, type Drafted, judgeCall, type JudgeOut, parrotIssue, pickBest, shapesFor, voiceIssues } from "./voice.ts";
 import { llm, untrustedCall } from "./llm.ts";
 import { ballotsOpen, GAME_X_EVENTS, gameFacts, reasonOf, VOTES_CLOSED } from "./games.ts";
 import { announce, ANNOUNCEMENTS_URL, bucketOf, eventPosts, postCaps, priorityOf, proofOf, typeOf } from "./announce.ts";
 import { GATE, IDEA_STATUSES, overlap, type XUser } from "./ideas.ts";
-import { COMPETITOR_NAMES, impersonator, isAlly, phishing, type Post, replyPath, stopRule, summoned, type Tier, tierOf, TIERS } from "./tiers.ts";
+import { COMPETITOR_NAMES, impersonator, isAlly, linksOut, phishing, type Post, replyPath, SPAM_SHAPE, spamShape, stopRule, summoned, type Tier, tierOf, TIERS } from "./tiers.ts";
 import { BINDING_REPLY, parseBinding } from "./rewards.ts";
 import { type Card, cardFor, mediaRecord, requestArtFor } from "./card.ts";
 import { jsonSafe } from "./lib.ts";
 import { dayOfLife, mindNow, pendingNow, storyNow } from "./life.ts";
 import { GUARD_ABI, hasLaunchGuard, mechanicsFor, type Topic } from "./mechanics.ts";
-import { flatTake, intentOf, MIND_EVENTS, oldTokenTalk, questionOf, writerSystem } from "./voice.ts";
+import { flatTake, intentOf, MIND_EVENTS, oldTokenTalk, questionOf, unclearReflection, writerSystem } from "./voice.ts";
+import { eventPost } from "./event-posts.ts";
 
 export { weightedLength };
 const sha = (s: string) => createHash("sha256").update(s).digest("hex");
@@ -366,9 +368,9 @@ export async function deletePost(id: string | undefined, by: string) {
 /** Why the idea gate held an idea back, and what the person can do, in plain words (code's, by the gate's reason). */
 const GATE_SAYS: [RegExp, string, string][] = [
   [/^links are not allowed/, "ideas can't include links", "post it again with the idea written out and no link"],
-  [/^already \d+ idea from this author the same UTC day/, "it's one idea per person per day (UTC), and they had already sent one that day", "post it again on another day (UTC)"],
-  [/^already \d+ idea from this author this round/, "it's one idea per person per round, and they already sent one this round", "post it again in the next round"],
-  [/^no author profile/, "X didn't send their profile with the post", "post it again"],
+  [/^already \d+ idea from this author the same UTC day/, "it's one idea per person per day (UTC), and you had already sent one that day", "post it again on another day (UTC)"],
+  [/^already \d+ idea from this author this round/, "it's one idea per person per round, and you already sent one this round", "post it again in the next round"],
+  [/^no author profile/, "X didn't include your profile with the post", "post it again"],
 ];
 /** What a reply to an idea may say about it, in plain parts (code's words, the judge's plain sentences screened):
  *  `understood` (what we took the idea to be), `verdict` (in, a buildable version, out, held back, being judged, logged),
@@ -406,11 +408,31 @@ export function intakeFactOf(r: IntakeIndex, c: IntakeWords | undefined, live: b
   const say: Record<string, Record<string, string>> = {
     candidate: { intake: "their idea passed the screen and is being judged now; the verdict goes on the site within minutes", verdict: "being judged", next: "the verdict goes on the site within minutes" },
     queued: variant
-      ? { intake: "their idea can't be built as written; its closest buildable version is queued for the sequencer, credited to them", verdict: "a buildable version", ...(instead ? { instead } : {}), next: "the sequencer builds the best queued idea when it's free; they get the credit and are tagged as it moves" }
-      : { intake: "their idea was judged and accepted: it is queued for the sequencer", verdict: "in", next: "the sequencer builds the best queued idea when it's free; they are tagged as it moves" },
+      ? { intake: "their idea can't be built as written; its closest buildable version is queued for the sequencer, credited to them", verdict: "a buildable version", ...(instead ? { instead } : {}), next: "the sequencer builds the best queued idea when it's free; you get the credit and are tagged as it moves" }
+      : { intake: "their idea was judged and accepted: it is queued for the sequencer", verdict: "in", next: "the sequencer builds the best queued idea when it's free; you are tagged as it moves" },
     rejected: { intake: "their idea was judged and not taken", verdict: "out", next: "the full reason is on the site; a new idea is welcome tomorrow (UTC)" },
   };
   return say[r.status] ? { ...say[r.status], ...(why ? { why } : {}), ...base } : base;
+}
+
+/** The reply to an idea that repeats one already sent this week: one fixed plain text (code, never the writer). */
+export const REPEAT_REPLY = "Same idea as one already sent this week, so it's already been seen. No need to post it again.";
+/** An idea reply when no draft passes or the writer's last try fails: code's plain verdict (the idea's author always
+ *  hears back), from intakeFact's screened parts and its own `next`, within `room` weighted chars. A part that would
+ *  fail the writer's jab, promise or prediction checks is left out. null: no verdict to tell. */
+export function ideaFallback(f: Record<string, unknown>, room = 280): string | null {
+  if (typeof f.verdict !== "string") return null;
+  const s = (x: unknown) => (typeof x === "string" && x.trim() ? x.trim().replace(/[.;:,!?]+$/, "") : undefined);
+  const ok = (x?: string) => (x && !UNNAMED_JAB.test(x) && !promiseIssue(x).length && !PREDICTION.some((re) => re.test(x)) ? x : undefined);
+  const cap = (x: string | undefined) => x && x[0].toUpperCase() + x.slice(1);
+  const understood = ok(s(f.understood)), why = cap(ok(s(f.why))), instead = ok(s(f.instead)), next = cap(s(f.next));
+  // the least needed part goes first when it is too long: what is built instead, then what we understood, then why,
+  // then what happens next
+  for (const [u, w, i, n] of [[understood, why, instead, next], [understood, why, undefined, next], [undefined, why, undefined, next], [undefined, undefined, undefined, next], [undefined, undefined, undefined, undefined]]) {
+    const t = [u && `Understood: ${u}`, `Verdict: ${f.verdict}`, w, i && `Built instead: ${i}`, n].filter(Boolean).join(". ") + ".";
+    if (weightedLength(t) <= room) return t;
+  }
+  return null;
 }
 
 // ---------------------------------------------------------------- the outbox
@@ -674,10 +696,12 @@ export async function onlineAhead() {
 
 /** The outbox order: posts by priority, replies with the rest. */
 export const rankOf = (i: { type: string; event: Record<string, unknown> }) => (i.type === "reply" ? 4 : priorityOf(i.event));
-/** A post the writer could not produce rolls into the digest (never dropped); a reply or the digest itself fails. */
+/** Posts the writer could not produce that are dropped, never digested: a take on crypto Twitter (src/ct.ts) is of its
+ *  moment; the nightly reflection stays on the site's journal. */
+const DROPPED = new Set(["ct", "reflection"]);
+/** A post the writer could not produce rolls into the digest (DROPPED aside); a reply or the digest itself fails. */
 async function giveUp(item: Outbox, status: "skipped" | "failed", error: string) {
-  // a take on crypto Twitter (src/ct.ts) is of its moment: dropped, never digested
-  if (item.type === "post" && item.event.event !== "digest" && item.event.event !== "ct") return setStatus(item.id, "digest", { error: `rolled into the digest: ${error}` });
+  if (item.type === "post" && item.event.event !== "digest" && !DROPPED.has(String(item.event.event))) return setStatus(item.id, "digest", { error: `rolled into the digest: ${error}` });
   await setStatus(item.id, status, { error });
   if (item.event.event === "digest") await alert(`The daily digest ${item.event_key} was not posted: ${error}.`, `alert:digest:${item.event_key}`);
 }
@@ -715,6 +739,24 @@ async function sendOne(item: Outbox, m: string): Promise<unknown> {
   });
   // the mention a reply answers (code's check only: the writer never sees it)
   const mention = item.type === "reply" && item.reply_to ? (await sql<{ text: string }[]>`select text from x_mention where id = ${item.reply_to}`)[0]?.text : undefined;
+  // code appends: game text (a winner's short address, a commitment), then the tx link
+  const suffix = [raw.append, item.link].filter(Boolean).join("\n");
+  // code's "@handle" before the writer's text: a reply in our own thread that tags the person it is for (an idea's
+  // progress, a thread presence turn); the writer never writes a handle
+  const lead = typeof raw.lead === "string" && /^@\w{1,15}$/.test(raw.lead) ? raw.lead : "";
+  const extra = appendWeight(suffix) + (lead ? weightedLength(lead) + 1 : 0);
+  // a binding, the official-contract answer and an idea's repeat get one fixed text each (code, never the writer)
+  const own = raw.event === "binding_reply" ? BINDING_REPLY : raw.event === "official_reply" ? OFFICIAL_REPLY : String(raw.event).startsWith("update_") && typeof raw.fixed === "string" ? raw.fixed
+    : item.type === "reply" && raw.category === "idea" && facts.verdict === "a repeat" ? REPEAT_REPLY : null;
+  // an event post: code's template from the fact sheet, never the writer (src/event-posts.ts; null: a take, the
+  // reflection). No template, or no variant that fits and passes: nothing goes out (rolled into the digest)
+  const event = !own && item.type === "post" ? eventPost(facts, 280 - extra) : null;
+  if (event && typeof event === "object") {
+    console.error(`x event post ${item.event_key} (${ev}): ${event.skip}`);
+    await giveUp(item, "skipped", event.skip);
+    return "skipped";
+  }
+  const fixed = own ?? event;
   // the image: generated art (re-checked here, approved while approvals are on), a plate, the logo, or none
   let card: Card | null = null;
   if (item.type === "post") {
@@ -723,15 +765,11 @@ async function sendOne(item: Outbox, m: string): Promise<unknown> {
     card = c;
   }
   const allowed = factNumbers(facts);
-  const tone = await currentTone();
-  // code appends: game text (a winner's short address, a commitment), then the tx link
-  const suffix = [raw.append, item.link].filter(Boolean).join("\n");
-  // code's "@handle" before the writer's text: a reply in our own thread that tags the person it is for (an idea's
-  // progress, a thread presence turn); the writer never writes a handle
-  const lead = typeof raw.lead === "string" && /^@\w{1,15}$/.test(raw.lead) ? raw.lead : "";
-  const extra = appendWeight(suffix) + (lead ? weightedLength(lead) + 1 : 0);
-  // a binding and the official-contract answer get one fixed text each (code, never the writer)
-  const fixed = raw.event === "binding_reply" ? BINDING_REPLY : raw.event === "official_reply" ? OFFICIAL_REPLY : String(raw.event).startsWith("update_") && typeof raw.fixed === "string" ? raw.fixed : null;
+  // the tone brief reaches only the voiced writer: the plain register (a reply, a take, the reflection) never gets it
+  const tone = writerSystem(facts) === WRITER ? await currentTone() : [];
+  // an idea's author always hears back: when no draft passes, or on the writer's last try, code's plain verdict goes out
+  const fallback = item.type === "reply" && raw.category === "idea" ? ideaFallback(facts, 280 - extra) : null;
+  const lastTry = item.errors + 1 >= MAX_WRITER_ERRORS;
   const author = item.type === "reply" && typeof item.event.author === "string" ? item.event.author : undefined;
   const memory = fixed ? null : await CHARACTER_MEMORY.context({ authorId: author, type: item.type });
   // a first or a milestone is an event: the mood says so; 4 shapes, never the one this event used last time
@@ -745,20 +783,22 @@ async function sendOne(item: Outbox, m: string): Promise<unknown> {
   // a draft that only restates code's stage text is refused (parrotIssue); an echo of the private bundle too (bundleIssues)
   // a reply in the reader's language (facts.lang) may use that language's letters (SCRIPTS)
   const script = typeof facts.lang === "string" ? SCRIPTS[facts.lang] : undefined;
-  const filter = (text: string) => [...postFilter(text, allowed, extra, { intent: intentOf(facts), priceJoke: facts.category === "price_fud", claim: claimFacts(facts), script }), ...(before.some((b) => overlap(b, text) >= GATE.overlap) ? ["no new fact"] : []), ...claimIssues(facts, text), ...allyIssues(facts, text), ...promiseIssue(text), ...voiceIssues(facts, text, { linked: !!item.link, mention }), ...[parrotIssue(facts, text)].filter((x): x is string => !!x), ...bundleIssues(text)];
+  const filter = (text: string) => [...postFilter(text, allowed, extra, { intent: intentOf(facts), priceJoke: facts.category === "price_fud", claim: claimFacts(facts), script, one: facts.category === "idea" }), ...(before.some((b) => overlap(b, text) >= GATE.overlap) ? ["no new fact"] : []), ...claimIssues(facts, text), ...allyIssues(facts, text), ...promiseIssue(text), ...voiceIssues(facts, text, { linked: !!item.link, mention }), ...[parrotIssue(facts, text)].filter((x): x is string => !!x), ...bundleIssues(text)];
   let w: Drafted;
   try {
     w = fixed ? { model: "code", candidates: [{ text: fixed, issues: [] }], redraft: false }
       : await draftInCharacter(facts, tone, filter, memory ? { ...memory, mood: mood ?? memory.mood, shapes, card: card?.kind === "image", ...(before.length ? { thread: before.slice(-5) } : {}) } : null, undefined, shapes);
   } catch (e) {
-    return writerFailed(item, e);
+    if (!fallback || !lastTry || e instanceof Defer) return writerFailed(item, e);
+    await writerFellBack(item, e);
+    w = { model: "code", candidates: [], redraft: false };
   }
   const candidates = w.candidates;
   // the judge orders what passed every filter (2 or more); it never decides what is safe: on any failure, the first
   const passing = candidates.filter((c) => !c.issues.length);
   let judged: (JudgeOut & { model: string }) | null = null;
   // a take on crypto Twitter (src/ct.ts) is judged even alone: the judge decides whether it is worth posting (flatTake)
-  if (passing.length >= 2 || (facts.event === "ct" && passing.length)) {
+  if (passing.length >= 2 || ((facts.event === "ct" || facts.event === "reflection") && passing.length)) {
     try {
       const j = await llm(judgeCall(facts, passing.map((c) => c.text), (memory?.recent ?? []).map((p) => p.text)));
       judged = { ...j.data, model: j.model };
@@ -767,32 +807,37 @@ async function sendOne(item: Outbox, m: string): Promise<unknown> {
     }
   }
   const best = pickBest(candidates, judged);
-  const flat = facts.event === "ct" && best ? flatTake(judged, passing.indexOf(best), passing.length) : null;
+  const flat = !best ? null : facts.event === "ct" ? flatTake(judged, passing.indexOf(best), passing.length)
+    : facts.event === "reflection" ? unclearReflection(judged, passing.indexOf(best), passing.length) : null;
   const pick = flat ? undefined : best;
   // character memory reads these back (src/character.ts): the shape, mood, the running joke, the reader's X id
   const character = memory ? { shape: pick?.shape, mood: mood ?? memory.mood, redraft: w.redraft, ...(author ? { author } : {}) } : {};
   const rec = { type: item.type, outbox: item.id, event: item.event_key, facts, promptHash: sha(writerSystem(facts)), personaSha256: PERSONA.sha256, model: w.model, tone, candidates: publicCandidates(candidates), shapes, ...(judged ? { judge: judged } : {}), mode: m, media: mediaRecord(card), ...character };
-  if (!pick) {
+  if (!pick && !fallback) {
     await append("x_post", item.event_key, { ...rec, status: "miss", ...(flat ? { why: flat } : {}) });
     await giveUp(item, "skipped", flat ?? "no candidate passed the filter");
     return "miss";
   }
-  const draft = pick.text.normalize("NFKC").trim();
+  let draft = pick ? pick.text.normalize("NFKC").trim() : fallback!;
+  let fellBack = !pick;
   // code's lexicon is English: a reply in another language (even one that happens to be plain ASCII) is read back in
   // English by a call that never saw the facts or the mention, and that reading must pass the same checks (its length
   // aside), or the writer tries again later
-  if (script) {
+  if (script && pick) {
     try {
       const english = (await llm(untrustedCall("x-translate", TRANSLATE, draft, Translated))).data.english;
       const issues = filter(english).filter((i) => i !== "over 280 weighted chars");
       if (issues.length) throw new Error(`the English reading of the draft: ${issues.join(", ")}`);
     } catch (e) {
-      return writerFailed(item, e);
+      if (!fallback || !lastTry || e instanceof Defer) return writerFailed(item, e);
+      await writerFellBack(item, e);
+      draft = fallback;
+      fellBack = true;
     }
   }
   const text = `${lead ? `${lead} ` : ""}${draft}${suffix ? `\n${suffix}` : ""}`;
   // the writer's own text and joke ride in the record, so a held reply sent by a tap carries them too
-  const sent = { ...rec, draft, ...(pick.joke ? { joke: pick.joke } : {}) };
+  const sent = { ...rec, draft, ...(pick?.joke && !fellBack ? { joke: pick.joke } : {}), ...(fellBack ? { fallback: true } : {}) };
   if (m !== "live") {
     await append("x_post", item.event_key, { ...sent, text, status: "dry_run" });
     await setStatus(item.id, "dry_run");
@@ -814,9 +859,17 @@ async function writerFailed(item: Outbox, e: unknown) {
   await sql`update x_outbox set errors = ${n}, error = ${(e as Error).message.slice(0, 300)}, updated_at = now() where id = ${item.id}`;
   if (n >= MAX_WRITER_ERRORS) {
     await giveUp(item, "failed", `writer failed ${n} times: ${(e as Error).message.slice(0, 200)}`);
-    await alert(`X writer failed ${n} times on ${item.event_key} (${item.type}); ${item.type === "post" ? "it rolled into the digest" : "no reply"}. Last error: ${(e as Error).message.slice(0, 200)}`, `alert:xwriter:${item.event_key}`);
+    await alert(`X writer failed ${n} times on ${item.event_key} (${item.type}); ${item.type === "reply" ? "no reply" : DROPPED.has(String(item.event.event)) ? "it is dropped" : "it rolled into the digest"}. Last error: ${(e as Error).message.slice(0, 200)}`, `alert:xwriter:${item.event_key}`);
   }
   return `writer failed (${n}/${MAX_WRITER_ERRORS})`;
+}
+
+/** The writer's last failure on an idea reply: counted, put on the row and alerted like writerFailed, then code's plain
+ *  verdict goes out instead (the send's own status writes clear `error`; the count and the alert stay). */
+async function writerFellBack(item: Outbox, e: unknown) {
+  const n = item.errors + 1, msg = (e as Error).message;
+  await sql`update x_outbox set errors = ${n}, error = ${msg.slice(0, 300)}, updated_at = now() where id = ${item.id}`;
+  await alert(`X writer failed ${n} times on ${item.event_key} (${item.type}); code's plain verdict goes out instead. Last error: ${msg.slice(0, 200)}`, `alert:xwriter:${item.event_key}`);
 }
 
 /** The POST, at most once: the signed `attempt` record (text, media sha256 + provenance) precedes the upload and the
@@ -1034,8 +1087,11 @@ type Decision = { skip: string } | { wait: string } | { later: string } | { kind
 const READER_FAILS = new Map<string, number>();
 export const READER_TRIES = 3;
 /** One mention → skip (with the reason), wait (a ceiling or the reader's budget: the next run tries again) or reply. */
-async function decide(m: MentionRow, tier: Tier): Promise<Decision> {
+async function decide(m: MentionRow, tier: Tier, idea: boolean): Promise<Decision> {
   if (!(await isSummoned(m.raw))) return { skip: "not summoned (no @mention or quote of us)" };
+  // spam by its shape (tickers, tags, links, emoji; a ticker beside a link) gets nothing, before any model; an ally
+  // is a signed account, never a bot, and an idea the intake took gets its idea reply
+  if (!idea && !isAlly(m.author_id) && spamShape(m.text)) return { skip: SPAM_SHAPE };
   // no author gate (age, followers, badge): every person who summons us is answered, under the caps below
   if (replyPath(tier) === "off") return { skip: "AI replies are off until X approves them" };
   const lim = TIERS[tier];
@@ -1069,11 +1125,12 @@ async function decide(m: MentionRow, tier: Tier): Promise<Decision> {
     // hard lines: phishing and abuse get nothing
     if (r.kind === "scam") return { skip: "scam or phishing" };
     if (r.kind === "abuse") return { skip: "slurs or harassment" };
-    // bait never ends a reply, whatever the tier: an ally's hello and a competitor's jab are answered as greetings;
-    // anyone else's bait (hype, lfg, collab asks, shilling) gets a short in-voice line (the writer never sees their
-    // links, tickers or handles)
+    // an ally's hello and a competitor's jab are answered as greetings; anyone else's bait (hype, lfg, collab asks,
+    // shilling) gets a short in-voice line (the writer never sees their links, tickers or handles), unless it carries
+    // a link off X: link spam gets nothing
     const lang = r.lang in SCRIPTS ? r.lang : undefined;
     if (r.kind === "bait" && (isAlly(m.author_id) || tier === "competitor")) return { kind: "greeting", topic: r.topic, lang };
+    if (r.kind === "bait" && !idea && linksOut(m.text, m.raw.entities ? (m.raw.entities.urls ?? []).map((u) => u.expanded_url) : undefined)) return { skip: "bait with a link" };
     return oldTokenTalk(r.question) ? { kind: "official_contract", topic: r.topic } : { kind: r.kind, topic: r.topic, question: questionOf(r.question), lang };
   } catch (e) {
     if (e instanceof Defer) return { wait: `the reader: ${e.message.slice(0, 120)}` }; // the LLM cap or provider trouble: next run
@@ -1107,7 +1164,8 @@ function alertMention(m: MentionRow, tier: Tier, plan: string, key?: string) {
 /** Mentions → replies (src/tiers.ts). Only to a post that @mentions or quotes us, from any author (no age, follower or
  *  badge gate); every tier a turn per new post of theirs in a thread (no daily cap per person; X.repliesPerAuthorHour an hour to one account)
  *  until a stop rule fires; all under ceilings of X.dailyReplies a day and X.hourlyReplies an hour. One reply per
- *  mention id (x_outbox unique reply_to); bait gets a short in-voice line. Never to our own posts, an opted-out author,
+ *  mention id (x_outbox unique reply_to); bait gets a short in-voice line, bait with a link off X nothing. Never to spam
+ *  by its shape (tiers.ts spamShape: tickers, tags, links or emoji only; a ticker beside a link), our own posts, an opted-out author,
  *  an impersonator, phishing, slurs or harassment, injection, or the same post again within the hour. Until X approves AI replies, only important
  *  accounts get one, held for a Send tap; approved, every tier's reply is sent without a tap (X_HOLD_IMPORTANT=1 holds
  *  an important account's). The mention text reaches only the quarantined reader (the writer gets its
@@ -1155,8 +1213,14 @@ export const repliesHandler: Handler = {
         if (m.author_id) await sql`insert into x_optout (author_id) values (${m.author_id}) on conflict do nothing`;
         await skip(m, "opt-out request"); continue;
       }
+      // the intake reads every mention (src/ideas.ts, every minute): a fresh one waits for that read (≤ 5 min), so a real
+      // idea is never skipped as spam or bait before the intake has seen it
+      const fresh = Date.now() - Date.parse(m.raw.created_at ?? "") < IDEA_READ_WAIT_MS;
+      if (fresh && !(await sql`select 1 from intake where mention_id = ${m.id}`).length) { out[m.id] = "waiting for the intake's read"; continue; }
       const tier = tierOf(m.raw.user ? { id: m.author_id ?? undefined, ...m.raw.user } : null);
-      const d = await decide(m, tier);
+      // the intake took it as an idea (the screen's or the judge's result): the idea reply, whatever the reader called it
+      const idea = (await sql`select 1 from intake where mention_id = ${m.id} and (status in ${sql(IDEA_STATUSES)} or reason like 'near-duplicate%')`).length > 0;
+      const d = await decide(m, tier, idea);
       // a reader retry ("later") alerts nothing yet: the final verdict does
       // a reply's alert goes out with its text, once it is written (sendOne)
       if (tier !== "normal" && ("skip" in d || "wait" in d)) await alertMention(m, tier, "skip" in d ? `no reply (${d.skip})` : `waiting on ${d.wait}`);
@@ -1176,8 +1240,7 @@ export const repliesHandler: Handler = {
       const relationship = isAlly(m.author_id) ? "ally" : tier === "competitor" ? "competitor" : undefined;
       // a competitor that came at us first may be answered by name (code's name for it, never its handle)
       const rival = relationship === "competitor" && m.author_id ? COMPETITOR_NAMES[m.author_id] : undefined;
-      // the intake took it as an idea (the screen's or the judge's result): the idea reply, whatever the reader called it
-      const kind = (await sql`select 1 from intake where mention_id = ${m.id} and (status in ${sql(IDEA_STATUSES)} or reason like 'near-duplicate%')`).length ? "idea" : d.kind;
+      const kind = idea ? "idea" : d.kind;
       await enqueueX(`reply:${m.id}`, "reply", { event: "reply", category: kind, topic: d.topic, ...(d.question ? { question: d.question } : {}), ...(rival ? { rival } : {}), tier, ...(relationship ? { relationship } : {}), ...(d.lang ? { lang: d.lang } : {}), ...(m.author_id ? { author: m.author_id } : {}) }, { replyTo: m.id });
       out[m.id] = kind;
     }

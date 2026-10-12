@@ -66,7 +66,7 @@ export const CHAPTERS: Chapter[] = [
     id: "what",
     title: "What this is",
     dumb: [
-      "$DNA is a coin on ethereum with an AI that tunes its trading fee. the AI's dev team builds new games for it too.",
+      "$DNA is a coin on ethereum with an AI that tunes its trading fee. the sequencer builds new games for it too.",
       "every fee change is a mutation (CT would say a new hook). the AI tests each one on real trades. bad ones get rolled back, good ones stay.",
       "every move it makes is public, and you can check it yourself.",
     ],
@@ -136,12 +136,12 @@ export const CHAPTERS: Chapter[] = [
     id: "sequencer",
     title: "The Sequencer",
     dumb: [
-      "the Sequencer is the AI's dev team. it takes the best ideas and builds new games and fee modules: contract, page and tests.",
+      "the sequencer takes the best ideas and builds new games and fee modules: contract, page and tests.",
       "a tester attacks every build, the brain decides if it ships, and the deploy and its funding wait one public hour the Safe can cancel.",
-      "it's switched on and builds from the first winning idea, one idea at a time. a game ships only after every check and one public hour.",
+      "it's switched on and builds from the first winning idea, up to 3 ideas at once. a game ships only after every check and one public hour.",
     ],
     smart: {
-      lead: "An off-chain build pipeline. The brain picks what to build and signs the decision. A dev team of models works in public CI on the public repo and can only open pull requests. The sealed engine re-runs every gate, compiles the merged commit itself and deploys after the public hour. No wallet key ever sits in CI.",
+      lead: "An off-chain build pipeline. The brain picks what to build and signs the decision. The sequencer's models work in public CI on the public repo and can only open pull requests. The sealed engine re-runs every gate, compiles the merged commit itself and deploys after the public hour. No wallet key ever sits in CI.",
       flow: {
         steps: [
           "Idea → sealed intake → plain spec (builders never see the raw post)",
@@ -159,13 +159,13 @@ export const CHAPTERS: Chapter[] = [
       facts: [
         { k: "Brain", v: "One model call per decision (build, verdict, retire, model swap, idea-round outcome, reward). Each is a signed record with the model, the sha256 of its context and of its input", at: "engine/src/brain.ts" },
         { k: "Models", v: "Public registry of every role's model and backup, shown as a table on /models. These are the default models. Swapping one needs a public tryout on fixed test cases, then a public hour, and the Safe can veto. Swapping the brain itself needs two Safe owners to approve", at: "engine/models.json, docs/MODELS.md" },
-        { k: "Spend caps", v: "A daily and a monthly cap on AI spending. Near the cap the dev team pauses first, then research. Keepers never call a model, so trading, fees and payouts never need the AI", at: "engine/src/config.ts LLM" },
+        { k: "Spend caps", v: "A daily and a monthly cap on AI spending. Near the cap the sequencer pauses first, then research. Keepers never call a model, so trading, fees and payouts never need the AI", at: "engine/src/config.ts LLM" },
         { k: "Gates", v: "Fuzz and invariant tests, fork simulation, static analysis, a planted-bug check, a gas cap, no delegatecall, selfdestruct or upgradeability, no new dependencies, no CI edits. The sealed engine re-runs them; CI alone never decides" },
         { k: "New games", v: "Standalone contracts with no power over the hook, the fees or other games. Only the Safe can pause one. No user deposits until a higher ladder level" },
         { k: "Live cap", v: "At most 3 games live. A 4th retires the one with the fewest players over 2 days" },
         { k: "Funding", v: "Safe → Zodiac Roles (one allowed call, GameFunder.fund, bounded amount) → Delay (1 h, the Safe can cancel). GameFunder enforces a weekly budget and a per-game cap", at: "contracts/src/games/GameFunder.sol, test/fork/Funding.t.sol" },
         { k: "Hook modules", v: "A module the Sequencer builds still needs the Safe's code-hash approval before it can be registered", at: "ModuleRegistry.ApproveCodehash" },
-        { k: "Status", v: "Running in the sealed engine since 11 Oct 2026: the brain, model registry, spend caps, funding path (fork-tested), module library, idea rewards, idea routing, X wallet links and the dev team's build loop" },
+        { k: "Status", v: "Running in the sealed engine since 11 Oct 2026: the brain, model registry, spend caps, funding path (fork-tested), module library, idea rewards, idea routing, X wallet links and the sequencer's build loop" },
       ],
       links: [
         { label: "engine/src/brain.ts", href: eng("engine/src/brain.ts") },
@@ -266,7 +266,7 @@ export const CHAPTERS: Chapter[] = [
     dumb: [
       "hold 1,000+ $DNA (average over the window) and you're in. no sign-up. staking counts 2x to 4x.",
       "10 wallets win each draw and split it equally, up to 3 eth. chainlink picks them, the eth lands by itself, and no wallet gets more than 2% of the tickets.",
-      "the AI sets the timing (every 12 hours to 3 days) and posts the rules before each window. anyone can check a draw on-chain.",
+      "the AI sets the timing (every 12 to 24 hours) and posts the rules before each window; a window without them is not drawn. anyone can check a draw on-chain.",
     ],
     smart: {
       lead: "Every DNA holder is in. Tickets are a time-weighted average balance over the draw window, built in the enclave from the full Transfer history and committed on-chain as a Merkle root. One Chainlink VRF v2.5 word, delivered after the list is fixed, picks 10 winners, who split the prize equally (at least 0.25 ETH).",
@@ -287,14 +287,14 @@ export const CHAPTERS: Chapter[] = [
         ],
       },
       facts: [
-        { k: "Draw window", v: "24 h by default; the AI sets it within 12 h–3 d", at: "GamePot.DEFAULT_INTERVAL, MIN_INTERVAL, MAX_INTERVAL" },
+        { k: "Draw window", v: "24 h by default; the AI sets it within 12–24 h (the chain allows 12 h–3 d). A window is drawn only if its rules were anchored on-chain before it opened; otherwise its pot carries over", at: "engine/src/games.ts GAME_POLICY.maxInterval, engine/src/jackpot.ts paramsOf; GamePot.MIN_INTERVAL, MAX_INTERVAL" },
         { k: "Per-wallet cap", v: "2%, or 1% while a draw in the last two windows had 100+ wallets. Wallets above the cap are cut down to it. Chain bounds 0.5% to 2%. The cap is per wallet, so one person can split across wallets", at: "engine/src/tickets.ts capForWindow, CAP_POLICY; GamePot.MIN_CAP_BPS / MAX_CAP_BPS" },
         { k: "Too few wallets", v: "Fewer than 50 eligible wallets: no level fits even a 2% cap, so there is no draw and the pot carries over", at: "engine/src/tickets.ts waterfill" },
         { k: "Minimum balance", v: "1,000 DNA average over the window (chain bounds 100–1,000,000)", at: "engine/src/jackpot.ts JACKPOT_POLICY, GamePot.MIN_BALANCE_FLOOR / CEIL" },
         { k: "List veto", v: "1 h after postList; the list must be posted within 24 h of the window's end", at: "GamePot.LIST_DELAY, LIST_GRACE" },
         { k: "Winners", v: "Ten distinct wallets, equal shares, at most 32 tickets drawn. Fewer wallets in the list means fewer winners; the rest stays in the pot", at: "GamePot.WINNERS, MAX_TICKETS, settle" },
-        { k: "Timing target", v: "The AI picks the interval so a draw is worth about 1 ETH, within 12 h to 3 d, and changes it only when the move is over 25%", at: "engine/src/games.ts GAME_POLICY" },
-        { k: "Prize", v: "min(pot − VRF top-up, 3 ETH), and at least 0.25 ETH (0.025 per winner) or the draw waits", at: "GamePot.PRIZE_CAP, MIN_PRIZE" },
+        { k: "Timing target", v: "The AI picks the interval so a draw is worth about 1 ETH, up to 24 h, and changes it only when the move is over 25%", at: "engine/src/games.ts GAME_POLICY" },
+        { k: "Prize", v: "min(pot − VRF top-up, 3 ETH), and at least 0.25 ETH (0.025 per winner) or the draw waits. The top-up refills the VRF subscription to 0.1364 ETH (the whole 0.1364 ETH while the subscription is empty), so the first draw needs a pot of 0.3864 ETH", at: "GamePot.PRIZE_CAP, MIN_PRIZE, SUB_MIN" },
         { k: "Pot cap", v: "15 ETH; anything above goes to the buyback", at: "GamePot.POT_CAP" },
         { k: "Gas gate", v: "No draw while the VRF cost would be more than 20% of the prize", at: "GamePot.MAX_COST_BPS" },
         { k: "Payout", v: "Each share pushed with 50,000 gas; the settle reverts rather than starve a push. A failed push becomes a claim within 7 d; after that anyone returns it to the pot", at: "GamePot.PUSH_GAS, CLAIM_WINDOW" },

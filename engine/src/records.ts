@@ -101,6 +101,8 @@ export const IdeaStatus = z.object({
   judge: z.string().max(300).optional(),
   // a live verdict's words for its author (a crash before the intake's record is read back from here)
   understood: z.string().max(200).optional(), plain: z.string().max(240).optional(),
+  // judged again by the current judge after the pre-2b judge rejected it (src/ideas.ts REJUDGE)
+  rejudged: z.literal(true).optional(),
 });
 
 /** Engine fields of the homepage core (web _live/feed.ts Core). */

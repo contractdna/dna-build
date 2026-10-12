@@ -1,4 +1,4 @@
-// The dev team's path guard and budget ledger.
+// The sequencer's path guard and budget ledger.
 import assert from "node:assert/strict";
 import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";

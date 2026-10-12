@@ -1,5 +1,5 @@
 // The whole workflow offline, its three jobs run as the workflow runs them (the same scripts, as child processes):
-// verify a signed order → the dev team builds it through the real Agent SDK against a loopback fake model that
+// verify a signed order → the sequencer builds it through the real Agent SDK against a loopback fake model that
 // replays a scripted team (with planted escapes the guard must stop) → publish one App commit and the pull request to
 // a loopback fake of GitHub. No model, no network, no secrets.
 import assert from "node:assert/strict";

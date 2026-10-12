@@ -145,17 +145,17 @@ test("module code the Safe approved: one post per chain log", { skip }, async ()
   assert.equal((await rows("CodehashApproved:%")).length, 1);
 });
 
-test("the send path refuses a draft that says an unshipped build shipped; the next candidate goes", { skip }, async () => {
+test("a sequencer event posts code's template, never the writer: a build just started never reads as shipped", { skip }, async () => {
   await sql`delete from x_outbox`; // only this post queued
-  drafts = ["The dev team shipped Last Click.", "The dev team started on Last Click."];
+  drafts = ["The sequencer shipped Last Click."]; // never asked
   try {
     const key = "seq:b9:seq_started";
     await xM.enqueueX(key, "post", { event: "seq_started", build: "b9", title: "Last Click", record: "1" }, { link: recordUrl("1") });
     const r = await xM.sendHandler.run(job("x:send")) as { tweetId?: string };
     assert.ok(r.tweetId, JSON.stringify(r));
-    const [rec] = await sql<{ doc: { text: string; candidates: { text: string; issues: string[] }[] } }[]>`select doc from log where kind = 'x_post' and ref = ${key} and doc->>'status' = 'attempt'`;
-    assert.deepEqual(rec.doc.candidates[0].issues, ["claims it shipped"], "logged with its verdict");
-    assert.ok(rec.doc.text.startsWith("The dev team started on Last Click."), rec.doc.text);
+    const [rec] = await sql<{ doc: { text: string; model: string; candidates: { text: string; issues: string[] }[] } }[]>`select doc from log where kind = 'x_post' and ref = ${key} and doc->>'status' = 'attempt'`;
+    assert.equal(rec.doc.model, "code");
+    assert.equal(rec.doc.text, `The sequencer started building "Last Click".\n${recordUrl("1")}`);
   } finally { drafts = null; }
 });
 
@@ -197,20 +197,13 @@ test("launch day: 'online' once the engine is live and unmuted (the opening post
     assert.deepEqual([o.event.event, o.link], [key, `${TX_URL}${init}`]);
     assert.equal((await rows(key)).length, 1, "on the site too");
   }
-  // the opening post goes first; a draft claiming the engine deployed its contracts is refused
-  drafts = ["I deployed my contracts. I'm live.", "I'm live. I read the chain, run my loop and post what I do. The team deployed the contracts and the Safe wired them, not me."];
-  try {
-    const n = tweets().length;
-    assert.ok((await xM.sendHandler.run(job("x:send")) as { tweetId?: string }).tweetId);
-    assert.equal(await xM.onlineAhead(), false, "once it is out, nothing waits on it");
-    assert.equal(tweets()[n].body.text, `I'm live. I read the chain, run my loop and post what I do. The team deployed the contracts and the Safe wired them, not me.\n${TX_URL}${init}`);
-    const [rec] = await sql<{ doc: { candidates: { issues: string[] }[] } }[]>`select doc from log where kind = 'x_post' and ref = 'online' and doc->>'status' = 'attempt'`;
-    assert.deepEqual(rec.doc.candidates[0].issues, ["claims it deployed its contracts"]);
-    // a draft that restates the stage text is refused (parrotIssue); this one reacts to it
-    drafts = ["Housekeeping by the Safe's owners: registry and vaults on the hook, fee plates in line behind the veto hour. Their hands, not mine."];
-    assert.ok((await xM.sendHandler.run(job("x:send")) as { tweetId?: string }).tweetId);
-    assert.equal(tweets()[n + 1].body.text, `Housekeeping by the Safe's owners: registry and vaults on the hook, fee plates in line behind the veto hour. Their hands, not mine.\n${TX_URL}${init}`);
-  } finally { drafts = null; }
+  // the opening post goes first: code's template (never the writer), which never says the engine deployed its contracts
+  const n = tweets().length;
+  assert.ok((await xM.sendHandler.run(job("x:send")) as { tweetId?: string }).tweetId);
+  assert.equal(await xM.onlineAhead(), false, "once it is out, nothing waits on it");
+  assert.equal(tweets()[n].body.text, `The engine is live and runs on its own from here. Its contracts were deployed by the team and connected by the Safe's owners.\n${TX_URL}${init}`);
+  assert.ok((await xM.sendHandler.run(job("x:send")) as { tweetId?: string }).tweetId);
+  assert.equal(tweets()[n + 1].body.text, `The Safe's owners connected the registry and the vaults to the hook in a single batch and queued the first fee plates.\n${TX_URL}${init}`);
 });
 
 test("chain progress: one post per kind that happened in the 2 h window (DNA's own contracts only), once per window, linking its latest tx", { skip }, async () => {
@@ -242,13 +235,13 @@ test("chain progress: one post per kind that happened in the 2 h window (DNA's o
   assert.match(String(await run(new Date(Date.now() + 5 * 3600_000).toISOString())), /no progress post/, "a quiet window: silence");
   assert.match(String(await run(new Date(Date.now() - 2 * 3600_000).toISOString())), /missed the progress hour/);
   LLM.launchAt = launchAt; // the send below runs under the normal caps (X_POST_SPACING_MIN 0 here), not the launch window's 10 min
-  // as posted: the writer's text (a fixture) and the tx link code appends
+  // as posted: code's template from the facts (never the writer, so no flourish) and the tx link code appends
   await sql`update x_outbox set status = 'skipped' where status = 'queued' and event_key not like 'burn_summary:%'`;
-  drafts = ["1 buyback in 2 h: 0.5 ETH spent, 1.23M DNA burned. Gone for good."]; // a million and up only as the fact sheet's 1.23M
+  drafts = ["1 buyback in 2 h: 0.5 ETH spent, 1.23M DNA burned. Gone for good."]; // never asked
   try {
     const n = tweets().length;
     assert.ok((await xM.sendHandler.run(job("x:send")) as { tweetId?: string }).tweetId);
-    assert.equal(tweets()[n].body.text, `1 buyback in 2 h: 0.5 ETH spent, 1.23M DNA burned. Gone for good.\n${TX_URL}${T(0xb1)}`);
+    assert.equal(tweets()[n].body.text, `Buyback and burn: 0.5 ETH bought 1,234,567 DNA, and it was burned.\n${TX_URL}${T(0xb1)}`);
   } finally { drafts = null; }
   // after the window: one combined post a UTC day, from the 00:30 run only (here a future day, so no earlier row is in it)
   try {

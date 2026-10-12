@@ -66,7 +66,7 @@ export function factLayer(facts: Record<string, unknown>, raw: Record<string, un
     case "liquidity_added": return { badge, headline: "LIQUIDITY ADDED", figures: some(["ETH added", facts.ethAdded], ["adds", facts.adds]), ...line(txLine) };
     case "progress_day": return { badge, headline: "THE DAY'S WORK", figures: some(["ETH split", facts.totalEth], ["ETH spent", facts.spentEth], ["DNA burned", facts.burnedDna], ["ETH added", facts.ethAdded]), ...line(txLine) };
     case "jackpot_params": return { badge, headline: "JACKPOT RULES", figures: [f("window", `#${fmt(facts.window)}`), ...some(["cap per wallet", facts.capPct, "%"], ["min balance", facts.minBalance, " DNA"])], ...line(txLine) };
-    case "seq_online": return { badge, headline: "DEV TEAM ONLINE", figures: [] };
+    case "seq_online": return { badge, headline: "SEQUENCER ONLINE", figures: [] };
     case "treasury_buy": return { badge, headline: "TREASURY BUY", figures: some(["DNA bought", facts.dnaAmount], ["ETH spent", facts.ethSpent], ["of supply", facts.supplyPct, "%"]), ...line(txLine) };
     case "treasury_transfer": {
       const to = typeof facts.label === "string" ? facts.label.slice(0, 40) : short(raw.recipient);

@@ -1,4 +1,4 @@
-// The dev team's only way to run anything: forge_build and forge_test, in a fresh gate workspace (the kit from the
+// The sequencer's only way to run anything: forge_build and forge_test, in a fresh gate workspace (the kit from the
 // checkout, which no role can write, plus the game's current files), under the gates' limits (engine/src/seq-forge.ts:
 // no secrets in the env, prlimit, process group killed on timeout). Output is cut to 8 KB.
 import { readdirSync, readFileSync, realpathSync, rmSync, statSync } from "node:fs";

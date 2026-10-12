@@ -1,4 +1,4 @@
-// What the engine tells X about the project between events (src/status.ts) and the X fact sheets of the dev team's
+// What the engine tells X about the project between events (src/status.ts) and the X fact sheets of the sequencer's
 // events (src/voice.ts): the twice-daily status and the weekly recap on their hours, every number from code (fixtures
 // here), a quiet window skipped, milestones once per threshold, a distinct shape for status posts. DB-backed dedupe
 // (each key announced and queued once) is in status-db.test.ts.
@@ -68,9 +68,9 @@ test("status facts: every number from the fixture (code), rounded by code; the w
   // model-written text never carries a number into the sheet: a title with a digit is dropped, one with a link too
   for (const title of ["Game 2048", "see evil.example", "ask @someone"]) {
     const t = factSheet(statusFacts({ ...input, devTeam: { stage: "building", round: 1, title } }, undefined).facts);
-    assert.deepEqual(t.devTeam, { stage: "building", round: 1 }, title);
+    assert.deepEqual(t.sequencer, { stage: "building", round: 1 }, title);
   }
-  // what changed since the last status: the pots, games, the fee and the dev team
+  // what changed since the last status: the pots, games, the fee and the sequencer
   const next = statusFacts({ ...input, gamesLive: 3, devTeam: { stage: "idle" } }, facts);
   assert.deepEqual(next.facts.changed, ["gamesLive", "devTeam"]);
 });
@@ -140,7 +140,7 @@ test("recap: what shipped, what was killed, what changed in fees and games, from
   assert.equal(recapFacts([], { gamesLive: 2, liveFee: { basePct: 2 } }), null, "a week with nothing: no recap");
 });
 
-test("the dev team's X fact sheets: allow-listed fields and a code-made stage line; never 'shipped' before it ships", () => {
+test("the sequencer's X fact sheets: allow-listed fields and a code-made stage line; never 'shipped' before it ships", () => {
   const b = { build: "b20261009-7", title: "Last Click", record: "1234" };
   const sheet = (raw: Record<string, unknown>) => factSheet(raw);
   assert.deepEqual(sheet({ event: "seq_started", ...b }), { event: "seq_started", title: "Last Click", stage: "building started; nothing has shipped yet" });
@@ -162,10 +162,10 @@ test("the dev team's X fact sheets: allow-listed fields and a code-made stage li
 test("an event that shipped nothing never reads as shipped, live, fixed, merged or approved (code's filter, not the prompt)", () => {
   const b = { title: "Last Click" };
   for (const facts of [{ event: "seq_started", ...b }, { event: "seq_killed", ...b }, { event: "seq_online" }, { event: "seq_handoff", ...b }, { event: "seq_released", ...b, target: "module" }]) {
-    for (const t of ["Last Click shipped.", "the dev team fixed the timer", "Last Click is live", "it went live", "now live on main", "merged into main", "the Safe approved it"]) {
+    for (const t of ["Last Click shipped.", "the sequencer fixed the timer", "Last Click is live", "it went live", "now live on main", "merged into main", "the Safe approved it"]) {
       assert.ok(claimIssues(facts, t).length, `${facts.event}: ${t}`);
     }
-    assert.deepEqual(claimIssues(facts, "the dev team is on it; nothing to see yet"), [], facts.event);
+    assert.deepEqual(claimIssues(facts, "the sequencer is on it; nothing to see yet"), [], facts.event);
   }
   // a module approval may say approved, never live (nor shipped, fixed, merged)
   const ok = { event: "module_approved", kind: "fee" };
@@ -174,4 +174,11 @@ test("an event that shipped nothing never reads as shipped, live, fixed, merged 
   // shipped events and a released site change: unrestricted
   for (const facts of [{ event: "seq_shipped", ...b }, { event: "seq_released", ...b, target: "site" }, { event: "outcome" }]) assert.deepEqual(claimIssues(facts, "shipped, live, fixed"), [], String(facts.event));
   assert.ok(claimIssues({ event: "seq_started" }, "ＳＨＩＰＰＥＤ").length, "NFKC first");
+});
+
+test("the writer's sheet names the build team the sequencer, never devTeam", () => {
+  const t = factSheet({ ...statusFacts(input, undefined).facts, changed: ["gamesLive", "devTeam"] });
+  assert.equal("devTeam" in t, false);
+  assert.deepEqual(t.sequencer, { stage: "building", round: 2, title: "Last Click" });
+  assert.deepEqual(t.changed, ["gamesLive", "sequencer"]);
 });

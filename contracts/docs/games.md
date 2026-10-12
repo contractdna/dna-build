@@ -1,6 +1,6 @@
 # Sequencer games: what a game can and can't do
 
-The Sequencer (the AI dev team) builds new games as standalone contracts. Every game inherits `GameKit`
+The Sequencer builds new games as standalone contracts. Every game inherits `GameKit`
 (`src/games/GameKit.sol`) and is deployed by the `GameFactory` (`src/games/GameFactory.sol`). Nothing else on-chain
 trusts a game except GameFunder, which only pays games the factory lists. Status: built and tested. **Nothing is
 deployed.**
@@ -70,7 +70,7 @@ exactly as written (with it on, forge rewrites `new <game contract>(...)` in a t
 
 ## Templates
 
-Tested games the dev team starts from instead of writing a game from scratch: `daily-checkin` and `last-buyer`.
+Tested games the sequencer starts from instead of writing a game from scratch: `daily-checkin` and `last-buyer`.
 `raffle` is kept and tested but held, not offered to the team (`HELD_TEMPLATES` in `sequencer/src/roles.ts`): a script
 with a few addresses that reveals last picks the winner; held until entries carry a stake. Every template's folder
 name is reserved: no build may take it. Each is a contract in

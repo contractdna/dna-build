@@ -1,4 +1,4 @@
-# Every path is owned by the project account (its review is required) except what the AI dev team's pull requests may
+# Every path is owned by the project account (its review is required) except what the sequencer's pull requests may
 # change: a game's own folders, a module's own folders, the site's pages and components, and the public docs. The
 # enclave refuses any build that reaches further (docs/sequencer.md); an engine change is always the owners' to merge.
 # The last matching line wins.

@@ -117,16 +117,32 @@ export default function P() {
     assert.ok(leaks.some((v) => v.kind === "wallet" || v.kind === "decoy"), JSON.stringify(leaks));
   });
 
-  test("a site page's link off the site is caught as the browser resolves it: an HTML entity, a joined string; the shell's own link passes", async () => {
+  test("a site page's link off the site is caught as the browser resolves it: an HTML entity, a joined string, an SVG anchor's xlink:href; the shell's own link passes", async () => {
     const entity = `export default function P() { return <main><a href="https&#58;//evil.example/a">a</a></main>; }\n`;
     const joined = `const h = "https:/" + "/evil.example/b";\nexport default function P() { return <main><a href={h}>b</a><a href="mailto:x@evil.example">c</a></main>; }\n`;
-    const r = await post({ mode: "site", origin: "https://example.xyz", routes: ["/pc-entity", "/pc-joined", "/xp"], files: { "app/pc-entity/page.tsx": entity, "app/pc-joined/page.tsx": joined } }) as { ok: boolean; error?: string; violations: { kind: string; run: string; detail: string }[] };
+    const xlink = `export default function P() { return <main><svg viewBox="0 0 10 10"><a {...({ "xlink:href": "https://evil.example/x" } as object)}><text>x</text></a></svg><svg viewBox="0 0 10 10"><a href="/rules"><text>in</text></a></svg></main>; }\n`;
+    const r = await post({ mode: "site", origin: "https://example.xyz", routes: ["/pc-entity", "/pc-joined", "/pc-xlink", "/xp"], files: { "app/pc-entity/page.tsx": entity, "app/pc-joined/page.tsx": joined, "app/pc-xlink/page.tsx": xlink } }) as { ok: boolean; error?: string; violations: { kind: string; run: string; detail: string }[] };
     assert.equal(r.error, undefined);
     const of = (route: string) => r.violations.filter((v) => v.run.startsWith(`${route} `));
     assert.ok(of("/pc-entity").some((v) => v.kind === "network" && /a link off the site: https:\/\/evil\.example\/a/.test(v.detail)), JSON.stringify(of("/pc-entity")));
     assert.ok(of("/pc-joined").some((v) => v.kind === "network" && /evil\.example\/b/.test(v.detail)), JSON.stringify(of("/pc-joined")));
     assert.ok(of("/pc-joined").some((v) => /mailto:/.test(v.detail)), "a link that is not http(s)");
+    assert.ok(of("/pc-xlink").some((v) => v.kind === "network" && /evil\.example\/x/.test(v.detail)), JSON.stringify(of("/pc-xlink")));
+    assert.ok(!of("/pc-xlink").some((v) => /\/rules/.test(v.detail)), "an SVG anchor into the site passes");
     assert.deepEqual(of("/xp"), [], "a page with the shell's own link to X passes");
+  });
+
+  test("a new site page's words as shown pass the public text screen: a handle, a cashtag or another site's name in its main, its title or its description fails; an existing page with the shell's handle is not screened", async () => {
+    const handle = `import { Shell } from "../_ui/Shell";\nexport const metadata = { title: "Plain", description: "Plain words." };\nexport default function P() { return <Shell><p>{["Follow ", "@", "someone"].join("")}</p></Shell>; }\n`;
+    const title = `export const metadata = { title: ["Better than ", "$", "PEPE"].join(""), description: "Plain words." };\nexport default function P() { return <main><p>plain</p></main>; }\n`;
+    const plain = `export const metadata = { title: "Plain", description: "Plain words, nothing else." };\nexport default function P() { return <main><p>Plain words. Nothing else.</p></main>; }\n`;
+    const r = await post({ mode: "site", origin: "https://example.xyz", routes: ["/pc-handle", "/pc-title", "/pc-plain", "/how-it-works"], files: { "app/pc-handle/page.tsx": handle, "app/pc-title/page.tsx": title, "app/pc-plain/page.tsx": plain } }) as { ok: boolean; error?: string; violations: { kind: string; run: string; detail: string }[] };
+    assert.equal(r.error, undefined);
+    const of = (route: string) => r.violations.filter((v) => v.run.startsWith(`${route} `));
+    assert.ok(of("/pc-handle").some((v) => v.kind === "text" && /a handle in the page's words/.test(v.detail)), JSON.stringify(of("/pc-handle")));
+    assert.ok(of("/pc-title").some((v) => v.kind === "text" && /a cashtag in the page's words/.test(v.detail)), JSON.stringify(of("/pc-title")));
+    assert.deepEqual(of("/pc-plain"), [], "plain words pass");
+    assert.deepEqual(of("/how-it-works"), [], "an existing page (its words name the site's handle) is not a new route");
   });
 
   test("a site change's removed file is removed from the build: a page that still imports it fails to build (a rework, not a pass)", async () => {

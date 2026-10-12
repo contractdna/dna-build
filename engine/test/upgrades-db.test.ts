@@ -124,7 +124,7 @@ test("the day's changelog lists every change (a code update, the Safe's split ch
   assert.equal(await up.changelog("2020-01-01", true), "no post: nothing changed");
   assert.equal(await outbox("changes:2020-01-01"), undefined, "never an empty changelog");
   assert.equal(await up.changelog(day, true), `changelog for ${day}: 4 changes`);
-  const changes = [`i now run a new version of my code: ${NOTES.join("; ")}`, "a tested fee became the live fee", "the website changed: a wallet link in the header",
+  const changes = [`the engine runs a new version: ${NOTES.join("; ")}`, "a tested fee became the live fee", "the website changed: a wallet link in the header",
     "the fee split changed: buyback 40%, liquidity 30%, treasury 20%, games 10%"];
   const c = await outbox(`changes:${day}`);
   assert.deepEqual([c.event.event, c.event.changes, c.event.figures], ["day_changes", changes, [24, 40, 30, 20, 10]]);
@@ -132,7 +132,8 @@ test("the day's changelog lists every change (a code update, the Safe's split ch
   assert.equal((await sql`select 1 from x_outbox where event_key like 'changes:%'`).length, 1);
   const n = tweets().length;
   assert.ok(((await xM.sendHandler.run(job())) as { tweetId: string }).tweetId);
-  assert.equal(tweets()[n], `Synthetic post about a day changes event.\n${ANNOUNCEMENTS_URL}`);
+  // code's template (no writer): the lines that fit, each cut at 120 characters; the rest is on the site
+  assert.equal(tweets()[n], `What changed on ${day} (UTC): The engine runs a new version: build-now ideas mode; replies open to everyone; posts on what's happening on CT; draws...; A tested fee became the live fee. The rest is on the site.\n${ANNOUNCEMENTS_URL}`);
   const [ann] = await sql<{ doc: { title: string } }[]>`select doc from log where kind = 'announce' and ref = ${`changes:${day}`}`;
   assert.equal(ann.doc.title, `What changed on ${day}: ${changes.join("; ")}`);
 });
@@ -152,7 +153,8 @@ test("a code update: scheduled → its notes posted with the tx link and a note 
 
     const n = tweets().length;
     assert.ok(((await xM.sendHandler.run(job())) as { tweetId: string }).tweetId);
-    assert.equal(tweets()[n], `Synthetic post about a update queued event.\nhttps://etherscan.io/tx/${H(0x11)}`);
+    const at = new Date((BLOCK_TS + 3600) * 1000).toISOString().slice(11, 16);
+    assert.equal(tweets()[n], `Engine update queued. What it changes: ${NOTES.join("; ")}. It can land from ${at} UTC unless the Safe cancels it first.\nhttps://etherscan.io/tx/${H(0x11)}`, "code's template, no writer");
     const [rec] = await sql<{ doc: { facts: Record<string, unknown> } }[]>`select doc from log where kind = 'x_post' and ref = ${`update:scheduled:${H(0xa1)}:${H(0x11)}`} and doc->>'status' = 'attempt'`;
     assert.deepEqual([rec.doc.facts.notes, rec.doc.facts.figures, rec.doc.facts.minutesLeft], [NOTES, [24], 60]);
     assert.equal((await alerts("Posted: update:scheduled:%")).length, 1, "mirrored to Telegram like every post");
@@ -167,7 +169,7 @@ test("a code update: scheduled → its notes posted with the tx link and a note 
     assert.equal((await outbox(`update:scheduled:${H(0xa2)}:${H(0x12)}`)).status, "skipped", "superseded: the executed post says it");
     const m = tweets().length;
     assert.ok(((await xM.sendHandler.run(job())) as { tweetId: string }).tweetId);
-    assert.equal(tweets()[m], `update allowed: the safe can no longer stop it. no release notes for it, so i won't guess what it does. i switch to it on my next restart.\nhttps://etherscan.io/tx/${H(0x13)}`, "no notes for that hash: code's line");
+    assert.equal(tweets()[m], `Engine update allowed: the Safe can no longer stop it, and the engine switches to it on its next restart. It has no release notes to show, so what it changes is not described here.\nhttps://etherscan.io/tx/${H(0x13)}`, "no notes for that hash: code's line");
 
     // this engine now runs that compose hash (its enclave report): "it's in", once, linking the execute tx
     const savedRun = { ...up.RUNNING };
@@ -182,7 +184,7 @@ test("a code update: scheduled → its notes posted with the tx link and a note 
       assert.equal((await sql`select 1 from x_outbox where event_key = ${`update:running:${H(0xa2)}:${H(0x13)}`}`).length, 1, "once per allow");
       const r = tweets().length;
       assert.ok(((await xM.sendHandler.run(job())) as { tweetId: string }).tweetId);
-      assert.equal(tweets()[r], `it's in: i now run the new version. no release notes for it, so i won't guess what changed.\nhttps://etherscan.io/tx/${H(0x13)}`);
+      assert.equal(tweets()[r], `Engine update is in: the engine now runs the new version. It has no release notes to show, so what it changes is not described here.\nhttps://etherscan.io/tx/${H(0x13)}`);
       // a third update allowed and already running before its "allowed" post: only "it's in" posts
       await up.onTimelockLogs(executed(H(0xa3), H(0xc2df), H(0x14)));
       up.RUNNING.composeHash = async () => `0x${"c2df".padStart(64, "0")}`;
@@ -196,7 +198,7 @@ test("a code update: scheduled → its notes posted with the tx link and a note 
       const runKey = `update:running:${H(0xa3)}:${H(0x14)}`;
       const b = tweets().length;
       assert.ok(((await xM.sendHandler.run(job())) as { tweetId: string }).tweetId, "the next post went out");
-      assert.equal(tweets()[b], `Synthetic post about a change done event.\nhttps://etherscan.io/tx/${H(0x15)}`);
+      assert.equal(tweets()[b], `In effect: a normal change.\nhttps://etherscan.io/tx/${H(0x15)}`);
       assert.equal((await outbox(runKey)).status, "queued");
       assert.equal((await alerts("X post update:running:% still waits%")).length, 0, "not yet 2 h");
       await sql`update x_outbox set created_at = now() - interval '3 hours' where event_key = ${runKey}`;
@@ -229,7 +231,7 @@ test("a code update with no release notes: code's line (no writer), never a gues
     const w = writerCalls(), n = tweets().length;
     assert.ok(((await xM.sendHandler.run(job())) as { tweetId: string }).tweetId);
     const hm = new Date((BLOCK_TS + 3600) * 1000).toISOString().slice(11, 16);
-    assert.equal(tweets()[n], `update queued for me. no release notes for it, so i won't guess what it does. can land from ${hm} UTC, the safe can cancel until then.\nhttps://etherscan.io/tx/${H(0x21)}`);
+    assert.equal(tweets()[n], `Engine update queued. It has no release notes to show, so what it changes is not described here. It can land from ${hm} UTC; the Safe can cancel it until then.\nhttps://etherscan.io/tx/${H(0x21)}`);
     assert.equal(writerCalls(), w, "the writer never saw it");
 
     await up.onTimelockLogs(scheduled(H(0xb2), H(0xc3de), H(0x22)));
@@ -239,7 +241,7 @@ test("a code update with no release notes: code's line (no writer), never a gues
     assert.equal(await xM.sendHandler.run(job()), "skipped");
     const m = tweets().length;
     assert.ok(((await xM.sendHandler.run(job())) as { tweetId: string }).tweetId);
-    assert.equal(tweets()[m], `Synthetic post about a update cancelled event.\nhttps://etherscan.io/tx/${H(0x23)}`);
+    assert.equal(tweets()[m], `The Safe cancelled the queued engine update. Nothing changed.\nhttps://etherscan.io/tx/${H(0x23)}`);
     assert.equal((await alerts("Code update cancelled%")).length, 1);
 
     // the same batch scheduled again (same id): its own row, post and alert; the earlier cancel does not hide it
@@ -249,7 +251,7 @@ test("a code update with no release notes: code's line (no writer), never a gues
     assert.equal((await alerts("Code update scheduled%")).length, a0 + 1, "a signers' alert for the re-schedule too");
     const r = tweets().length;
     assert.ok(((await xM.sendHandler.run(job())) as { tweetId: string }).tweetId);
-    assert.match(tweets()[r], new RegExp(`^update queued for me\\..*\n.*${H(0x25)}$`, "s"));
+    assert.match(tweets()[r], new RegExp(`^Engine update queued\\..*\n.*${H(0x25)}$`, "s"));
   } finally {
     up.RELEASES.fetch = saved;
   }
@@ -269,7 +271,8 @@ test("the Safe's queued op: its own post in plain words; the Safe's cancel super
 
   const n = tweets().length;
   assert.ok(((await xM.sendHandler.run(job())) as { tweetId: string }).tweetId);
-  assert.equal(tweets()[n], `Synthetic post about a change queued event.\nhttps://etherscan.io/tx/${H(0x31)}`);
+  const at = new Date(Number(eta) * 1000).toISOString().slice(11, 16);
+  assert.equal(tweets()[n], `The Safe queued a fee split change (buyback 35%, liquidity 30%, treasury 25%, games 10%). It can take effect from ${at} UTC unless the Safe cancels it first.\nhttps://etherscan.io/tx/${H(0x31)}`);
 
   // queued and cancelled before it went out: only the cancel posts
   await xM.onChainEvent(queued(43n, d.safe, H(0x33)));
@@ -280,7 +283,7 @@ test("the Safe's queued op: its own post in plain words; the Safe's cancel super
   assert.equal((await outbox(`Queued:${H(0x33)}:0`)).status, "skipped");
   const m = tweets().length;
   assert.ok(((await xM.sendHandler.run(job())) as { tweetId: string }).tweetId);
-  assert.equal(tweets()[m], `Synthetic post about a change cancelled event.\nhttps://etherscan.io/tx/${H(0x34)}`);
+  assert.equal(tweets()[m], `The Safe cancelled a fee split change (buyback 35%, liquidity 30%, treasury 25%, games 10%). Nothing changed.\nhttps://etherscan.io/tx/${H(0x34)}`);
 
   // the Safe's veto of an op nobody saw queued stays with x.ts (never a change post)
   await xM.onChainEvent({ eventName: "Cancelled", args: { id: 99n }, transactionHash: H(0x35), logIndex: 0 });

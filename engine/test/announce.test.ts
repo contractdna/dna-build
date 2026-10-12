@@ -19,8 +19,11 @@ test("site lines: every winner's full address, target vs final, where the reward
   assert.equal(titleOf({ event: "jackpot_params", window: 8, startsAt: "2026-10-09T00:00:00.000Z", capPct: 1, minBalance: 1_000, exchangesExcluded: 2 }),
     "Jackpot window 8 (starts 2026-10-09T00:00:00.000Z): cap 1% per wallet, minimum average balance 1,000 DNA, 2 exchange wallets excluded");
   assert.equal(titleOf({ event: "jackpot_voided", window: 7, prizeEth: 0.5 }), "Jackpot window 7: the draw was not settled in 7 days; 0.5 ETH returned to the pot");
-  assert.equal(titleOf({ event: "prize_expired", drawId: 4, prizeEth: 0.1, claimDays: 7 }), "Jackpot prize #4: 0.1 ETH not claimed in 7 days, returned to the pot");
-  assert.equal(titleOf({ event: "prize_claimed", drawId: 4, prizeEth: 0.1 }), "Jackpot prize #4: the 0.1 ETH share was claimed");
+  // a claim id is a draw's share or an idea reward whose push failed; an expired one goes to the jackpot pot
+  assert.equal(titleOf({ event: "prize_expired", drawId: 4, prizeEth: 0.1, claimDays: 7, kind: "prize" }), "Jackpot prize #4: 0.1 ETH not claimed in 7 days, went to the jackpot pot");
+  assert.equal(titleOf({ event: "prize_expired", drawId: 5, prizeEth: 0.1, claimDays: 7, kind: "reward" }), "Idea reward (claim #5): 0.1 ETH not claimed in 7 days, went to the jackpot pot");
+  assert.equal(titleOf({ event: "prize_claimed", drawId: 4, prizeEth: 0.1, kind: "prize" }), "Jackpot prize #4: 0.1 ETH was claimed");
+  assert.equal(titleOf({ event: "prize_claimed", drawId: 6, prizeEth: 0.1 }), "Claim #6 (a jackpot share or an idea reward): 0.1 ETH was claimed");
   const to = "0x12ab000000000000000000000000000000009f3c";
   assert.equal(titleOf({ event: "reward_paid", reward: 3, rewardEth: 0.2, claimable: false, claimDays: 7 }, { args: { id: "3", to, amount: String(2n * 10n ** 17n), claimId: "0" } }),
     "Idea reward paid: 0.2 ETH to 0x12ab…9f3c", "the short address only, from the chain event");
@@ -86,8 +89,8 @@ test("site-only lines: an accepted idea going into testing, an X account linking
 
 test("the Sequencer's lines: fixed templates, plain words; new and retired games go to X, the rest stay on the site", () => {
   const b = { build: "b7", title: "Last Click", record: "12" };
-  assert.equal(titleOf({ event: "seq_building", ...b, round: 1 }), 'The AI dev team started building "Last Click"');
-  assert.equal(titleOf({ event: "seq_building", ...b, round: 2 }), 'The AI dev team started building "Last Click" (round 2)');
+  assert.equal(titleOf({ event: "seq_building", ...b, round: 1 }), 'The sequencer started building "Last Click"');
+  assert.equal(titleOf({ event: "seq_building", ...b, round: 2 }), 'The sequencer started building "Last Click" (round 2)');
   assert.equal(titleOf({ event: "seq_pr", ...b, round: 1, pr: 41, failed: [] }), '"Last Click", round 1: pull request #41 is up; every check passed');
   assert.equal(titleOf({ event: "seq_pr", ...b, round: 2, pr: 42, failed: ["G4", "G9"] }), '"Last Click", round 2: pull request #42 is up; 2 checks failed (G4, G9)');
   assert.equal(titleOf({ event: "seq_verdict", ...b, round: 1, verdict: "ship", reason: "" }), 'The brain approved "Last Click". It goes live after one public hour unless the Safe vetoes it');
@@ -96,31 +99,32 @@ test("the Sequencer's lines: fixed templates, plain words; new and retired games
   const game = "0x12ab000000000000000000000000000000009f3c";
   assert.equal(titleOf({ event: "seq_shipped", ...b, slug: "lastclick", game, fundEth: 0.05 }), 'New game: "Last Click" is live at 0x12ab…9f3c. Its first 0.05 ETH waits one public hour');
   assert.equal(titleOf({ event: "seq_shipped", ...b, slug: "lastclick", game: "nope", fundEth: null }), 'New game: "Last Click" is live. It is waiting for funding');
-  assert.equal(titleOf({ event: "game_retired", ...b, slug: "lastclick", game, days: 7, returnedEth: 0.012 }), '"Last Click" was retired after 7 days without players; 0.012 ETH went back to the treasury. Anything won stays claimable');
+  // the idle rule: live 48 h or more and nobody played in the last 48 h (`days` is its age)
+  assert.equal(titleOf({ event: "game_retired", ...b, slug: "lastclick", game, days: 7, returnedEth: 0.012, idleHours: 48 }), '"Last Click" was retired: no players in its last 48 hours, after 7 days live; 0.012 ETH went back to the treasury (the Safe). Anything won stays claimable');
   assert.equal(titleOf({ event: "seq_nothing_today", day: "2026-10-09", tried: 2, record: "3" }), "Nothing good enough today: no new game shipped");
   assert.equal(titleOf({ event: "seq_nothing_today", day: "2026-10-09", tried: 0, record: "3" }), "No new game today: nothing was ready to build");
   for (const e of ["seq_shipped", "game_retired", "seq_nothing_today", "seq_online", "seq_started", "seq_killed", "seq_released", "seq_handoff"]) assert.ok(priorityOf({ event: e }) < 4 && onX(e), e);
   for (const e of ["seq_building", "seq_pr", "seq_verdict"]) { assert.equal(priorityOf({ event: e }), 4); assert.equal(onX(e), false, `${e} is site only`); }
-  assert.equal(titleOf({ event: "seq_released", ...b, target: "site" }), 'A site change the AI dev team made is live: "Last Click"');
+  assert.equal(titleOf({ event: "seq_released", ...b, target: "site" }), 'A site change the sequencer made is live: "Last Click"');
   assert.equal(seqKey({ event: "seq_released", ...b, target: "site" }), "seq:b7:seq_released");
-  assert.equal(titleOf({ event: "seq_handoff", ...b, pr: 41 }), 'An engine change the AI dev team made waits for an owner\'s review: "Last Click" (pull request #41). It runs only after an owner merges it and the code timelock passes');
+  assert.equal(titleOf({ event: "seq_handoff", ...b, pr: 41 }), 'An engine change the sequencer made waits for an owner\'s review: "Last Click" (pull request #41). It runs only after an owner merges it and the code timelock passes');
   assert.equal(priorityOf({ event: "seq_handoff" }), 3, "on X too: handed over, never 'fixed'");
-  assert.equal(titleOf({ event: "seq_released", ...b, target: "module" }), 'A fee or split module the AI dev team made waits for the Safe: "Last Click". Nothing changes until the Safe approves it');
+  assert.equal(titleOf({ event: "seq_released", ...b, target: "module" }), 'A fee or split module the sequencer made waits for the Safe: "Last Click". Nothing changes until the Safe approves it');
   assert.equal(seqKey({ event: "seq_pr", ...b, round: 2, pr: 42, failed: [] }), "seq:b7:r2:seq_pr");
   assert.equal(seqKey({ event: "seq_shipped", ...b, slug: "lastclick", game, fundEth: null }), "seq:b7:seq_shipped");
   assert.equal(seqKey({ event: "seq_nothing_today", day: "2026-10-09", tried: 0, record: "3" }), "seq:nothing:2026-10-09");
 });
 
-test("the dev team on X: switched on once, a build started (round 1), a build that missed the bar; keys dedupe", () => {
+test("the sequencer on X: switched on once, a build started (round 1), a build that missed the bar; keys dedupe", () => {
   const b = { build: "b7", title: "Last Click", record: "12" };
   assert.equal(seqKey({ event: "seq_online", record: "3" }), "seq:online", "once, ever");
   assert.equal(seqKey({ event: "seq_started", ...b }), "seq:b7:seq_started", "once per build");
   assert.equal(seqKey({ event: "seq_killed", ...b, rounds: 4 }), "seq:b7:seq_killed", "once per build");
-  assert.match(titleOf({ event: "seq_online", record: "3" }), /^The AI dev team is switched on/);
-  assert.equal(titleOf({ event: "seq_started", ...b }), 'The AI dev team started building "Last Click"');
-  assert.equal(titleOf({ event: "seq_started", ...b, title: "see evil.example" }), "The AI dev team started a new build", "a link never reaches an X line");
-  assert.equal(titleOf({ event: "seq_killed", ...b, rounds: 4 }), 'The AI dev team tried "Last Click" for 4 rounds; it did not make the bar and nothing shipped');
-  assert.equal(titleOf({ event: "seq_killed", ...b, rounds: 1 }), 'The AI dev team tried "Last Click" for 1 round; it did not make the bar and nothing shipped');
+  assert.match(titleOf({ event: "seq_online", record: "3" }), /^The sequencer is switched on/);
+  assert.equal(titleOf({ event: "seq_started", ...b }), 'The sequencer started building "Last Click"');
+  assert.equal(titleOf({ event: "seq_started", ...b, title: "see evil.example" }), "The sequencer started a new build", "a link never reaches an X line");
+  assert.equal(titleOf({ event: "seq_killed", ...b, rounds: 4 }), 'The sequencer tried "Last Click" for 4 rounds; it did not make the bar and nothing shipped');
+  assert.equal(titleOf({ event: "seq_killed", ...b, rounds: 1 }), 'The sequencer tried "Last Click" for 1 round; it did not make the bar and nothing shipped');
   assert.equal(recordUrl("12"), "https://genomedna.xyz/api/log/12", "the proof link: the signed record");
   // module code: the Safe's approval is a chain event; the line says what it allows, never that anything is live
   assert.equal(titleOf({ event: "module_approved", codehash: `0x${"ab".repeat(32)}`, kind: "fee" }),
@@ -130,9 +134,9 @@ test("the dev team on X: switched on once, a build started (round 1), a build th
 
 test("live idea mode lines: why a build was picked, an idea the brain will not build, an idea's verdict; keys dedupe", () => {
   const b = { build: "b7", title: "Last Click", record: "12" };
-  assert.equal(titleOf({ event: "seq_started", ...b, reason: "small, testable, and holders asked for it" }), 'The AI dev team started building "Last Click". Why this one: small, testable, and holders asked for it');
-  assert.equal(titleOf({ event: "seq_started", ...b }), 'The AI dev team started building "Last Click"');
-  assert.equal(titleOf({ event: "seq_declined", idea: "im:4", title: "Last Click", reason: "it needs custody", record: "12" }), 'The AI dev team will not build "Last Click": it needs custody');
+  assert.equal(titleOf({ event: "seq_started", ...b, reason: "small, testable, and holders asked for it" }), 'The sequencer started building "Last Click". Why this one: small, testable, and holders asked for it');
+  assert.equal(titleOf({ event: "seq_started", ...b }), 'The sequencer started building "Last Click"');
+  assert.equal(titleOf({ event: "seq_declined", idea: "im:4", title: "Last Click", reason: "it needs custody", record: "12" }), 'The sequencer will not build "Last Click": it needs custody');
   assert.equal(seqKey({ event: "seq_declined", idea: "im:4", title: "t", reason: "r", record: "12" }), "seq:declined:im:4");
   assert.equal(titleOf({ event: "idea_judged", idea: 4, title: "Last Click", verdict: "queued", reason: "a clear game" }), 'Idea "Last Click" was accepted and is queued for the sequencer: a clear game');
   assert.equal(titleOf({ event: "idea_judged", idea: 1000004, title: "Holder Hunt", instead: "Holder Hunt", verdict: "queued", reason: "an NFT needs approvals, so a holder game with no NFT instead" }), 'Idea #1000004 can\'t be built as written; its closest buildable version "Holder Hunt" is queued for the sequencer, credited to its author: an NFT needs approvals, so a holder game with no NFT instead');
@@ -143,16 +147,16 @@ test("live idea mode lines: why a build was picked, an idea the brain will not b
 test("status, recap and milestones: lines from code numbers; ranked below money and games, above the rest", () => {
   const status = { event: "status", hours: 12, swaps: 41, volumeEth: 3.21, feesEth: 0.0642, burnedDna: 120_000, buybackPotEth: 0.12, jackpotPotEth: 1.5, gamesLive: 2,
     liveFee: { basePct: 2, multiplier: 1.5, capPct: 5 }, testing: { stage: "canary", plate: "B" }, devTeam: { stage: "building", round: 2, title: "Last Click" }, changed: ["gamesLive"] };
-  assert.equal(titleOf(status), 'Last 12 h: 41 swaps, 3.21 ETH volume, 0.0642 ETH in fees, 120,000 DNA burned; buyback pot 0.12 ETH, jackpot pot 1.5 ETH; 2 games live; live fee 2% (canary on plate B); the dev team is building "Last Click" (round 2)');
+  assert.equal(titleOf(status), 'Last 12 h: 41 swaps, 3.21 ETH volume, 0.0642 ETH in fees, 120,000 DNA burned; buyback pot 0.12 ETH, jackpot pot 1.5 ETH; 2 games live; live fee 2% (canary on plate B); the sequencer is building "Last Click" (round 2)');
   assert.equal(titleOf({ ...status, jackpotPotEth: undefined, testing: undefined, devTeam: { stage: "idle" } }),
-    "Last 12 h: 41 swaps, 3.21 ETH volume, 0.0642 ETH in fees, 120,000 DNA burned; buyback pot 0.12 ETH; 2 games live; live fee 2%; the dev team is idle");
+    "Last 12 h: 41 swaps, 3.21 ETH volume, 0.0642 ETH in fees, 120,000 DNA burned; buyback pot 0.12 ETH; 2 games live; live fee 2%; the sequencer is idle");
   assert.equal(titleOf({ event: "recap", days: 7, gamesShipped: 1, siteChanges: 0, buildsKilled: 2, gamesRetired: 1, experimentsKept: 1, experimentsKilled: 3, gamesLive: 2, liveFee: { basePct: 2 } }),
     "Week: 1 game shipped, 0 site changes, 2 builds killed, 1 game retired; experiments 1 kept, 3 killed; 2 games live, live fee 2%");
   assert.equal(titleOf({ event: "milestone", metric: "dna_burned", threshold: 1_000_000, value: 1_204_332 }), "Milestone: 1,000,000 DNA burned in total (now 1,204,332)");
   assert.equal(titleOf({ event: "milestone", metric: "jackpot_pot", threshold: 1, value: 1.08 }), "Milestone: the jackpot pot passed 1 ETH (now 1.08 ETH)");
-  // the digest's slot, money, games, the dev team and experiments, status / recap / milestones, the rest
+  // the digest's slot, money, games, the sequencer and experiments, status / recap / milestones, the rest
   assert.deepEqual(["digest", "reward_paid", "seq_shipped", "seq_started", "outcome", "status", "recap", "milestone", "mystery_sealed"].map((e) => priorityOf({ event: e })), [0, 1, 2, 3, 3, 3.5, 3.5, 3.5, 4]);
-  // 20 posts queued at once on a day with 14 event slots (an X_DAILY_POSTS=15 day), lowest rank first: they go to money, games, the dev team and
+  // 20 posts queued at once on a day with 14 event slots (an X_DAILY_POSTS=15 day), lowest rank first: they go to money, games, the sequencer and
   // experiments, then status / recap / milestones; "the rest" waits for the digest
   const order = [["mystery_sealed", 5], ["milestone", 2], ["recap", 1], ["status", 3], ["seq_started", 2], ["outcome", 3], ["game:BallotRun", 2], ["game:Drawn", 2]] as const;
   const q = order.flatMap(([k, n]) => Array.from({ length: n }, () => (k.startsWith("game:") ? { event: "game", name: k.slice(5) } : { event: k })))
@@ -171,12 +175,12 @@ test("planted: model-written text on a Sequencer line is cut, flattened, and kep
   assert.ok(Buffer.byteLength(long.split(": ").slice(1).join(": ")) <= 160, "the reason is at most 160 bytes");
   assert.match(long, /^The brain sent "Last Click" back for another round: the timer can be gamed gamed/);
   const evil = titleOf({ event: "seq_building", ...b, title: "Last\u202e Click\nhttps://evil.example" });
-  assert.equal(evil, 'The AI dev team started building "Last Click https://evil.example"', "site only: flattened to one line, no control or format characters");
+  assert.equal(evil, 'The sequencer started building "Last Click https://evil.example"', "site only: flattened to one line, no control or format characters");
   assert.equal(plain("ｆｕｌｌ\twidth", 120), "full width", "NFKC");
   assert.equal(titleOf({ event: "seq_pr", ...b, pr: 4, failed: ["G4", "G4; rm -rf", "x", 7, "G123"] }), '"Last Click", round 1: pull request #4 is up; 1 check failed (G4)');
   const game = "0x12ab000000000000000000000000000000009f3c";
   assert.equal(titleOf({ event: "seq_shipped", ...b, title: "Click evil.example now", slug: "lastclick", game, fundEth: null }), "A new game is live at 0x12ab…9f3c. It is waiting for funding");
-  assert.equal(titleOf({ event: "game_retired", ...b, title: "ask @someone", slug: "lastclick", game, days: 7, returnedEth: null }), "A game was retired after 7 days without players. Anything won stays claimable");
+  assert.equal(titleOf({ event: "game_retired", ...b, title: "ask @someone", slug: "lastclick", game, days: 7, returnedEth: null }), "A game was retired: no recent players, after 7 days live. Anything won stays claimable");
   assert.equal(titleOf({ event: "game_retired", ...b, slug: "lastclick", game, days: 1, returnedEth: null, rule: "evict" }), '"Last Click" was retired to make room for a new game: it had the fewest players of the live games. Anything won stays claimable');
   assert.equal(titleOf({ event: "seq_shipped", ...b, slug: "lastclick", game, fundEth: null }), 'New game: "Last Click" is live at 0x12ab…9f3c. It is waiting for funding');
 });

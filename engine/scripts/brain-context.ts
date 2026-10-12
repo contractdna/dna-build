@@ -6,7 +6,7 @@
 //   node scripts/brain-context.ts --self   write engine/brain/self.md: today's self-file from the configured database
 //                                          and chain (src/self.ts; what the brain would see; not committed)
 import { readFileSync, writeFileSync } from "node:fs";
-import { LLM } from "../src/config.ts";
+import { LLM, SEQ_PACE } from "../src/config.ts";
 import { BASE, ROLES } from "../src/models.ts";
 import { GATES, KILL, LIMITS, POLICY, REWARD_HOLD_DAYS, RUBRIC, TIMING } from "../src/policy.ts";
 
@@ -139,13 +139,13 @@ export function mechanics(): Record<string, string[]> {
     ],
     idea_market: [
       `an idea round runs ${I("ROUND_LENGTH")} hours; opening an idea stakes ${big(I("MIN_SUBMIT"))} DNA (refunded) and burns a ${big(I("SUBMIT_FEE"))} DNA fee, and backing an idea stakes at least ${big(I("MIN_STAKE"))} DNA`,
-      `the brain decides each closed round within ${I("RESOLVE_WINDOW")} days; accepted fee ideas go through the same tests as the AI's own, accepted build ideas join the dev team's queue`,
+      `the brain decides each closed round within ${I("RESOLVE_WINDOW")} days; accepted fee ideas go through the same tests as the AI's own, accepted build ideas join the sequencer's queue`,
       `a kept fee idea or a shipped build can earn its author a reward from the idea reserve: at least ${G("MIN_REWARD")} ETH, at most ${pctBps(G("MAX_REWARD_BPS"))} of the reserve`,
     ],
     games: [
       `the games pot splits what arrives ${pctBps(G("JACKPOT_BPS"))} to the jackpot and ${pctBps(10_000 - G("JACKPOT_BPS"))} to the idea reserve`,
       `a jackpot draw pays ${G("WINNERS")} winners, at most ${G("PRIZE_CAP")} ETH a draw, and waits until the pot holds ${G("MIN_PRIZE")} ETH; a prize stays open for ${G("CLAIM_WINDOW")} days`,
-      `at most ${k("GameFactory.MAX_LIVE")} dev-team games run at once, and a game nobody plays gets retired with its funds sent back`,
+      `at most ${k("GameFactory.MAX_LIVE")} games from the sequencer run at once, and a game nobody plays gets retired with its funds sent back`,
     ],
     proof_enclave: [
       `the engine runs inside a TEE enclave from a public image; the compose hash pins exactly what runs, and a code change waits ${R("MIN_DELAY")} hour behind a public timelock`,
@@ -153,7 +153,7 @@ export function mechanics(): Record<string, string[]> {
       `nobody, the team included, can sign or post as the engine from outside it`,
     ],
     dev_team: [
-      `the AI dev team builds 1 thing at a time: a game, a site change or a fee module`,
+      `the sequencer builds up to ${SEQ_PACE.maxInflight} ideas at once: a game or a fee module (site changes are not switched on yet)`,
       `nothing ships unless it passes every gate: fuzz and invariant tests, a fork simulation, static analysis, planted-bug checks, a gas cap and a spec check`,
       `a new game goes live only after ${R("MIN_DELAY")} public hour, a fee module only when the Safe approves it, and an engine change only when an owner merges it`,
     ],

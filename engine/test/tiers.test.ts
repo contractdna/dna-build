@@ -2,7 +2,7 @@
 // stop rules and the per-tier limits.
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { ALLIES, COMPETITORS, impersonator, injection, listsIssue, phishing, replyPath, snowflakeMs, stopRule, summoned, tierOf, TIERS } from "../src/tiers.ts";
+import { ALLIES, COMPETITORS, impersonator, injection, linksOut, listsIssue, phishing, replyPath, snowflakeMs, spamShape, stopRule, summoned, tierOf, TIERS } from "../src/tiers.ts";
 
 const NOW = Date.parse("2026-10-09T12:00:00Z");
 /** A tweet id minted at `ms` (X ids are snowflakes: ms since 2010-11-04 in the high bits). */
@@ -103,6 +103,22 @@ test("phishing: a seed or key ask, or a link beside a lure; hype, links alone an
   assert.ok(!phishing("claim your spot https://t.co/a", ["https://x.com/contractdna/status/1"]));
   assert.ok(phishing("claim your spot https://t.co/a", ["https://dna-claim.xyz/go"]));
   assert.ok(phishing("claim your airdrop https://t.co/a", []), "no url entities: a link in the text counts");
+});
+
+test("spam by its shape: tickers, tags, links, emoji or one short word, or a ticker beside a link, never a person's words", () => {
+  // the live engine's replies of 2026-10-12 (x_outbox 277-282) went to posts like these
+  for (const t of ["@contractdna $deepthoughts8 https://t.co/AbC123xYz", "@contractdna $lifegoeson4 https://t.co/Q9w8E7r6T5",
+    "Going with the flow 😌 Locked 🔒 in $DNA #contractdna https://t.co/aaa111 https://t.co/bbb222",
+    "@contractdna https://t.co/x", "@contractdna 🚀🚀🚀", "@contractdna $DNA #DNA 🔥", "@contractdna @someone", "@contractdna gm", "@contractdna lfg!!",
+    "@contractdna $PEPE2 to the moon pump.fun", "@contractdna www.dnadrop.io 💎", "@contractdna #1"]) assert.ok(spamShape(t), t);
+  for (const t of ["@contractdna @someone Why you replying on scam bots with scam links?", "@contractdna what's the max fee this thing can ever charge?",
+    "@contractdna you should lower the sell fee during quiet hours", "@contractdna How are you doing?", "@contractdna wen?", "@contractdna ca", "@contractdna ca?",
+    "@contractdna lfg ser, collab?", "@contractdna is $DNA on base? https://t.co/x", "@contractdna love what you're building", "@contractdna read this https://t.co/abc on fee hooks",
+    "@contractdna check out $PEPE2 it's way better", "@contractdna 这个项目什么时候上线？", "@contractdna gracias"]) assert.ok(!spamShape(t), t);
+  // a link off X: X's url entities say where it goes (a quote of our post is no link here); without them, any link counts
+  assert.ok(!linksOut("lfg https://t.co/a", ["https://x.com/contractdna/status/1"]));
+  assert.ok(linksOut("lfg https://t.co/a", ["https://pump.fun/coin/x"]));
+  assert.ok(linksOut("lfg https://t.co/a") && !linksOut("lfg ser") && !linksOut("see genomedna.xyz"));
 });
 
 test("audience gone: only in a running thread, counted from our first reply in it; first contact under an old post is fine", () => {

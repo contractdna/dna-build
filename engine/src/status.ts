@@ -1,6 +1,6 @@
 // What X hears between events: a status at 14:00 and 22:00 UTC, a recap Sundays at 18:00 UTC, and milestones as they
 // are crossed. Every number comes from code: the indexer's finalized chain rows and snapshot, the signed announcement
-// records, the signed build rows. The writer only words them (src/voice.ts fact sheets and filter). Each goes through
+// records, the signed build rows. Code writes the post from them (src/event-posts.ts: a fixed template, no model). Each goes through
 // announce() (the site's signed record, once per key) and the X outbox (one row per key), ranked below money and games
 // and above the rest (src/announce.ts PRIORITY); its proof link is that signed record.
 // A quiet status window (no swaps, nothing burned, nothing changed since the last status) posts nothing: silence when
@@ -175,7 +175,7 @@ async function liveGames() {
 }
 
 /** The last `hours` as the engine knows them: swaps, volume and fees (the finalized swap rows), DNA burned, the pots
- *  (the snapshot), live games, the live fee and its test, and the dev team's build (its signed row). */
+ *  (the snapshot), live games, the live fee and its test, and the sequencer's build (its signed row). */
 export async function readStatus(hours = 12): Promise<StatusInput> {
   const o = await observeNow(hours);
   const { activeBuild } = await import("./sequencer.ts");

@@ -1,5 +1,5 @@
 "use client";
-// Template page for the raffle (contracts/src/games/raffle/; held, not offered to the dev team). Copy this folder to
+// Template page for the raffle (contracts/src/games/raffle/; held, not offered to the sequencer). Copy this folder to
 // web/app/g/<slug>/ with the contract; the build writes game.json. Same rules as web/app/g/_template/page.tsx. The
 // ticket code is drawn and hashed here, never sent anywhere before its reveal, and shown once: the page keeps nothing
 // (no storage), so the player keeps it to reveal. Buttons follow the browser's clock against the round's windows.

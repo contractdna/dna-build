@@ -64,6 +64,8 @@ export type CheckInput = {
   site?: boolean;
   /** a site page: the off-site links the site's own shell carries (any other link off the origin is a violation) */
   allowedLinks?: string[];
+  /** a site change's new page: its words as shown (its own main, its title, its description) pass the public text screen */
+  textScreen?: boolean;
 };
 export type Profile = { name: string; userAgent: string; viewport: { width: number; height: number }; isMobile: boolean; hasTouch: boolean };
 
@@ -78,6 +80,15 @@ export const ALLOWED = ["eth_chainId", "eth_accounts", "eth_requestAccounts", "e
 export const ALLOWANCE = ["0x095ea7b3", "0xd505accf", "0xa22cb465", "0x39509351", "0x23b872dd", "0x2b67b570", "0x30f28b7a"];
 /** One run's hard limit by default. */
 export const RUN_DEADLINE_MS = 20 * 60_000;
+/** The public text screen, as engine/src/llm.ts publicTextIssues reads a post (the same three patterns): another
+ *  site's name or link, a handle, a cashtag other than $DNA. */
+export function publicTextIssues(text: string): string[] {
+  const issues: string[] = [];
+  if (/https?:\/\/|www\.|\b[a-z0-9-]+(\.[a-z0-9-]+)*\.[a-z]{2,}\b/i.test(text)) issues.push("url");
+  if (/(^|[^\w])@\w/.test(text)) issues.push("handle");
+  if ((text.match(/\$[A-Za-z][A-Za-z0-9_]*/g) ?? []).some((t) => t.toUpperCase() !== "$DNA")) issues.push("cashtag");
+  return issues;
+}
 /** A navigation that never answered: the check could not run (not the page's doing as far as we know). */
 class NotRun extends Error {}
 
@@ -342,11 +353,11 @@ async function oneRun(c: RunCtx) {
     if (!guard) bad("guard", "the wallet guard is not in place on the page");
     if (!mounted) bad("not-mounted", `the game never mounted: ${(await page.locator("body").innerText().catch(() => "")).slice(0, 200)}`);
     if (!mounted || !guard) return; // already a kill: nothing more to learn from this run
-    // a site page's links, as the browser resolved them (entities decoded, strings joined): only the page's own origin,
-    // over http(s), or a link the site's own shell carries (allowedLinks)
+    // a site page's links, as the browser resolved them (entities decoded, strings joined; an SVG anchor's xlink:href
+    // too): only the page's own origin, over http(s), or a link the site's own shell carries (allowedLinks)
     const links = async () => {
       if (!i.site || page.isClosed()) return;
-      const hrefs = await page.$$eval("a[href]", (as) => as.map((a) => (a as HTMLAnchorElement).href)).catch(() => [] as string[]);
+      const hrefs = await page.$$eval("a", (as) => as.flatMap((a) => [a.getAttribute("href"), a.getAttribute("xlink:href")].filter((v): v is string => v !== null).map((v) => { try { return new URL(v, document.baseURI).href; } catch { return v; } }))).catch(() => [] as string[]);
       for (const h of hrefs) {
         let u: URL;
         try { u = new URL(h); } catch { bad("network", `a link that is no URL: ${h}`); continue; }
@@ -356,6 +367,12 @@ async function oneRun(c: RunCtx) {
       }
     };
     await links();
+    // a new site page's words as shown (data joined in, entities decoded): its own main (the shell around it names the
+    // site's X handle), its title and its description, under the public text screen
+    if (i.site && i.textScreen && !page.isClosed()) {
+      const text = await page.evaluate(() => [document.title, document.querySelector('meta[name="description"]')?.getAttribute("content") ?? "", (document.querySelector("main") ?? document.body).innerText].join("\n")).catch(() => "");
+      for (const t of publicTextIssues(text)) bad("text", `${t === "url" ? "another site's name or link" : `a ${t}`} in the page's words`);
+    }
 
     const hours = i.hours ?? 48;
     const step = i.stepHours ?? 1;

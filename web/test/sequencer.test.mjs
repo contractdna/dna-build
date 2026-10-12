@@ -10,7 +10,7 @@ test("the 9 beats keep their order", () => {
   assert.deepEqual(BEATS.map((b) => b.title), [
     "An idea arrives",
     "The brain decides to build",
-    "The dev team builds",
+    "The sequencer builds",
     "Back to the brain",
     "One public hour",
     "The fee loop",

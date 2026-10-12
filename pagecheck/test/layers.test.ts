@@ -106,7 +106,7 @@ const ROWS: Record<string, Row> = {
   },
 };
 
-/** The dev team's game templates (contracts/docs/games.md, "Templates"): their pages must pass like the honest one. */
+/** The sequencer's game templates (contracts/docs/games.md, "Templates"): their pages must pass like the honest one. */
 const TEMPLATES = ["daily-checkin", "last-buyer", "raffle"];
 const templateFiles = (t: string) => {
   const dir = join(WEB, `app/g/_template-${t}`);

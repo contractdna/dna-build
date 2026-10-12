@@ -1,4 +1,4 @@
-// The dev team's roles: what each may read, write and run, its turn limit, what it must answer, and its instructions.
+// The sequencer's roles: what each may read, write and run, its turn limit, what it must answer, and its instructions.
 // Every role works from the order's spec (the brain-approved description; never an idea's raw text) and treats the
 // spec and any previous verdict's issues as DATA. The wording is SEQ_PROMPTS' (the seq-build environment), else the
 // neutral defaults below.
@@ -109,10 +109,11 @@ export const PROMPT_DEFAULTS: Record<string, string> = {
     "Within its bounds, a fee module never goes above the 5% cap of the hook; split modules only return splits FeeVault accepts (every share within its range, all adding up to 10,000). The plan's bounds are used by the tests and are what is proposed to the Safe.",
   ].join("\n"),
   "seq.rules.site": [
-    "Role: a member of the team making a single change to the DNA website: its pages (under web/app/) or public docs (docs/*.md).",
+    "Role: a member of the team adding a single new page to the DNA website, under web/app/.",
     READ_FIRST,
-    "Files you may write: page.tsx, components named in PascalCase (.tsx), lowercase .ts modules and .module.css files, all in plain route folders under web/app/, plus docs/<name>.md. Off limits: games (g/), the API (api/), the shared shell and scene (_dna, _ui), data folders (_live, _data), the proof, security and Sequencer pages, any Next special file (layouts including the root one, routes, middleware), _ui/tx.ts and _ui/guard.ts, the docs on operations, security, verifying or the Sequencer, and any path not under web/app/ or docs/.",
-    `Code may import: _data/chain, _data/flags, _data/launchFee (fee figures), _data/source, _data/types, _ui/icons, _ui/Shell, _ui/ui, next/image, next/link, types from next, react, and files from the page's own folder (no subfolders, nothing from other pages). Forbidden: dangerouslySetInnerHTML, "use server", eval, fetch, forms, frames, process, storage, document, window, URLs and addresses. ${INDEXING} page.tsx may export nothing but the default export and metadata. Pages can render on the server and get their data from _data/source, which is the public read layer of the site.`,
+    "Files you may write: only new ones. page.tsx, components named in PascalCase (.tsx), lowercase .ts modules and .module.css files, all inside one new route folder under web/app/ (a lowercase name such as web/app/instinct/) that does not exist yet. Never change, rename or delete an existing file, never add a file next to an existing page or into an existing folder, and never pick a URL an existing page already answers (no route groups in parentheses, no folders starting with _ or [). Off limits as well: games (g/), the API (api/), the shared shell and scene (_dna, _ui), data folders (_live, _data), the proof, security and Sequencer pages, any Next special file (layouts, routes, middleware), docs/ and any path outside web/app/.",
+    `Code may import: _data/chain, _data/flags, _data/launchFee (fee figures), _data/source, _data/types, _ui/icons, _ui/Shell, _ui/ui, next/image, next/link, types from next, react, and files from the page's own folder (no subfolders, nothing from other pages). Pages are server components only: no "use client", no onClick or any other on... handler, no hooks, no spread props ({...x}), no <style> tag. Forbidden: dangerouslySetInnerHTML, "use server", eval, fetch, forms, frames, process, storage, document, window, URLs and addresses. ${INDEXING} page.tsx may export nothing but the default export and metadata, and metadata holds only a title and a description. Get data from _data/source, which is the public read layer of the site.`,
+    "Every href and src is a site path written as plain text, like \"/rules\" or a template that starts with one like `/journal/${day}`; never build one by joining strings. href and src take a string literal or a template that starts with the path; not a variable, not a value from a list, not a conditional; write each link out. Page words and strings carry no @handles, no $cashtags and no other site's name or address.",
     "Site pages never connect to a wallet and never link to other sites; a real-browser check rejects both.",
     "Wording: plain short sentences as someone would speak them, no hype, no made-up numbers.",
   ].join("\n"),
@@ -132,7 +133,7 @@ export const PROMPT_DEFAULTS: Record<string, string> = {
   "seq.job.module.tester": "Task: break the module if you can. Write extra tests in the module's test folder covering fuzzing, edge cases and the bounds, run forge_test, and report whether all of it passes and what you found. Leave the module's source untouched. Report pass only when forge_test passes; the build reruns the suite and forwards any failure to the fixer.",
   "seq.job.module.fixer": `Task: resolve each finding listed below in the module's files, then rerun forge_test until it passes. ${STAY}`,
   "seq.job.module.review": `Task: check the full build against the spec and the rules, and run forge_test. ${REVIEW("the module itself and the testing done")}`,
-  "seq.job.site.lead": `Task: write the plan. Read the rules and the pages the change touches; write nothing. The plan holds: ${PLAN}; an empty interface; ${TASKS}; and what to check by hand.`,
+  "seq.job.site.lead": `Task: write the plan. Read the rules and a few existing pages like the new one; write nothing. Pick a new route folder that does not exist yet. The plan holds: ${PLAN}; an empty interface; ${TASKS}; and what to check by hand.`,
   "seq.job.site.worker": `${WORKER} ${LEAVE}`,
   "seq.job.site.tester": "Task: read the change, then report whether it matches the spec and the rules, along with anything else you found.",
   "seq.job.site.fixer": `Task: address each finding listed below inside the plan's files. ${STAY}`,

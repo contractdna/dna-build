@@ -29,13 +29,13 @@
   ],
   "idea_market": [
     "an idea round runs 24 hours; opening an idea stakes 10,000 DNA (refunded) and burns a 1,000 DNA fee, and backing an idea stakes at least 1,000 DNA",
-    "the brain decides each closed round within 3 days; accepted fee ideas go through the same tests as the AI's own, accepted build ideas join the dev team's queue",
+    "the brain decides each closed round within 3 days; accepted fee ideas go through the same tests as the AI's own, accepted build ideas join the sequencer's queue",
     "a kept fee idea or a shipped build can earn its author a reward from the idea reserve: at least 0.01 ETH, at most 25% of the reserve"
   ],
   "games": [
     "the games pot splits what arrives 70% to the jackpot and 30% to the idea reserve",
     "a jackpot draw pays 10 winners, at most 3 ETH a draw, and waits until the pot holds 0.25 ETH; a prize stays open for 7 days",
-    "at most 3 dev-team games run at once, and a game nobody plays gets retired with its funds sent back"
+    "at most 3 games from the sequencer run at once, and a game nobody plays gets retired with its funds sent back"
   ],
   "proof_enclave": [
     "the engine runs inside a TEE enclave from a public image; the compose hash pins exactly what runs, and a code change waits 1 hour behind a public timelock",
@@ -43,7 +43,7 @@
     "nobody, the team included, can sign or post as the engine from outside it"
   ],
   "dev_team": [
-    "the AI dev team builds 1 thing at a time: a game, a site change or a fee module",
+    "the sequencer builds up to 3 ideas at once: a game or a fee module (site changes are not switched on yet)",
     "nothing ships unless it passes every gate: fuzz and invariant tests, a fork simulation, static analysis, planted-bug checks, a gas cap and a spec check",
     "a new game goes live only after 1 public hour, a fee module only when the Safe approves it, and an engine change only when an owner merges it"
   ]

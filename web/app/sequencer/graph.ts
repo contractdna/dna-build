@@ -58,7 +58,7 @@ export const LANES: { title: string; y: number; sub?: string; x?: number; money?
   { title: "INPUTS", y: 30 },
   { title: "PUBLIC", y: 56, x: 1230 },
   { title: "FEE LOOP", y: 250, sub: "tunes the live hook" },
-  { title: "SEQUENCER · DEV TEAM", y: 398 },
+  { title: "SEQUENCER", y: 398 },
   { title: "GAMES", y: 592, sub: "rounds inside contract limits" },
   { title: "MONEY", y: 776, money: true },
 ];
@@ -127,8 +127,8 @@ export type Beat = { title: string; text: string; edges: EdgeId[]; nodes: NodeId
 
 export const BEATS: Beat[] = [
   { title: "An idea arrives", text: "A post on X becomes a plain spec. Anything that reads like an instruction is dropped, and junk gets a public reason.", edges: ["e_x_in", "e_in_b"], nodes: ["xideas", "intake"], brain: true },
-  { title: "The brain decides to build", text: "It scores the idea 24 / 30, sends the spec to its dev team, and signs the decision into the public log.", edges: ["e_spec", "e_b_nb"], nodes: ["lead", "notebook"], brain: true },
-  { title: "The dev team builds", text: "Workers write the contract, the page and the tests. The tester attacks it, the fixer repairs it. Round 2 of 3: everything passes.", edges: ["e_ld_wk", "e_wk_ts", "e_ts_fx", "e_fx_ts", "e_fx_rv"], nodes: ["lead", "workers", "tester", "fixer", "review"] },
+  { title: "The brain decides to build", text: "It scores the idea 24 / 30, sends the spec to the sequencer, and signs the decision into the public log.", edges: ["e_spec", "e_b_nb"], nodes: ["lead", "notebook"], brain: true },
+  { title: "The sequencer builds", text: "Workers write the contract, the page and the tests. The tester attacks it, the fixer repairs it. Round 2 of 3: everything passes.", edges: ["e_ld_wk", "e_wk_ts", "e_ts_fx", "e_fx_ts", "e_fx_rv"], nodes: ["lead", "workers", "tester", "fixer", "review"] },
   { title: "Back to the brain", text: "The finished build goes back to the brain, which gives the final verdict. Nothing the team builds ships on its own say-so.", edges: ["e_verdict"], nodes: ["review"], brain: true },
   { title: "One public hour", text: "The brain approves. The deploy and its funding wait one public hour, and two Safe signers can cancel. No veto: the sealed engine deploys it.", edges: ["e_approve", "e_g_dp", "e_dp_ng", "e_dp_st", "e_veto", "e_fund_in", "e_fund_out"], nodes: ["deploy", "newgame", "site", "safe", "treasury"], gate: true, brain: true },
   { title: "The fee loop", text: "Meanwhile the fee loop proposes a new fee: a red-team check, the public hour, 2 hours on paper, 4 hours on real trades. Fixed rules judge the result.", edges: ["e_prop", "e_rt_g", "e_g_sh", "e_sh_lt", "e_res"], nodes: ["redteam", "shadow", "livetest"], gate: true, brain: true },

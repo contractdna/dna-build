@@ -63,15 +63,15 @@ test("queued update with notes: the notes, when it lands and that the Safe can c
 test("no notes: code's own line says an update is queued and nothing about what it does; the diff when the record names a commit", () => {
   const commit = "fcec127e8dfe99d9d1802b44701a1024386a5e49";
   const q = updateFacts({ event: "update_queued", id: HASH, hash: HASH, eta: String(ETA) }, { commit, notes: [] }, NOW);
-  assert.equal(q.fixed, "update queued for me. no release notes for it, so i won't guess what it does. can land from 14:05 UTC, the safe can cancel until then.");
-  assert.equal(q.append, `the diff: https://github.com/contractdna/dna-build/commit/${commit}`);
+  assert.equal(q.fixed, "Engine update queued. It has no release notes to show, so what it changes is not described here. It can land from 14:05 UTC; the Safe can cancel it until then.");
+  assert.equal(q.append, `The diff: https://github.com/contractdna/dna-build/commit/${commit}`);
   assert.equal(q.notes, undefined);
   const none = updateFacts({ event: "update_queued", id: HASH, hash: HASH, eta: String(ETA) }, null, NOW);
   assert.equal(none.append, undefined, "no record: no link made up");
   assert.equal(none.fixed, q.fixed);
   assert.equal(updateFacts({ event: "update_queued", eta: String(ETA) }, null, ETA + 1).fixed, fixedLine("update_queued", null), "past its hour: no clock stated");
-  assert.equal(updateFacts({ event: "update_allowed" }, null, NOW).fixed, "update allowed: the safe can no longer stop it. no release notes for it, so i won't guess what it does. i switch to it on my next restart.");
-  assert.equal(updateFacts({ event: "update_running" }, null, NOW).fixed, "it's in: i now run the new version. no release notes for it, so i won't guess what changed.");
+  assert.equal(updateFacts({ event: "update_allowed" }, null, NOW).fixed, "Engine update allowed: the Safe can no longer stop it, and the engine switches to it on its next restart. It has no release notes to show, so what it changes is not described here.");
+  assert.equal(updateFacts({ event: "update_running" }, null, NOW).fixed, "Engine update is in: the engine now runs the new version. It has no release notes to show, so what it changes is not described here.");
   for (const e of ["update_queued", "update_allowed", "update_running"]) assert.doesNotMatch(String(updateFacts({ event: e, eta: String(ETA) }, null, NOW).fixed), /explain|once (?:it lands|they're out)/, "no promise code can't keep");
   assert.equal(titleOf(factSheet({ ...q, event: "update_allowed", stage: "x" })), "The engine update is allowed: the timelock executed it, and the engine switches to it on its next restart (no release notes yet)");
   assert.equal(titleOf(factSheet({ ...q, event: "update_running", stage: "x" })), "The engine update is in: the engine now runs it (no release notes yet)");
@@ -127,7 +127,7 @@ test("the Safe's ops in plain words, with the chain's numbers; the example regis
   assert.deepEqual(registryChange(fee.op, fee.data, new Set([plate])), { change: "new fee settings on a plate", fee: { basePct: 2.2, multiplier: 0.5, capPct: 3 } });
   const bad = encodeOp("SetParams", ["0x00000000000000000000000000000000000000a1", [w(9000), w(500), w(500), w(0)]]);
   assert.equal(registryChange(bad.op, bad.data, new Set()).change, "new settings for a module", "not a split the module would use, not a guessed one");
-  assert.deepEqual(registryChange(encodeOp("SetLevel", [6]).op, encodeOp("SetLevel", [6]).data), { change: "a new autonomy level for me", level: 6 });
+  assert.deepEqual(registryChange(encodeOp("SetLevel", [6]).op, encodeOp("SetLevel", [6]).data), { change: "a new autonomy level for the engine", level: 6 });
   assert.equal(registryChange(99, "0x").change, "a registry change");
   const f = factSheet(changeFacts({ event: "change_queued", ref: "op:3", who: "the Safe", eta: String(NOW + 3600), ...s }, NOW));
   assert.deepEqual([f.who, f.minutesLeft, f.activatesAt], ["the Safe", 60, { utcHour: 14, utcMinute: 7 }]);
@@ -179,7 +179,7 @@ test("the day's changelog: the changes with their numbers; a draft that calls th
   const w = (n: number) => toHex(n, { size: 32 });
   const split = encodeAbiParameters([{ type: "address" }, { type: "bytes32[4]" }], ["0x00000000000000000000000000000000000000a1", [w(4000), w(3000), w(2000), w(1000)]]);
   assert.equal(changeLine(registryChange(4, split, new Set())), "the fee split changed: buyback 40%, liquidity 30%, treasury 20%, games 10%");
-  assert.equal(changeLine(registryChange(7, encodeAbiParameters([{ type: "uint8" }], [3]))), "my autonomy level is now 3");
+  assert.equal(changeLine(registryChange(7, encodeAbiParameters([{ type: "uint8" }], [3]))), "the engine's autonomy level is now 3");
   const changes = [`my code was updated: ${NOTES.join("; ")}`, "the website changed: a wallet link in the header", changeLine(registryChange(4, split, new Set()))];
   const raw = { event: "day_changes", day: "2026-10-11", changes, figures: figuresOf(changes), stage: "every change to me on that UTC day, all of it: `changes`" };
   const f = factSheet(raw);

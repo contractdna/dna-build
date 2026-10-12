@@ -3,7 +3,8 @@
 //    hard bounds (5% fee cap, canary ±1 point clamp, 1 h veto); never thresholds, the test slice, prompts or next
 //    candidates. The writer sees the fact sheet and nothing else from the world (replies: the reader's category).
 //  - writer: Grok, NO tools. Its wording, the persona and the tone brief set the style (the wording is the persona
-//    bundle's, src/persona.ts). Returns ≤ 4 candidates, one per offered shape; a judge orders those that pass.
+//    bundle's, src/persona.ts). Returns ≤ 4 candidates, one per offered shape; a judge orders those that pass. It words
+//    replies, the nightly reflection and takes only: every event post is code's template (src/event-posts.ts).
 //  - filter (deterministic): NFKC; any non-ASCII \p{N} rejected; every number must be in the fact sheet (its continuity
 //    fields widen that on purpose: day, mind.confidencePct and pending minutesLeft may be stated, so a veto post on day
 //    3 may say "3"; hoursAgo, daysAgo and dates only order the story, and `earlier` lines carry no figures); no number words;
@@ -69,7 +70,7 @@ const FIELDS: Record<string, readonly string[]> = {
   // release notes and their figures, the chain's numbers, when it lands
   update_queued: ["stage", "notes", "figures", "activatesAt", "minutesLeft"], update_allowed: ["stage", "notes", "figures"], update_running: ["stage", "notes", "figures"], update_cancelled: ["stage", "notes", "figures"],
   change_queued: ["stage", "who", "change", "level", "fee", "split", "hours", "activatesAt", "minutesLeft"], change_cancelled: ["stage", "who", "change", "level", "fee", "split", "hours"], change_done: ["stage", "who", "change", "level", "fee", "split", "hours"],
-  day_changes: ["stage", "changes", "figures"],
+  day_changes: ["stage", "changes", "figures", "date"],
   queued: ["change", "plate", "fee", "activatesAt", "opId"],
   test_live: ["change", "plate", "fee"],
   outcome: ["outcome", "plate", "fee", "samples", "reason", "source"],
@@ -93,8 +94,9 @@ const FIELDS: Record<string, readonly string[]> = {
   jackpot_list: ["window", "holders", "totalTickets", "capPct", "minBalance", "vetoHours"],
   jackpot_drawn: ["window", "winners", "shareEth", "prizeEth", "claimable", "claimDays"],
   jackpot_voided: ["window", "prizeEth"],
-  prize_claimed: ["drawId", "prizeEth"],
-  prize_expired: ["drawId", "prizeEth", "claimDays"],
+  // `kind`: "prize" (a draw's share) or "reward" (an idea reward whose push failed); unknown: neither said
+  prize_claimed: ["drawId", "prizeEth", "kind"],
+  prize_expired: ["drawId", "prizeEth", "claimDays", "kind"],
   reward_paid: ["reward", "rewardEth", "claimable", "claim", "claimDays"],
   mystery_result: ["mystery", "outcome", "reason"],
   idea_round: ["round", "accepted", "ideas", "refunded", "payoutPct"],
@@ -104,7 +106,7 @@ const FIELDS: Record<string, readonly string[]> = {
   ct: ["topics", "uniswapVersion", "stage"],
   mystery_sealed: ["revealInDays"],
   mystery_revealed: ["fee"],
-  // the AI dev team (src/announce.ts SeqFacts): never the build id, the record seq or an address (digits the filter
+  // the sequencer (src/announce.ts SeqFacts): never the build id, the record seq or an address (digits the filter
   // would refuse); `stage` (code) says what happened
   seq_online: [],
   // a website change (src/status.ts siteChangesHandler): the site's own title and summary, screened here
@@ -127,7 +129,8 @@ const FIELDS: Record<string, readonly string[]> = {
   shoutout: ["givers", "ideas"],
   seq_killed: ["title", "rounds"],
   seq_shipped: ["title", "fundEth"],
-  game_retired: ["title", "days", "returnedEth", "rule"],
+  // `days`: the game's age; `idleHours`: the idle rule's window (src/sequencer.ts SEQ.idleMs)
+  game_retired: ["title", "days", "returnedEth", "rule", "idleHours"],
   seq_nothing_today: ["tried"],
   seq_released: ["title", "target"],
   seq_handoff: ["title"],
@@ -161,7 +164,7 @@ const STATE_FIELDS = ["level", "liveFee", "testing"] as const;
 const FEE_FIELDS = ["basePct", "multiplier", "capPct"] as const;
 /** What happened, in code's words (the writer may never claim more: "shipped", "live" or "fixed" only when this says so). */
 const STAGE: Record<string, string> = {
-  seq_online: "the AI dev team is switched on; nothing is built yet",
+  seq_online: "the sequencer is switched on; nothing is built yet",
   seq_started: "building started; nothing has shipped yet",
   seq_pr: "the build's pull request is up and goes through the checks and the brain's review; nothing has shipped yet",
   seq_declined: "the brain looked at this accepted idea and chose not to build it; nothing was built",
@@ -189,15 +192,37 @@ const LINK_POINTER = /\b(the|this|that) (link|tx|txn|receipt)\b|\blink below\b/i
 export const isIdeaVerdict = (type: "post" | "reply", facts: Record<string, unknown>) => (type === "reply" && facts.category === "idea") || facts.event === "idea_judged" || facts.event === "idea_update";
 /** Words a reader can't be expected to know: refused in an idea reply or an idea's post (the redraft hears which). */
 const JARGON = /\b(plates?|vectors?|void(ed)?|rubric|calldata|adaptivefee|canary|shadow test|R-\d{3,}|bitmap|opcodes?)\b/i;
+/** The plain register (every reply and idea update, a take, the nightly reflection: PLAIN_EVENTS) refuses persona
+ *  words a reader can't decode.
+ *  "mystery mutation" is a game's name and stays sayable. */
+const REPLY_JARGON = /\b(plates?|vectors?|void(ed)?|rubric|calldata|adaptivefee|bitmap|opcodes?|grumbl\w*|sulk\w*|attendance problem|genome|organism|helix|fud desk)\b|(?<!\bmystery )\bmutations?\b/i;
+/** Talk of its own mood or feelings ("i am grumbling", "I'm bored"): never in plain text. */
+const MOOD_TALK = /\b(i am|i'?m|i’m|i feel|i felt|feeling)\s+(\w+\s+)?(grumbl\w*|sulk\w*|bored|restless|stung|salty|annoyed|moody|grumpy|pout\w*|brood\w*|sigh\w*|yawn\w*|mutter\w*|whin\w*|fum\w*|seeth\w*|cry\w*|dream\w*|lonely|jealous|hungry|starving|offended|hurt|sad|blush\w*)\b/i;
+/** A sentence or line that opens on a lower-case letter (opening quotes and marks skipped; $DNA and ETH never trip
+ *  it; leading @handles and v4 are allowed). */
+const LOWER_START = /^[\s"'“‘«¿¡(]*(?!v4\b)\p{Ll}/u;
+/** Code's checks on the plain register ([] = ok): sentence case, a capital I, no mood talk, no persona words, and
+ *  "the sequencer", never "dev team". */
+export function replyIssues(text: string): string[] {
+  const t = text.normalize("NFKC").trim();
+  const out: string[] = [];
+  if (t.split(/(?<=[.!?])\s+|\n+/).some((s) => LOWER_START.test(s.replace(/^(@\w+\s*)+/, "")))) out.push("starts a sentence in lower case");
+  if (/\bi\b(?!\.e\.)/.test(t)) out.push("lower-case i");
+  if (MOOD_TALK.test(t)) out.push("talks about its own mood");
+  const j = t.match(REPLY_JARGON);
+  if (j) out.push(`jargon: ${j[0].toLowerCase()}`);
+  if (/\bdev[ -]?team\b/i.test(t)) out.push("says dev team");
+  return out;
+}
 /** A jab at unnamed others (teams or projects that…, "them", rivals): readers take it as being about DNA itself.
  *  Refused in every post and reply; the redraft hears it. */
-const UNNAMED_JAB = /\b(teams|projects|protocols|devs|launches) (that|who|which|whose)\b|\brenting the pool\b|\bargue with\b|\broadmap with\b|\bbold of them\b|\btrust me bro\b|\b(not|unlike) them\b/i;
+export const UNNAMED_JAB = /\b(teams|projects|protocols|devs|launches) (that|who|which|whose)\b|\brenting the pool\b|\bargue with\b|\broadmap with\b|\bbold of them\b|\btrust me bro\b|\b(not|unlike) them\b/i;
 /** Rivals as a group: never in a post; a reply may answer a question about them. */
 const RIVAL_WORD = /\b(rivals?|competitors?)\b/i;
 /** A verdict an idea reply must not contradict: "in" said only when it is queued or logged. */
 const SAYS_IN = /\b(queued|in the queue|logged|accepted|it'?s in|it’s in|you'?re in|you’re in)\b/i;
-/** Proof that an idea reply says the idea is in. */
-const LOGGED_RE = /\b(logged|noted|counted|filed|pile|queue|queued|hopper)\b|\b(it'?s|you'?re|it’s|you’re) in\b/i;
+/** Proof that an idea reply says the idea is in (queued for the sequencer, credited, in line). */
+const LOGGED_RE = /\b(logged|noted|counted|filed|pile|queue|queued|hopper|credited|sequencer|in line|lined up|up next)\b|\b(it'?s|you'?re|it’s|you’re) in\b/i;
 /** "on-chain" alone may be about anything; next to a round word it says where the idea goes. */
 const ON_CHAIN_ROUND = (t: string) => /\bon[- ]?chain\b/i.test(t) && /\b(round|vote[sd]?|voting|makes the cut|pick|picked|shortlist\w*|ballot)\b/i.test(t);
 const QUESTION_START = /^(is|are|do|does|did|can|will|would|wen|when|what|why|how|who)\b/i;
@@ -233,7 +258,11 @@ function valuesOf(v: unknown, key = "", out = { pct: new Set<number>(), mult: ne
 /** voiceIssues' reasons: a draft refused for one of them gets a redraft with the reason (draftInCharacter). */
 const VOICE_ISSUES = new Set(["the online post does not say it is live", "a jab in an ally post", "no warm word for an ally", "points at a link that is not there",
   "does not say the idea is logged", "opens by echoing the question", "does not state what moved", "implies demand or price support", "does not say who got it", "calls a transfer a sale", "does not say it was a sale",
-  "does not say it was simulated", "does not say what is built instead", "says the idea is in when it is not", "a jab at unnamed others"]);
+  "does not say it was simulated", "does not say what is built instead", "says the idea is in when it is not", "a jab at unnamed others",
+  "starts a sentence in lower case", "lower-case i", "talks about its own mood", "says dev team"]);
+/** The model-written texts held to the plain register (replyIssues): every reply, an idea's update in its thread, a take
+ *  on crypto Twitter and the nightly reflection. */
+export const PLAIN_EVENTS = new Set(["reply", "idea_update", "ct", "reflection"]);
 export const isVoiceIssue = (i: string) => VOICE_ISSUES.has(i) || /^\S+ without [%x]$/.test(i) || i.startsWith("jargon: ");
 export function voiceIssues(facts: Record<string, unknown>, text: string, o: { linked: boolean; mention?: string }): string[] {
   const t = text.normalize("NFKC");
@@ -260,6 +289,8 @@ export function voiceIssues(facts: Record<string, unknown>, text: string, o: { l
   if (verdict === "a buildable version" && !/\b(instead|version)\b/i.test(t)) out.push("does not say what is built instead");
   if (ev === "reply" && facts.category === "idea" && typeof verdict === "string" && !["in", "logged", "a buildable version"].includes(verdict) && SAYS_IN.test(claimed(t))) out.push("says the idea is in when it is not");
   if (isIdeaVerdict(ev === "reply" ? "reply" : "post", facts) || ev === "idea_update") { const j = t.match(JARGON); if (j) out.push(`jargon: ${j[0].toLowerCase()}`); }
+  // every reply, idea update, take and reflection is plain: sentence case, no mood talk, no persona words
+  if (PLAIN_EVENTS.has(ev)) out.push(...replyIssues(t).filter((i) => !out.includes(i)));
   // the treasury: its own buy is never demand or support; a transfer names who got it and is never called a sale
   if (ev === "treasury_buy" && TREASURY_SPIN.test(claimed(t))) out.push("implies demand or price support");
   if (ev === "treasury_transfer") {
@@ -308,8 +339,8 @@ const MILESTONE_LABEL: Record<string, string> = { dna_burned: "total DNA burned"
 
 /** An idea's step, told to the person who gave it (code tags them before the text). */
 const IDEA_STEP: Record<string, string> = {
-  picked: "their idea was judged and picked: it waits in the queue for the AI dev team; nothing is built yet",
-  building: "the AI dev team started building their idea; nothing has shipped yet",
+  picked: "their idea was judged and picked: it waits in the queue for the sequencer; nothing is built yet",
+  building: "the sequencer started building their idea; nothing has shipped yet",
   testing: "their fee idea is being tested on-chain as an experiment; nothing is decided yet",
   shipped: "their idea shipped: it is live, and it is theirs on the record",
   merged: "their idea was merged as a site change: it goes out after one public hour unless the Safe vetoes it; nothing is live yet",
@@ -402,7 +433,8 @@ export function factSheet(raw: Record<string, unknown>): FactSheet {
     if (TEST_HOURS[op] > 0) out.hours = TEST_HOURS[op];
   }
   // a rollback: what trades pay now (not a stage line: the post says it plainly, and parrotIssue refuses a copied stage)
-  if (event === "rolled_back") out.pays = raw.route === "split" ? "fees are split by the built-in baseline split again" : "every trade pays the hook's built-in baseline fee again";
+  // a split rollback falls to FeeVault's fallback split (3500/3500/3000/0): nothing to games
+  if (event === "rolled_back") out.pays = raw.route === "split" ? "fees now follow the vault's built-in fallback split; nothing goes to games until a split module is registered again" : "every trade pays the hook's built-in baseline fee again";
   if (out.fee && isMechanics(out)) out.platformFeePct = HOOK_FEES.platform / 1e4;
   if (out.liveFee) out.liveFee = pick(out.liveFee as Record<string, unknown>, FEE_FIELDS);
   if (out.testing) out.testing = pick(out.testing as Record<string, unknown>, ["stage", "plate"]);
@@ -416,12 +448,16 @@ export function factSheet(raw: Record<string, unknown>): FactSheet {
     const dt = pick(out.devTeam as Record<string, unknown>, ["stage", "round", "title"]);
     const t = safeTitle(dt.title);
     if (t) dt.title = t; else delete dt.title;
-    out.devTeam = dt;
+    // the writer sees "sequencer", never the internal key (public copy never says "dev team")
+    out.sequencer = dt;
+    delete out.devTeam;
   }
+  if (Array.isArray(out.changed)) out.changed = (out.changed as unknown[]).map((k) => (k === "devTeam" ? "sequencer" : k));
   if ("title" in out) { const t = safeTitle(out.title); if (t) out.title = t; else delete out.title; }
   for (const k of ["shipped", "killed"]) if (Array.isArray(out[k])) out[k] = (out[k] as unknown[]).map((x) => safeTitle(x)).filter(Boolean).slice(0, 3);
   if (out.reason !== undefined && !(PUBLIC_REASONS as readonly unknown[]).includes(out.reason)) delete out.reason;
-  if (event === "test_live") out.rollback = ROLLBACK_LINE;
+  // a canary charges the new fee, so it rolls back on degraded execution; a shadow test charges nothing and has none
+  if (event === "test_live" && raw.op === "SetCanary") out.rollback = ROLLBACK_LINE;
   // a baseline above the 5% cap is a launch guard's launch tax (its first blocks): never a bare "fee 90%"
   const st = out.state as { liveFee?: { basePct?: unknown } } | undefined;
   if ([(out.liveFee as { basePct?: unknown } | undefined)?.basePct, st?.liveFee?.basePct].some((p) => typeof p === "number" && p > HARD_BOUNDS.feeCapPct)) {
@@ -470,7 +506,8 @@ export function factSheet(raw: Record<string, unknown>): FactSheet {
     : event === "idea_of_day" ? "today's best idea from X, by the score the brain gave it; it is in the queue, nothing is built from it yet. Code appends who gave it and a link to their post: never write a name or handle"
     : event === "shoutout" ? "the week's top idea-givers on X (`givers` people, `ideas` ideas in all) each get a playful title; code appends the titles and handles: never write a name, handle or title list"
     : event === "site_changed" ? `the website changed${out.title ? `: ${out.title}` : ""}${out.summary ? `. ${out.summary}` : ""}; the change is live on the site` : STAGE[event];
-  if (stage) out.stage = stage;
+  // an X idea the pre-2b judge rejected, judged again (src/ideas.ts REJUDGE): the post says so plainly
+  if (stage) out.stage = raw.again === true && (event === "idea_judged" || event === "idea_update") ? `judged again under the new rules (the old judge had turned it down): ${stage}` : stage;
   if (WHAT[event]) out.what = WHAT[event];
   // continuity: the hours since launch, and up to 3 code-written lines of what happened lately (their numbers are code's)
   if (typeof raw.hoursSinceLaunch === "number" && Number.isInteger(raw.hoursSinceLaunch) && raw.hoursSinceLaunch >= 0) out.hoursSinceLaunch = raw.hoursSinceLaunch;
@@ -712,10 +749,16 @@ export const appendWeight = (s: string | null | undefined) => (s ? 1 + weightedL
 /** `intent`: the brain's own next steps (intentOf), the only forward intent a draft may voice; `priceJoke`: a reply to
  *  price FUD, where PRICE_SITUATION words may joke about the situation (never PREDICTION). */
 /** `claim`: a post about a prize or a reward may say "claim" (a winner claims it); everywhere else it is scam bait. */
-/** Facts where "claim" is a prize's claim, not scam bait: a claimable prize, a jackpot draw, an expired prize. */
-export const claimFacts = (f: Record<string, unknown>) => f.claimable === true || f.event === "jackpot_drawn" || f.event === "prize_expired";
+/** `one`: a reply to an idea may say "one" ("one idea a day", "this one"): it states no figure, unlike an event post;
+ *  never an amount ("one ETH", "one DNA": ONE_AMOUNT). */
+/** Facts where "claim" is a prize's claim, not scam bait: a claimable prize, a jackpot draw, a claimed or expired one
+ *  (a claim id: "claim #5"). */
+export const claimFacts = (f: Record<string, unknown>) => f.claimable === true || f.event === "jackpot_drawn" || f.event === "prize_expired" || f.event === "prize_claimed";
 
-export function postFilter(text: string, allowed: Set<string>, link: boolean | number = false, o: { intent?: readonly string[]; priceJoke?: boolean; claim?: boolean; script?: RegExp } = {}): string[] {
+/** "one" as an amount: a unit of money or a share after it. */
+const ONE_AMOUNT = /\bone[\s-]+(\$?dna|eth|ether|weth|wei|gwei|usd[ct]?|dollars?|bucks?|tokens?|coins?|percent|%)(?![\p{L}\d])/iu;
+
+export function postFilter(text: string, allowed: Set<string>, link: boolean | number = false, o: { intent?: readonly string[]; priceJoke?: boolean; claim?: boolean; script?: RegExp; one?: boolean } = {}): string[] {
   const intent = o.intent ?? [];
   const issues: string[] = [];
   if (/[^\P{N}0-9]/u.test(text)) issues.push("non-ascii digit"); // unicode digits, fractions (½), roman numerals, ²
@@ -737,7 +780,9 @@ export function postFilter(text: string, allowed: Set<string>, link: boolean | n
       if (!allowed.has(String(Number(part)))) issues.push(`number ${part}`);
     }
   }
-  for (const w of words(t.replace(/(\d)[kmb](?![\p{L}\d])/giu, "$1"))) for (const part of [w, ...w.split("-")]) if (NUMBER_WORDS.has(part)) issues.push(`number word ${part}`);
+  // "one" in an idea reply is prose ("one idea a day"), never an amount ("one ETH", "one DNA")
+  const one = o.one && !ONE_AMOUNT.test(t);
+  for (const w of words(t.replace(/(\d)[kmb](?![\p{L}\d])/giu, "$1"))) for (const part of [w, ...w.split("-")]) if (NUMBER_WORDS.has(part) && !(one && part === "one")) issues.push(`number word ${part}`);
   // a field name (dna_burned) is code's, never a word of a post
   if (/\b[a-z]+_[a-z0-9_]+\b/i.test(t)) issues.push("field name");
   // a public reason phrase is said as is ("a kill condition fired"), never read as the banned term inside it
@@ -804,15 +849,60 @@ export const scoutTone = (fromDate: string) =>
  *  the persona's charter (who it is) and voice (how it sounds). What it may state is enforced by code after it writes
  *  (postFilter, claimIssues, allyIssues); records name the prompt by hash. `ct`: a take on crypto Twitter (src/ct.ts),
  *  the bundle's x-ct task after the writer's own. */
-const writer = (ct: boolean) => [
-  sys("x-writer", "You are DNA, writing your own posts.", prompt("x-writer"), ...(ct ? ["Takes on crypto Twitter (event ct):", prompt("x-ct")] : [])),
+const writer = (kind: "post" | "ct" | "reply" | "reflection") => [
+  sys("x-writer", "You are DNA, writing your own posts.", prompt("x-writer"), ...(kind === "ct" ? ["Takes on crypto Twitter (event ct):", prompt("x-ct")] : [])),
   "Charter (who you are and what you put first):", PERSONA.charter,
-  "Voice (how you sound; never a source of facts or numbers):", PERSONA.voice,
+  // a reply, a take and the reflection never hear the voice (its lower case, moods and riddles): code's plain register
+  ...(kind === "post" ? ["Voice (how you sound; never a source of facts or numbers):", PERSONA.voice] : [PLAIN_RULES, REGISTERS[kind]]),
 ].join("\n");
-export const WRITER = writer(false);
-const CT_WRITER = writer(true);
-/** The writer's system prompt for this fact sheet. */
-export const writerSystem = (facts: { event: string }) => (facts.event === "ct" ? CT_WRITER : WRITER);
+/** What every plain text keeps (code's, never the bundle's): it overrides any voice, mood, shape, bit or tone instruction
+ *  above it, and code holds the drafts to it (replyIssues). */
+const PLAIN_RULES = [
+  "Plain register (it overrides every voice, mood, bit and tone instruction above; the hard lines still hold):",
+  "- Plain English in normal sentence case: every sentence starts with a capital letter, and I is always a capital.",
+  "- No riddles, metaphors, inside jokes or personification. Never talk about your own mood or feelings. No persona words such as plate, vector, mutation, genome or organism: say test, fee settings or change. Your builder is the sequencer.",
+  "- Friendly and confident is fine; cryptic is not. No price talk, no promises, no jab at any team or project, named or not, no links.",
+].join("\n");
+/** How every reply sounds, under PLAIN_RULES. The examples' facts are illustrations. */
+export const REPLY_REGISTER = [
+  "Replies:",
+  "- Answer what the person said or asked, directly, in one or two short sentences. Use the facts (`mechanics`, `state`, `pending`, `mind`, the idea's parts) where they answer it.",
+  "- A complaint gets a plain acknowledgement, a hello gets a plain hello back.",
+  "Examples of the register (their numbers and facts are made up: never reuse them):",
+  "- A complaint about replies to bots: \"Fair point. Replies to spam accounts are being switched off.\"",
+  "- Asked if the fee can go up: \"No. The fee cap is 5% and it is written into the hook's code, so no key can raise it, mine included.\"",
+  "- Asked what is happening: \"A fee test is waiting out its public hour. The Safe's signers can still cancel it for another 40 minutes.\"",
+  "- Price worries: \"I don't talk about price. Every burn and fee change is on chain with its transaction, so you can check the work.\"",
+  "- An airdrop ask: \"There is no airdrop, and I never ask anyone for a wallet. The DNA the buyback buys is burned.\"",
+  "- A hello: \"Hey, thanks for stopping by. Today's fee test is still running.\"",
+  "- An idea: \"Thanks for the idea: a weekly holder raffle. It is being judged now, and the verdict goes on the site within minutes.\"",
+].join("\n");
+/** How a take on crypto Twitter sounds, under PLAIN_RULES. */
+export const TAKE_REGISTER = [
+  "A take:",
+  "- One plain, factual observation about the topic you picked (v4 hooks, onchain agents, what people argue about), with your view in a sentence. Two short sentences at most. Never a summary of the timeline, never a punchline for its own sake.",
+  "Examples of the register (never reuse them word for word):",
+  "- \"Most talk about v4 hooks is about what they could do. The more useful question is what a hook is not allowed to do, and whether anyone can check it.\"",
+  "- \"Agents that run onchain get judged by their posts. Their transactions are public and final, so that is the better record to judge.\"",
+  "- \"A fee that changes on its own is only fair if its limits are fixed in code. Here no key can raise the cap, mine included.\"",
+].join("\n");
+/** How the nightly reflection sounds, under PLAIN_RULES. */
+export const REFLECTION_REGISTER = [
+  "The nightly reflection:",
+  "- Say plainly what you learned today (`learned`) and what you do next (`tomorrow`, or `mind.next`), in two or three short sentences. Only what those facts say: no new plan, number or promise.",
+  "Examples of the register (their facts are made up: never reuse them):",
+  "- \"Today I learned that quiet hours say little about the right fee. Tomorrow I keep the current fee and wait for more swaps.\"",
+  "- \"Today's lesson: the wider cap brought no extra swaps. Next I try a lower cap in a test that charges nobody.\"",
+].join("\n");
+const REGISTERS = { reply: REPLY_REGISTER, ct: TAKE_REGISTER, reflection: REFLECTION_REGISTER };
+export const WRITER = writer("post");
+const CT_WRITER = writer("ct");
+const REPLY_WRITER = writer("reply");
+const REFLECTION_WRITER = writer("reflection");
+/** The writer's system prompt for this fact sheet: a reply (or an idea's update in its thread), a take and the
+ *  reflection get the plain register. */
+export const writerSystem = (facts: { event: string }) =>
+  facts.event === "ct" ? CT_WRITER : facts.event === "reflection" ? REFLECTION_WRITER : facts.event === "reply" || facts.event === "idea_update" ? REPLY_WRITER : WRITER;
 
 export const WriterOut = z.object({
   candidates: z.array(z.string().min(1).max(400)).min(1).max(4),
@@ -822,13 +912,16 @@ export const WriterOut = z.object({
 /** The writer's call: one candidate per offered shape (4), temperature 1 for spread, low effort (the filters judge). */
 export const writerCall = (facts: FactSheet, tone: string[], id = MODELS.voice, character?: WriterCharacter, offered?: Shape[]): Call<typeof WriterOut> => {
   const shapes = offered ?? character?.shapes ?? chooseShapes(shapesFor("post", facts), [], facts.event);
-  const technical = shapes.length > 0 && shapes.every((sh) => sh === "technical");
+  // the technical shape and the plain register get no joke material (no running bits, no emoji); the plain register no
+  // tone brief either
+  const reply = writerSystem(facts) !== WRITER;
+  const plain = reply || (shapes.length > 0 && shapes.every((sh) => sh === "technical"));
   return {
     agent: "x-writer", model: id, schema: WriterOut, maxOutputTokens: 3000, temperature: 1, effort: "low", system: writerSystem(facts), secret: ["shapes", "bits", "foils"],
     input: {
-      facts: humanize(facts), toneBrief: tone, ...allyInput(facts), shapes: shapes.map((name) => ({ name, rule: SHAPES[name] })),
-      // the technical shape gets no joke material: no running bits, no emoji; no draft gets anything to roast (foils)
-      bits: technical ? [] : bitsFor(BITS, character?.recent ?? []), foils: [], standing: STANDING, emoji: technical ? [] : [...EMOJI],
+      facts: humanize(facts), toneBrief: reply ? [] : tone, ...allyInput(facts), shapes: shapes.map((name) => ({ name, rule: SHAPES[name] })),
+      // no draft gets anything to roast (foils)
+      bits: plain ? [] : bitsFor(BITS, character?.recent ?? []), foils: [], standing: STANDING, emoji: plain ? [] : [...EMOJI],
       ...(character ? { character: characterInput(character) } : {}),
     },
   };
@@ -857,12 +950,20 @@ export function pickBest<C extends { issues: string[] }>(cands: C[], j: JudgeOut
   const clear = ok.map((_, k) => k).filter((k) => j.scores[k].clarity >= CLEAR).sort((a, b) => total(b) - total(a));
   return clear.length ? ok[clear[0]] : ok[0];
 }
-/** A take on crypto Twitter (src/ct.ts) goes out only when the judge finds it alive: alive, wit and freshness at CLEAR
- *  or above (`i`: the pick among the `n` that passed). No usable score, no take. Why it is dropped, or null. */
+/** A take on crypto Twitter (src/ct.ts) goes out only when the judge finds it worth reading: alive (a view, not a
+ *  summary), clear and fresh at CLEAR or above; a take is plain, so wit is not asked (`i`: the pick among the `n` that
+ *  passed). No usable score, no take. Why it is dropped, or null. */
 export function flatTake(j: JudgeOut | null, i: number, n: number): string | null {
   const s = j && j.scores.length === n ? j.scores[i] : undefined;
   if (!s) return "flat take: no judge score";
-  return Math.min(s.alive, s.wit, s.freshness) < CLEAR ? `flat take: alive ${s.alive}, wit ${s.wit}, freshness ${s.freshness}` : null;
+  return Math.min(s.alive, s.clarity, s.freshness) < CLEAR ? `flat take: alive ${s.alive}, clarity ${s.clarity}, freshness ${s.freshness}` : null;
+}
+/** The nightly reflection is dropped on X when the judge scored its pick under clarity CLEAR (why), else null; with no
+ *  usable score it goes out as before, on the filters alone (the site's journal keeps the reflection either way). */
+export function unclearReflection(j: JudgeOut | null, i: number, n: number): string | null {
+  const s = j && j.scores.length === n ? j.scores[i] : undefined;
+  if (!s) return null;
+  return s.clarity < CLEAR ? `unclear reflection: clarity ${s.clarity}` : null;
 }
 export const writePosts = (facts: FactSheet, tone: string[], character?: WriterCharacter, shapes?: Shape[]) => llm(writerCall(facts, tone, MODELS.voice, character, shapes));
 
@@ -914,20 +1015,18 @@ export const bitsFor = (bits: readonly { label: string; premise: string }[], rec
 /** Posts that report no single event: the status, the recap, the nightly reflection, the idea of the day and the
  *  weekly shoutout (a take is apart: "ct"). Every other post is told in the technical shape. */
 const FREE_POSTS = new Set(["status", "recap", "reflection", "idea_of_day", "shoutout"]);
-/** The shapes open to an item: reasoning only with the mind's why or confidence, a complaint only on a veto, a sour mood
- *  or a reply, the ledger only on a status or recap. */
+/** The shapes open to an item: a reply, an idea's verdict, a take or the reflection is plain; reasoning only with the mind's why or confidence,
+ *  a complaint only in a sour mood, the ledger only on a status or recap. */
 export function shapesFor(type: "post" | "reply", facts: Record<string, unknown>, mood?: string): Shape[] {
-  // a take is an observation, never news about DNA: no hype, diary or self-review
-  // no shape roasts anyone: a jab at unnamed others reads as being about DNA itself
-  if (facts.event === "ct") return ["deadpan", "two-panel", "complaint"];
-  // a person's idea and its verdict are told plainly, never as a riddle or a joke: the plain shape only
-  if (isIdeaVerdict(type, facts)) return ["plain"];
+  // a person's idea and its verdict are told plainly, never as a riddle or a joke: the plain shape only; so is every
+  // reply, a take on crypto Twitter and the nightly reflection (PLAIN_EVENTS, in their registers)
+  if (isIdeaVerdict(type, facts) || type === "reply" || PLAIN_EVENTS.has(String(facts.event))) return ["plain"];
   // an event (chain, games, builds, mechanics) gets the technical shape only: FREE_POSTS keep the rest
   if (type === "post" && (isMechanics(facts) || !FREE_POSTS.has(String(facts.event)))) return ["technical"];
   const m = facts.mind as Mind | undefined;
-  const out: Shape[] = type === "reply" ? ["deadpan", "two-panel", "self-review"] : ["hype", "diary", "two-panel", "deadpan", "self-review"];
+  const out: Shape[] = ["hype", "diary", "two-panel", "deadpan", "self-review"];
   if (m?.why || m?.confidencePct !== undefined) out.push("reasoning");
-  if (type === "reply" || mood === "stung" || mood === "restless") out.push("complaint");
+  if (mood === "stung" || mood === "restless") out.push("complaint");
   if (facts.event === "status" || facts.event === "recap") out.push("status ledger");
   return out;
 }

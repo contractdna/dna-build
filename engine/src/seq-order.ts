@@ -1,4 +1,4 @@
-// A Sequencer build order: what the enclave asks the dev team to build, as a signed `build` log record. The workflow
+// A Sequencer build order: what the enclave asks the sequencer to build, as a signed `build` log record. The workflow
 // (sequencer/) checks the record against the enclave's log signer before anything runs: the hash chain step
 // (ehash = sha256(eprev ‖ sha256(body))), the signature over logDigest(ehash, kind, ref), the kind and ref, the expiry
 // and the spec's hash. Dependency-light on purpose (zod, viem, canonical): the workflow imports it from the base branch.
@@ -19,7 +19,7 @@ const R = z.number().int().min(0).max(5);
 const Roles = <T extends z.ZodType>(t: T) => z.object({ lead: t, worker: t, tester: t, fixer: t, review: t }).strict();
 export const DEV_ROLES = ["lead", "worker", "tester", "fixer", "review"] as const;
 export type DevRole = (typeof DEV_ROLES)[number];
-/** What an order builds: a new game (a contract and its page), a change to the site's pages and public docs, or a new fee or
+/** What an order builds: a new game (a contract and its page), new pages of the site (a new route folder), or a new fee or
  *  split module (proposed to the Safe, never switched on by the Sequencer), or a change to the engine (left for an owner
  *  to merge; never merged by the Sequencer). */
 export const KINDS = ["game", "site", "module", "engine"] as const;
@@ -42,7 +42,7 @@ export const Order = z.object({
   spec: z.string().min(20).max(4000),
   specSha256: z.string().regex(/^[0-9a-f]{64}$/),
   rubric: z.object({ value: R, fit: R, clarity: R, originality: R }).strict(),
-  // OpenRouter ids of Claude models only (the dev team runs on the Agent SDK). The SDK has no price for some of them and
+  // OpenRouter ids of Claude models only (the sequencer runs on the Agent SDK). The SDK has no price for some of them and
   // prices those at a guess (Haiku 5.5: about 40× its real rate), so the workflow meters each query itself at
   // models.json prices, and the enclave dispatches no order with a model models.json has no price for
   models: Roles(z.string().max(100).regex(/^anthropic\/claude-[a-z0-9.-]+$/)),

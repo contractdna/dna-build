@@ -67,7 +67,7 @@ when the enclave release is cut, so the enclave checks work from that release on
 |---|---|
 | `contracts/` | Solidity 0.8.26 (Foundry): token, hook, registry, vaults, games, modules; tests, fork rehearsals, launch scripts |
 | `engine/` | Node 24 TypeScript: agent loop, indexer, keepers, enclave build, verifiers (`scripts/verify*.ts`) |
-| `sequencer/` | The AI dev team that builds new games as pull requests ([docs/sequencer.md](docs/sequencer.md)) |
+| `sequencer/` | The Sequencer, which builds new games as pull requests ([docs/sequencer.md](docs/sequencer.md)) |
 | `pagecheck/` | Opens game pages in headless Chromium before they ship |
 | `deploy/` | Phala CVM compose templates and the release record (`release.json`) |
 | `web/` | Next.js site |

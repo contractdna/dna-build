@@ -18,3 +18,9 @@ test("no route uses generateStaticParams (it 500s in LIVE on the production serv
 test("/journal/[day] renders per request", () => {
   assert.match(readFileSync(join(APP, "journal/[day]/page.tsx"), "utf8"), /export const dynamic = "force-dynamic"/);
 });
+
+test("/api/health names the deployed commit in every mode (the engine calls a site change live only once it is served)", () => {
+  const route = readFileSync(join(APP, "api/health/route.ts"), "utf8");
+  assert.match(route, /Response\.json\(\{ \.\.\.body, commit: process\.env\.RAILWAY_GIT_COMMIT_SHA \?\? null \}/);
+  assert.match(route, /"Cache-Control": "no-store"/);
+});

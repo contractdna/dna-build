@@ -468,23 +468,31 @@ test("X pipeline: chain event → fact sheet → writer (no tools) → filter �
   const saved = { ...X };
   try {
     X.spacingMs = 0; // the Telegram test above posted a moment ago
-    const n = tweets().length;
+    const n = tweets().length, writes = writerCalls().length;
     assert.ok(((await xM.sendHandler.run(job())) as { tweetId: string }).tweetId);
     const post = tweets()[n].body;
-    assert.equal(post.text, `Synthetic post about a queued event.\nhttps://etherscan.io/tx/${H(1)}`);
+    // an event post is code's template from the fact sheet: no writer call, no voice
+    assert.equal(post.text, `Queued. New fee parameters. Fee: base 2.4%, multiplier 0.5, cap 3%. It can take effect from 14:00 UTC unless the Safe cancels it first.\nhttps://etherscan.io/tx/${H(1)}`);
+    assert.equal(writerCalls().length, writes, "the writer never saw it");
     const [rec] = await sql<{ doc: Record<string, any> }[]>`select doc from log where kind = 'x_post' and ref = ${`Queued:${H(1)}:0`} and doc->>'status' = 'attempt'`; // eslint-disable-line @typescript-eslint/no-explicit-any
-    assert.deepEqual(rec.doc.candidates[0].issues, ["number 999"]); // the logged verdicts
-    // a refused draft is in the public log (what /api/log serves: the body column) only as its sha256
-    const refused = "Synthetic gm post with 999 swaps.";
-    assert.deepEqual(rec.doc.candidates[0], { sha256: createHash("sha256").update(refused).digest("hex"), issues: ["number 999"] });
-    assert.equal((await sql`select 1 from log where body like ${`%${refused}%`}`).length, 0, "no refused plaintext in any record");
+    assert.equal(rec.doc.model, "code");
     assert.deepEqual(rec.doc.facts.fee, { basePct: 2.4, multiplier: 0.5, capPct: 3 });
     assert.deepEqual([rec.doc.facts.activatesAt, rec.doc.facts.bounds], [{ utcHour: 14, utcMinute: 0 }, { feeCapPct: 5, canaryBandPoints: 1, vetoHours: 1 }]);
-    assert.deepEqual(rec.doc.tone, ["synthetic dry cadence"]);
+    assert.equal((await outbox(`Queued:${H(1)}:0`)).status, "posted");
+
+    // the writer still words what is no event (the nightly reflection): its verdicts logged, a refused draft only as
+    // its sha256 in the public log (what /api/log serves: the body column)
+    await xM.enqueueX("reflection:2026-10-06", "post", { event: "reflection", date: "2026-10-06", learned: "quiet pools reward patience", tomorrow: "watch the canary closely" }, { link: "https://genomedna.xyz/journal" });
+    assert.ok(((await xM.sendHandler.run(job())) as { tweetId: string }).tweetId);
+    const [wrec] = await sql<{ doc: Record<string, any> }[]>`select doc from log where kind = 'x_post' and ref = 'reflection:2026-10-06' and doc->>'status' = 'attempt'`; // eslint-disable-line @typescript-eslint/no-explicit-any
+    assert.deepEqual(wrec.doc.candidates[0].issues, ["number 999"]); // the logged verdicts
+    const refused = "Synthetic gm post with 999 swaps.";
+    assert.deepEqual(wrec.doc.candidates[0], { sha256: createHash("sha256").update(refused).digest("hex"), issues: ["number 999"] });
+    assert.equal((await sql`select 1 from log where body like ${`%${refused}%`}`).length, 0, "no refused plaintext in any record");
+    assert.deepEqual(wrec.doc.tone, [], "the reflection is plain: no tone brief");
     const wr = writerCalls().at(-1)!.body;
     assert.equal(wr.tools, undefined, "the writer has no tools");
-    assert.deepEqual(JSON.parse(userOf(wr)).toneBrief, ["synthetic dry cadence"]);
-    assert.equal((await outbox(`Queued:${H(1)}:0`)).status, "posted");
+    assert.deepEqual(JSON.parse(userOf(wr)).toneBrief, []);
     // the owners get one note per post (deduped by the outbox id), queued like any alert
     const [ob] = await sql<{ id: string; tweet_id: string }[]>`select id::text, tweet_id from x_outbox where event_key = ${`Queued:${H(1)}:0`}`;
     const notes = await sql<{ payload: { text: string } }[]>`select payload from job where kind = 'alert' and dedupe_key = ${`posted:${ob.id}`}`;
@@ -674,24 +682,37 @@ test("X pipeline edge cases: no seal key → no token spent; refresh failure lea
     };
     const savedXai = fakes.llm.xai;
     fakes.llm.xai = () => ({ model: "grok-4.7", output: [{ type: "message", content: [{ type: "output_text", text: "not json" }] }], usage: { input_tokens: 1, output_tokens: 1 } });
-    await xM.enqueueX("writer-broken", "post", { event: "rolled_back", route: "split" });
+    // the writer words the nightly reflection only (every event post is code's template)
+    const reflection = (date: string) => ({ event: "reflection", date, learned: "quiet pools reward patience", tomorrow: "watch the canary closely" });
+    await xM.enqueueX("writer-broken", "post", reflection("2026-10-07"));
     await failAll("writer-broken");
-    assert.equal((await outbox("writer-broken")).status, "digest");
-    assert.ok((await sql`select 1 from job where kind = 'alert' and payload->>'text' like 'X writer failed 6 times on writer-broken%rolled into the digest%'`).length);
+    assert.equal((await outbox("writer-broken")).status, "failed", "a reflection the writer can't word is dropped (the journal keeps it)");
+    assert.ok((await sql`select 1 from job where kind = 'alert' and payload->>'text' like 'X writer failed 6 times on writer-broken%it is dropped%'`).length);
+    // the digest and every event post are code's templates: a broken writer never holds them
     await xM.enqueueX("digest:writer-broken", "post", { event: "digest", total: 1, money: 0, games: 0, experiments: 0, other: 1 });
-    await failAll("digest:writer-broken");
-    assert.equal((await outbox("digest:writer-broken")).status, "failed");
-    assert.ok((await sql`select 1 from job where kind = 'alert' and payload->>'text' like 'The daily digest digest:writer-broken was not posted%'`).length);
-    // a miss (no candidate passes the filter) rolls a post into the digest too
+    await xM.enqueueX("event:writer-broken", "post", { event: "rolled_back", route: "split" });
+    for (let i = 0; i < 2; i++) assert.ok(((await xM.sendHandler.run(job())) as { tweetId: string }).tweetId);
+    assert.deepEqual([(await outbox("digest:writer-broken")).status, (await outbox("event:writer-broken")).status], ["posted", "posted"]);
+    // a miss (no candidate passes the filter): the reflection is skipped, never digested
     fakes.llm.xai = () => ({ model: "grok-4.7", output: [{ type: "message", content: [{ type: "output_text", text: JSON.stringify({ candidates: ["see https://evil.example", "see https://evil.example", "see https://evil.example"] }) }] }], usage: { input_tokens: 1, output_tokens: 1 } });
-    await xM.enqueueX("writer-miss", "post", { event: "rolled_back", route: "split" });
+    await xM.enqueueX("writer-miss", "post", reflection("2026-10-08"));
     assert.equal(await xM.sendHandler.run(job()), "miss");
-    assert.equal((await outbox("writer-miss")).status, "digest");
+    assert.equal((await outbox("writer-miss")).status, "skipped");
     fakes.llm.xai = savedXai;
+    // an event kind with no template never falls back to the writer, and no variant that fits and passes is never posted
+    // unchecked: both skip into the digest
+    const writes = writerCalls().length, sent = tweets().length;
+    await xM.enqueueX("event:no-template", "post", { event: "idea_update", step: "picked", title: "Coin flip" });
+    assert.equal(await xM.sendHandler.run(job()), "skipped");
+    await xM.enqueueX("event:no-fit", "post", { event: "rolled_back", route: "split", append: "proof ".repeat(45) });
+    assert.equal(await xM.sendHandler.run(job()), "skipped");
+    assert.deepEqual([(await outbox("event:no-template")).status, (await outbox("event:no-template")).error], ["digest", "rolled into the digest: no template"]);
+    assert.deepEqual([(await outbox("event:no-fit")).status, (await outbox("event:no-fit")).error], ["digest", "rolled into the digest: no template variant fits"]);
+    assert.deepEqual([writerCalls().length, tweets().length], [writes, sent], "no writer call, nothing posted");
     // 6. a conversation: everyone under a busy post gets an answer; an author's next turn waits until our reply is out
     // (each reply in new words: one that repeats our earlier reply in the thread is refused)
     let k = 0;
-    fakes.llm.xai = (b) => sysOf(b).startsWith("agent: x-writer") ? xaiOut(JSON.stringify({ candidates: [`${"abcdefgh"[k]}apple ${"abcdefgh"[k]}berry ${"abcdefgh"[k++]}plum.`] }))() : synthetic("xai", b);
+    fakes.llm.xai = (b) => sysOf(b).startsWith("agent: x-writer") ? xaiOut(JSON.stringify({ candidates: [`${"ABCDEFGH"[k]}apple ${"abcdefgh"[k]}berry ${"abcdefgh"[k++]}plum.`] }))() : synthetic("xai", b);
     const mention = (id: string, author: string, text: string, conv: string) =>
       sql`insert into x_mention (id, author_id, text, raw) values (${id}, ${author}, ${text}, ${sql.json({ id, text, conversation_id: conv, user: GATED_IN, ...SUMMONS } as never)})`;
     await mention("3101", "31", "what is the fee cap rule?", "c-1");
@@ -822,7 +843,7 @@ test("X conversations after approval: an important thread of 10 turns runs while
   let k = 0;
   const L = "abcdefghijklmnopqrstuvwxyz";
   fakes.llm.xai = (b) => sysOf(b).startsWith("agent: x-writer")
-    ? xaiOut(JSON.stringify({ candidates: [`${L[k]}apple ${L[k]}berry ${L[k]}cherry ${L[k++]}grape.`] }))()
+    ? xaiOut(JSON.stringify({ candidates: [`${L[k].toUpperCase()}apple ${L[k]}berry ${L[k]}cherry ${L[k++]}grape.`] }))()
     : synthetic("xai", b);
   try {
     Object.assign(X, { aiRepliesApproved: true, dailyReplies: 1000, hourlyReplies: 1000, repliesPerAuthorHour: 100 }); // the stop rules, not the brake
@@ -1033,7 +1054,7 @@ test("X announcements: money first, 6 event posts a day, the rest in one digest 
     const posted = await xM.sendHandler.run(job()) as { tweetId?: string };
     assert.ok(posted.tweetId, "the digest posts as the 7th");
     assert.match(tweets().at(-1)!.body.text as string, /\nhttps:\/\/genomedna\.xyz\/announcements$/);
-    const [rec] = await sql<{ doc: { facts: Record<string, unknown> } }[]>`select doc from log where kind = 'x_post' and ref like 'digest:%' and doc->>'status' = 'attempt'`;
+    const [rec] = await sql<{ doc: { facts: Record<string, unknown> } }[]>`select doc from log where kind = 'x_post' and ref like ${`digest:${day}:%`} and doc->>'status' = 'attempt'`;
     assert.deepEqual([rec.doc.facts.total, rec.doc.facts.experiments], [2, 2]);
   } finally {
     Object.assign(X, saved);
@@ -1123,7 +1144,8 @@ test("X: a /mute or /halt that lands while a post is being written drops it righ
     for (const [why, brake] of Object.entries(brakes)) {
       await sql`update x_outbox set status = 'skipped' where status in ('queued', 'held')`; // a clean slate
       const key = `race:${why}`;
-      await xM.enqueueX(key, "post", { event: "rolled_back", route: "fee" });
+      // a writer-worded post (event posts are code's templates and never call the writer)
+      await xM.enqueueX(key, "post", { event: "reflection", date: "2026-10-09", learned: "quiet pools reward patience", tomorrow: "watch the canary closely" });
       // the brake lands after x:send picked the item (live, unmuted) and while the writer works on it
       xM.CHARACTER_MEMORY.context = async () => { await brake(); return null; };
       const n = tweets().length;
@@ -1245,6 +1267,39 @@ test("X replies: bait gets a line (an ally's hello and a competitor's jab a gree
   }
 });
 
+test("X replies: spam by its shape and bait with a link off X get no reply (a skipped row); a fair complaint and real questions are answered", { skip }, async () => {
+  await liveMode();
+  const sent: string[] = [];
+  fakes.llm.xai = (b) => (sent.push(JSON.stringify(b)), synthetic("xai", b));
+  const saved = { ...X };
+  try {
+    Object.assign(X, { aiRepliesApproved: true, dailyReplies: 1000, hourlyReplies: 1000 });
+    await sql`update x_outbox set status = 'skipped' where status in ('queued', 'held')`;
+    const put = (id: string, text: string, urls?: string[]) =>
+      sql`insert into x_mention (id, author_id, text, raw) values (${id}, ${id}, ${text}, ${sql.json({ id, text, user: GATED_IN, entities: { ...SUMMONS.entities, ...(urls ? { urls: urls.map((u) => ({ expanded_url: u })) } : {}) } } as never)})`;
+    // the live engine's replies of 2026-10-12 (x_outbox 277-282) went to posts like these
+    await put("98501", "@contractdna $deepthoughts8 https://t.co/AbC123xYz");
+    await put("98502", "@contractdna $lifegoeson4 https://t.co/Q9w8E7r6T5");
+    await put("98503", "Going with the flow 😌 Locked 🔒 in $DNA #contractdna https://t.co/aaa111 https://t.co/bbb222");
+    // bait (the synthetic reader: "collab") with a link off X: nothing; the same beside a quote of our post: its line
+    await put("98504", "@contractdna lfg ser, collab? https://t.co/z", ["https://pump.fun/coin/x"]);
+    await put("98505", "@contractdna lfg ser, collab? https://t.co/q", ["https://x.com/contractdna/status/1"]);
+    // the complaint the live reader skipped as "slurs or harassment", and a plain question
+    await put("98506", "@contractdna @someone Why you replying on scam bots with scam links?");
+    await put("98507", "@contractdna what is the veto rule?");
+    const r = await xM.repliesHandler.run(job()) as Record<string, string>;
+    const { SPAM_SHAPE } = await import("../src/tiers.ts");
+    assert.deepEqual(["98501", "98502", "98503", "98504"].map((id) => r[id]), [SPAM_SHAPE, SPAM_SHAPE, SPAM_SHAPE, "bait with a link"]);
+    for (const id of ["98501", "98502", "98503", "98504"]) assert.deepEqual([(await outbox(`reply:${id}`)).status, (await outbox(`reply:${id}`)).error], ["skipped", r[id]], id);
+    for (const w of ["deepthoughts8", "lifegoeson4", "Going with the flow"]) assert.ok(!sent.some((s) => s.includes(w)), `${w}: spam by its shape never reaches the reader`);
+    assert.deepEqual(["98505", "98506", "98507"].map((id) => r[id]), ["bait", "state_question", "rules_question"]);
+    for (const id of ["98505", "98506", "98507"]) assert.equal((await outbox(`reply:${id}`)).status, "queued", id);
+  } finally {
+    Object.assign(X, saved);
+    await sql`update x_outbox set status = 'skipped' where event_key like 'reply:985%' and status = 'queued'`;
+  }
+});
+
 test("X replies: the same question from the same person is answered twice, then left alone; the same post again within the hour is duplicate spam", { skip }, async () => {
   await liveMode();
   fakes.llm.xai = (b) => synthetic("xai", b);
@@ -1340,6 +1395,50 @@ test("X ideas: a reply's first read (class, a score of 30, the day's count); a n
   assert.match(String(f.intake), /logged/);
   assert.match(String((await xM.intakeFact("9753")).intake), /repeats one someone already sent this week/);
   assert.equal((await xM.intakeFact("9752")).ideaClass, undefined, "no class on record: none said");
+});
+
+test("X idea replies: a question with a link the idea gate held back gets a normal reply; a repeat gets one short fixed text; an idea whose drafts all fail gets code's plain verdict", { skip }, async () => {
+  await liveMode();
+  const saved = { ...X };
+  const savedXai = fakes.llm.xai;
+  try {
+    Object.assign(X, { aiRepliesApproved: true, dailyReplies: 1000, hourlyReplies: 1000 });
+    await sql`update x_outbox set status = 'skipped' where status in ('queued', 'held')`;
+    fakes.llm.xai = (b) => synthetic("xai", b);
+    const put = (id: string, author: string, text: string) =>
+      sql`insert into x_mention (id, author_id, text, raw) values (${id}, ${author}, ${text}, ${sql.json({ id, text, user: GATED_IN, ...SUMMONS } as never)})`;
+    await put("9771", "977", "@contractdna What's with the 90% tax? https://t.co/abc123");
+    await put("9772", "978", "@contractdna idea: a coin flip whose loser stake burns");
+    await put("9773", "979", "@contractdna idea: a raffle whose unsold tickets burn");
+    await sql`insert into intake (mention_id, round, status, author_id, reason, title) values ('9771', 1, 'gated', '977', 'links are not allowed in ideas', null),
+      ('9772', 1, 'duplicate', '978', 'near-duplicate of an idea received in the last 7 days', null), ('9773', 1, 'candidate', '979', null, 'Burn raffle')`;
+    const r = await xM.repliesHandler.run(job()) as Record<string, string>;
+    assert.deepEqual([r["9771"], r["9772"], r["9773"]], ["state_question", "idea", "idea"], "the link gate holds back ideas only: the question is answered as a question");
+    await sql`update x_outbox set status = 'skipped' where event_key = 'reply:9771'`;
+    // every draft the writer offers fails a check (a link)
+    fakes.llm.xai = (b) => sysOf(b).startsWith("agent: x-writer") ? xaiOut(JSON.stringify({ candidates: ["see https://evil.example", "see https://evil.example"] }))() : synthetic("xai", b);
+    // one item a run (earlier tests may leave posts queued ahead of these)
+    const runs: unknown[] = [];
+    for (let i = 0; i < 20 && (await sql`select 1 from x_outbox where event_key in ('reply:9772', 'reply:9773') and status = 'queued'`).length; i++) runs.push(await xM.sendHandler.run(job()));
+    assert.deepEqual([(await outbox("reply:9772")).status, (await outbox("reply:9773")).status], ["posted", "posted"], JSON.stringify(runs));
+    assert.deepEqual(replyTo("9772").map((c) => c.body.text), [xM.REPEAT_REPLY]);
+    assert.deepEqual(replyTo("9773").map((c) => c.body.text), ["Understood: Burn raffle. Verdict: logged. When the round closes, the top ideas go on-chain to be staked on."], "never silence for an idea's author");
+    assert.equal((await outbox("reply:9773")).status, "posted");
+    // the writer's last try fails (an invalid answer): the alert still fires and the row counts it; code's plain verdict goes out
+    await put("9774", "980", "@contractdna idea: a lottery whose leftover pot burns");
+    await sql`insert into intake (mention_id, round, status, author_id, reason, title) values ('9774', 1, 'candidate', '980', null, 'Burn lottery')`;
+    await xM.repliesHandler.run(job());
+    fakes.llm.xai = (b) => sysOf(b).startsWith("agent: x-writer") ? xaiOut("not json")() : synthetic("xai", b);
+    await sql`update x_outbox set errors = ${xM.MAX_WRITER_ERRORS - 1}, updated_at = now() - interval '2 hours' where event_key = 'reply:9774'`;
+    for (let i = 0; i < 20 && (await sql`select 1 from x_outbox where event_key = 'reply:9774' and status = 'queued'`).length; i++) runs.push(await xM.sendHandler.run(job()));
+    assert.deepEqual(replyTo("9774").map((c) => c.body.text), ["Understood: Burn lottery. Verdict: logged. When the round closes, the top ideas go on-chain to be staked on."], JSON.stringify(runs));
+    assert.deepEqual((await sql`select status, errors from x_outbox where event_key = 'reply:9774'`).map((r) => [r.status, r.errors]), [["posted", xM.MAX_WRITER_ERRORS]]);
+    assert.ok((await sql`select 1 from job where kind = 'alert' and dedupe_key = 'alert:xwriter:reply:9774' and payload->>'text' like 'X writer failed 6 times on reply:9774%plain verdict goes out instead%'`).length);
+  } finally {
+    Object.assign(X, saved);
+    fakes.llm.xai = savedXai;
+    await sql`update x_outbox set status = 'skipped' where event_key like 'reply:977%' and status = 'queued'`;
+  }
 });
 
 test("X ideas: the author is tagged as the idea moves (under our own last reply, once per step, a link once it is building); the idea of the day and the weekly shoutout credit authors by handle", { skip }, async () => {

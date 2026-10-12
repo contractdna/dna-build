@@ -10,9 +10,9 @@
 //    cancelled, the Safe's cancels of game steps, a pause: one plain line of what changes, code's words and the chain's
 //    numbers.
 //  - The day's changelog (after each UTC day, src/sequencer.ts): every real change of the day in one post (code updates,
-//    the Safe's executed changes, draw intervals, site changes, the dev team's ships); a day with none posts nothing.
-// Each is one outbox row (src/x.ts publishEvent): the site at once, X by priority through the writer, the judge and the
-// filters, mirrored to Telegram when it posts. A queued row that a later one supersedes (executed, cancelled) is never
+//    the Safe's executed changes, draw intervals, site changes, the sequencer's ships); a day with none posts nothing.
+// Each is one outbox row (src/x.ts publishEvent): the site at once, X by priority as code's template (src/event-posts.ts,
+// no model), mirrored to Telegram when it posts. A queued row that a later one supersedes (executed, cancelled) is never
 // posted: the later post says it.
 import { decodeAbiParameters, type Hex, type Log, parseAbi, parseEventLogs } from "viem";
 import { ANNOUNCEMENTS_URL } from "./announce.ts";
@@ -113,10 +113,10 @@ export function registryChange(op: number, data: Hex, feePlates: Set<string> = p
       }
       return { change: "new settings for a module" };
     }
-    case "SetAgent": return { change: "handing my agent role to a new key" };
-    case "SetAnchorKey": return { change: "a new anchor key, the key that pins my log on-chain" };
-    case "SetLevel": return { change: "a new autonomy level for me", level: Number(args[0]) };
-    case "UnpauseAgent": return { change: "unpausing me" };
+    case "SetAgent": return { change: "handing the agent role to a new key" };
+    case "SetAnchorKey": return { change: "a new anchor key, the key that pins the engine's log on-chain" };
+    case "SetLevel": return { change: "a new autonomy level for the engine", level: Number(args[0]) };
+    case "UnpauseAgent": return { change: "unpausing the engine" };
     case "ApproveCodehash": return { change: `approving new ${kind(args[1])} module code by its hash` };
     case "RevokeCodehash": return { change: "revoking approved module code" };
     default: return { change: "a registry change" };
@@ -173,7 +173,7 @@ export async function onOwnerChange(e: ChainEv): Promise<boolean> {
     case "AgentPaused":
       // an unpause is the UnpauseAgent op, said when it was queued
       if (!a.paused) return true;
-      ev = { event: "change_done", ref: `pause:${e.transactionHash}`, change: "my agent key is paused: no new changes from me until the Safe unpauses me" };
+      ev = { event: "change_done", ref: `pause:${e.transactionHash}`, change: "the engine's agent key is paused: no new changes from it until the Safe unpauses it" };
       break;
     default:
       if (!GAME_CANCELS[e.eventName]) return false;
@@ -253,13 +253,13 @@ const STAGE = {
 };
 const at = (s: number) => { const t = new Date(s * 1000); return { utcHour: t.getUTCHours(), utcMinute: t.getUTCMinutes() }; };
 const hhmm = (s: number) => new Date(s * 1000).toISOString().slice(11, 16);
-const NO_NOTES = "no release notes for it, so i won't guess what it does";
+const NO_NOTES = "It has no release notes to show, so what it changes is not described here.";
 /** Code's own line for an update with no notes (the writer never gets to describe it). */
 export function fixedLine(event: string, eta: number | null): string {
-  if (event === "update_running") return "it's in: i now run the new version. no release notes for it, so i won't guess what changed.";
-  if (event === "update_allowed") return `update allowed: the safe can no longer stop it. ${NO_NOTES}. i switch to it on my next restart.`;
-  return eta ? `update queued for me. ${NO_NOTES}. can land from ${hhmm(eta)} UTC, the safe can cancel until then.`
-    : `update queued for me, its public hour is over. ${NO_NOTES}.`;
+  if (event === "update_running") return `Engine update is in: the engine now runs the new version. ${NO_NOTES}`;
+  if (event === "update_allowed") return `Engine update allowed: the Safe can no longer stop it, and the engine switches to it on its next restart. ${NO_NOTES}`;
+  return eta ? `Engine update queued. ${NO_NOTES} It can land from ${hhmm(eta)} UTC; the Safe can cancel it until then.`
+    : `Engine update queued; its public hour is over. ${NO_NOTES}`;
 }
 
 /** Pure: a code update's facts at send time (`now` in seconds). `rec`: its release record (null: none found). */
@@ -270,7 +270,7 @@ export function updateFacts(ev: Ev, rec: Release | null, now: number): Ev {
   const figures = figuresOf(notes);
   const base: Ev = { event: ev.event, hash: ev.hash, ...(open ? { activatesAt: at(eta), minutesLeft: Math.ceil((eta - now) / 60) } : {}), ...(notes.length ? { notes } : {}), ...(figures.length ? { figures } : {}) };
   if (ev.event === "update_cancelled") return { ...base, stage: STAGE.update_cancelled };
-  if (!notes.length) return { ...base, fixed: fixedLine(String(ev.event), open ? eta : null), ...(rec?.commit ? { append: `the diff: ${RELEASES.repo}/commit/${rec.commit}` } : {}) };
+  if (!notes.length) return { ...base, fixed: fixedLine(String(ev.event), open ? eta : null), ...(rec?.commit ? { append: `The diff: ${RELEASES.repo}/commit/${rec.commit}` } : {}) };
   return { ...base, stage: ev.event === "update_queued" ? (open ? STAGE.update_queued : STAGE.update_due) : STAGE[ev.event as "update_allowed" | "update_running"] };
 }
 
@@ -323,8 +323,8 @@ const titled = (lead: string, t: unknown) => { const s = safeTitle(t, 80); retur
 /** What a site record of the day says changed (null: not a change). */
 const notesTail = (f: Ev) => (Array.isArray(f.notes) && f.notes.length ? `: ${f.notes.join("; ")}` : "");
 const ANNOUNCED: Record<string, (f: Ev) => string | null> = {
-  update_running: (f) => `i now run a new version of my code${notesTail(f)}`,
-  update_allowed: (f) => `an update to my code was allowed; i switch to it on my next restart${notesTail(f)}`,
+  update_running: (f) => `the engine runs a new version${notesTail(f)}`,
+  update_allowed: (f) => `an engine update was allowed; the engine switches to it on its next restart${notesTail(f)}`,
   change_done: (f) => (typeof f.change === "string" ? f.change : null),
   site_changed: (f) => titled("the website changed", f.title),
   seq_shipped: (f) => titled("a new game shipped", f.title),
@@ -334,7 +334,7 @@ const ANNOUNCED: Record<string, (f: Ev) => string | null> = {
 export function changeLine(c: Ev & { change: string }): string {
   const s = c.split as Record<string, number> | undefined;
   if (s) return `the fee split changed: buyback ${s.buybackPct}%, liquidity ${s.liquidityPct}%, treasury ${s.treasuryPct}%, games ${s.gamesPct}%`;
-  if (c.level !== undefined) return `my autonomy level is now ${c.level}`;
+  if (c.level !== undefined) return `the engine's autonomy level is now ${c.level}`;
   return `the Safe's change went through: ${c.change}`;
 }
 /** Every real change in [from, to), oldest first, each said once: the day's site records (code updates, site changes,
@@ -374,6 +374,6 @@ export async function changelog(day: string, live: boolean): Promise<string> {
   if (!changes.length) return "no post: nothing changed";
   if (!live) return "no post: the engine is not live";
   const figures = figuresOf(changes);
-  await publishEvent(`changes:${day}`, { event: "day_changes", day, changes, ...(figures.length ? { figures } : {}), stage: CHANGELOG_STAGE }, ANNOUNCEMENTS_URL);
+  await publishEvent(`changes:${day}`, { event: "day_changes", day, date: day, changes, ...(figures.length ? { figures } : {}), stage: CHANGELOG_STAGE }, ANNOUNCEMENTS_URL);
   return `changelog for ${day}: ${changes.length} changes`;
 }

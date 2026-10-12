@@ -56,6 +56,8 @@ const st = {
   kind: "game" as "game" | "site" | "module", siteCalls: [] as { files: Record<string, string>; pages: string[] }[], moduleKit: true,
   risks: [] as string[], improve: null as Record<string, unknown> | null, inputs: {} as Record<string, unknown>,
   amend: true, stopped: null as string | null,
+  // the website (SEQ_DEPS.siteGet): the commit its health names (default: the release branch's head) and each page's status
+  siteCommit: null as string | null, pageStatus: 200, siteCalls2: [] as string[],
 };
 async function brain(kind: string, input: unknown, ref: string) {
   st.inputs[kind] = input;
@@ -105,6 +107,10 @@ before(async () => {
     pageGate: async (b: { slug: string; files: Record<string, string>; salt: string; initCode: string }) => { st.pageCalls.push(b); return pages.pageGateResult(st.page); },
     sitePageGate: async (b: { files: Record<string, string>; pages: string[] }) => { st.siteCalls.push(b); return pages.pageGateResult(st.page); },
     moduleKit: async () => st.moduleKit,
+    siteGet: async (path: string) => {
+      st.siteCalls2.push(path);
+      return path === "/api/health" ? { status: 200, body: { live: true, commit: st.siteCommit ?? gh.refs.get("release") ?? null } } : { status: st.pageStatus };
+    },
     openRisks: async () => st.risks,
     deepCheck: async () => { st.deepCalls++; return st.deep; },
     fund: async () => ({
@@ -134,7 +140,8 @@ beforeEach(async () => {
   s.SEQ.siteLive = true; // the site paths below; the test "site: while the website does not deploy release" turns it off
   await sql`delete from idea_queue`; // an idea a test sent back to the queue would be picked first (and reuse its build id)
   // noon today: an hour's wait never crosses midnight (the midnight test sets its own clock)
-  Object.assign(st, { now: Date.parse(`${new Date().toISOString().slice(0, 10)}T12:00:00Z`), alerts: [], verdicts: [], build: "build", live: new Set(), code: new Map(), deploys: 0, vetoed: new Set(), fundRoom: true, gateCalls: [], gatesOk: true, lag: 0, deployFail: null, players: { players48h: 0, sinceFund: 0 }, fundCalls: [], fundSt: null, approved: new Set(), landed: true, finalLag: 0, pageCalls: [], page: PAGE_OK, deep: PAGE_OK, deepCalls: 0, kind: "game", siteCalls: [], moduleKit: true, risks: [], improve: null, inputs: {}, amend: true });
+  Object.assign(st, { now: Date.parse(`${new Date().toISOString().slice(0, 10)}T12:00:00Z`), alerts: [], verdicts: [], build: "build", live: new Set(), code: new Map(), deploys: 0, vetoed: new Set(), fundRoom: true, gateCalls: [], gatesOk: true, lag: 0, deployFail: null, players: { players48h: 0, sinceFund: 0 }, fundCalls: [], fundSt: null, approved: new Set(), landed: true, finalLag: 0, pageCalls: [], page: PAGE_OK, deep: PAGE_OK, deepCalls: 0, kind: "game", siteCalls: [], moduleKit: true, risks: [], improve: null, inputs: {}, amend: true, siteCommit: null, pageStatus: 200, siteCalls2: [] });
+  s._test.requeueAgain();
   base = gh.commitFiles(null, { "README.md": "dna\n", "contracts/src/games/GameKit.sol": "kit\n" });
   gh.refs.set("main", base);
   gh.refs.set("release", base);
@@ -147,7 +154,7 @@ beforeEach(async () => {
 
 // ---------------------------------------------------------------- helpers
 const active = () => s.activeBuild();
-/** The dev team's run for the current round: its report, the bot's one commit and the PR (what publish does). */
+/** The sequencer's run for the current round: its report, the bot's one commit and the PR (what publish does). */
 async function devTeam(o: { amendment?: { reason: string; change: string }; cost?: number; attempt?: number; runs?: number; files?: Record<string, string>; noPr?: boolean; build?: string } = {}) {
   const r = o.build ? (await s.activeBuilds()).find((b) => b.id === o.build)! : (await active())!;
   const oid = r.data.orders.find((x) => x.round === r.round)!.id;
@@ -1100,7 +1107,7 @@ test("site: the brain picks a site change → a site order → the real gates an
   assert.match(await step(), /^dispatched: /);
   const v = await verifyOrder(gh.dispatches.at(-1).client_payload, signer, st.now);
   assert.equal(v.ok && v.order.kind, "site", "the workflow's own check accepts a site order");
-  const files = { "web/app/faq/page.tsx": FAQ, "docs/FAQ.md": "# Questions\n" };
+  const files = { "web/app/faq/page.tsx": FAQ, "web/app/faq/faq.module.css": ".q { color: inherit; }\n" };
   await devTeam({ files });
   assert.match(await step(), /gated: .* all green/);
   assert.equal((st.gateCalls[0] as { kind: string }).kind, "site");
@@ -1114,16 +1121,20 @@ test("site: the brain picks a site change → a site order → the real gates an
   assert.match(await step(), /ship record \d+/);
   const [ship] = await sql<{ doc: { target: string; paths: string[]; predicted?: string; treeHashes: Record<string, string> } }[]>`select doc from log where kind = 'ship' order by seq desc limit 1`;
   assert.equal(ship.doc.target, "site");
-  assert.deepEqual(ship.doc.paths, ["docs/FAQ.md", "web/app/faq/page.tsx"]);
-  assert.deepEqual(Object.keys(ship.doc.treeHashes), ["docs/FAQ.md", "web/app/faq/page.tsx"]);
+  assert.deepEqual(ship.doc.paths, ["web/app/faq/faq.module.css", "web/app/faq/page.tsx"]);
+  assert.deepEqual(Object.keys(ship.doc.treeHashes).sort(), ["web/app/faq/faq.module.css", "web/app/faq/page.tsx"]);
   assert.equal(ship.doc.predicted, undefined);
   assert.equal(await step(), "waiting: the public hour");
   assert.equal(gh.refs.get("main"), base, "nothing merged during the hour");
   assert.equal(st.deepCalls, 1, "the public hour's page check ran first");
   st.now += HOUR + 1000;
   assert.match(await step(), /^shipped: .* \(site, released at [0-9a-f]{40}\)$/);
-  const r = (await sql<{ status: string; data: { mergeSha: string; game?: unknown; fund?: unknown } }[]>`select status, data from seq_build`)[0];
+  const r = (await sql<{ status: string; data: { mergeSha: string; game?: unknown; fund?: unknown; served?: string } }[]>`select status, data from seq_build`)[0];
   assert.equal(r.status, "shipped");
+  // live means served: the site's health named the merge, and the new page answered 200 (past any cache)
+  assert.deepEqual(st.siteCalls2, ["/api/health", `/faq?served=${r.data.mergeSha.slice(0, 12)}`]);
+  assert.ok(r.data.served);
+  assert.deepEqual(await s.ideaShip(r0.data.idea), { target: "site", live: true });
   assert.equal(gh.refs.get("main"), r.data.mergeSha);
   assert.equal(gh.refs.get("release"), r.data.mergeSha, "released after the public hour");
   assert.deepEqual([st.deploys, st.fundCalls.length, r.data.game, r.data.fund], [0, 0, undefined, undefined], "nothing to deploy or fund");
@@ -1135,6 +1146,115 @@ test("site: the brain picks a site change → a site order → the real gates an
   assert.deepEqual((await spend()).map((x) => x.cost_usd), [48, 3.5, -48]);
 }));
 
+/** A site build up to the end of its public hour (its next step merges and releases it). */
+async function siteBuildToHour() {
+  st.kind = "site";
+  await step(); await step();
+  const r0 = (await active())!;
+  await devTeam({ files: { "web/app/faq/page.tsx": FAQ } });
+  assert.match(await step(), /gated: .* all green/);
+  assert.match(await step(), /ship decided/);
+  assert.match(await step(), /ship record \d+/);
+  assert.equal(await step(), "waiting: the public hour");
+  st.now += HOUR + 1000;
+  return r0;
+}
+const said = async (id: string) => (await sql<{ t: string }[]>`select doc->>'type' as t from log where kind = 'announce' and ref like ${`seq:${id}:%`}`).map((x) => x.t);
+const buildRow = async (id: string) => (await sql<{ status: string; data: { mergeSha: string; served?: string } }[]>`select status, data from seq_build where id = ${id}`)[0];
+
+test("site served: until the site's health names the merge, the release waits (deferred, not announced, not told live); a later commit on top of it counts", { skip }, () => realGates(async () => {
+  st.siteCommit = base; // the site still runs the commit from before the merge
+  const r0 = await siteBuildToHour();
+  await assert.rejects(step(), isDefer);
+  const r = await buildRow(r0.id);
+  assert.equal(r.status, "shipping", "on its way until served");
+  assert.equal(gh.refs.get("release"), r.data.mergeSha, "released on the branch");
+  assert.ok(!(await said(r0.id)).includes("seq_released"));
+  assert.deepEqual(await s.ideaShip(r0.data.idea), { target: "site", live: false });
+  assert.deepEqual(st.siteCalls2, ["/api/health"], "no page is opened before the deploy carries the change");
+  // a vetoed ship record once the release branch holds the change takes nothing back: it still only waits for the
+  // site, and the owners are told to revert it on main
+  st.vetoed.add(`ship:${r0.id}`);
+  st.now += 60_000;
+  await assert.rejects(step(), isDefer);
+  assert.ok(st.alerts.some((a) => a.includes(`(${r0.id}) was vetoed after its release (${r.data.mergeSha}): revert it on main`)));
+  assert.equal((await buildRow(r0.id)).status, "shipping", "not stopped");
+  // the site deploys a later release head, on top of the merge
+  const later = gh.commitFiles(r.data.mergeSha, { "README.md": "dna, later\n" });
+  st.siteCommit = later;
+  st.now += 60_000;
+  assert.match(await step(), /^shipped: .* \(site, released at [0-9a-f]{40}\)$/);
+  assert.ok((await said(r0.id)).includes("seq_released"));
+  assert.deepEqual(await s.ideaShip(r0.data.idea), { target: "site", live: true });
+  assert.ok(!st.alerts.some((a) => /has not picked it up/.test(a)));
+}));
+
+test("site served: 30 minutes without the site serving it: one alert to the owners, no announcement, never told live", { skip }, () => realGates(async () => {
+  st.siteCommit = base;
+  const r0 = await siteBuildToHour();
+  await assert.rejects(step(), isDefer);
+  st.now += 29 * 60_000;
+  await assert.rejects(step(), isDefer);
+  st.now += 60_000 + 1000;
+  assert.match(await step(), /^shipped: .* not served, not announced: the site serves [0-9a-f]{12}, which does not hold/);
+  assert.equal(st.alerts.filter((a) => a.includes(`(${r0.id}) is released at`) && /the site has not picked it up/.test(a)).length, 1);
+  assert.equal((await buildRow(r0.id)).status, "shipped", "its slot is free again");
+  assert.ok(!(await said(r0.id)).includes("seq_released"));
+  assert.equal((await sql`select 1 from x_outbox where event_key = ${`seq:${r0.id}:seq_released`}`).length, 0, "nothing on X");
+  assert.deepEqual(await s.ideaShip(r0.data.idea), { target: "site", live: false });
+  await step();
+  assert.equal(st.alerts.filter((a) => /the site has not picked it up/.test(a)).length, 1, "once");
+}));
+
+test("site served: the deployed commit holds the change but its page answers 500: waited on like a deploy still building; after 30 minutes one alert, no announcement", { skip }, () => realGates(async () => {
+  st.pageStatus = 500;
+  const r0 = await siteBuildToHour();
+  await assert.rejects(step(), isDefer);
+  st.now += 29 * 60_000;
+  await assert.rejects(step(), isDefer);
+  assert.equal((await buildRow(r0.id)).status, "shipping");
+  st.now += 60_000 + 1000;
+  assert.match(await step(), /^shipped: .* not served, not announced: \/faq answers 500 on the deployed commit\)$/);
+  assert.equal(st.alerts.filter((a) => a.includes(`(${r0.id})`) && /has not picked it up: \/faq answers 500/.test(a)).length, 1);
+  assert.ok(!(await said(r0.id)).includes("seq_released"));
+  assert.deepEqual(await s.ideaShip(r0.data.idea), { target: "site", live: false });
+}));
+
+test("site: a veto in the release record's own hour, before the release branch holds the merge, stops the ship as ever: a bad merge, a held record, nothing released", { skip }, () => realGates(async () => {
+  const r0 = await siteBuildToHour();
+  // main moved under the merge (a commit no release covers): its release record waits an hour of its own
+  gh.refs.set("main", gh.commitFiles(gh.refs.get("main")!, { "docs/x.md": "pushed\n" }));
+  await assert.rejects(step(), isDefer); // merged; the release branch does not hold it
+  const r = await buildRow(r0.id);
+  assert.equal(r.status, "shipping");
+  assert.ok(st.alerts.some((a) => /an hour of its own/.test(a)));
+  assert.equal(gh.refs.get("release"), base, "not released");
+  st.vetoed.add(`ship:${r0.id}`);
+  st.now += 60_000;
+  assert.match(await step(), /^killed: the Safe owners vetoed the ship/);
+  assert.equal((await sql<{ bad: string }[]>`select data->>'badMerge' as bad from seq_build where id = ${r0.id}`)[0].bad, r.data.mergeSha, "the merge is marked bad");
+  const [held] = await sql<{ doc: { bad?: string[]; needApprovals?: number } }[]>`select doc from log where kind = 'release' and ref = ${`release:${r.data.mergeSha}`} order by seq desc limit 1`;
+  assert.deepEqual([held.doc.needApprovals, held.doc.bad], [1, [r.data.mergeSha]], "a held release record names it");
+  assert.ok(!st.alerts.some((a) => /vetoed after its release/.test(a)));
+  st.now += 2 * HOUR;
+  await s.seqHourly();
+  assert.equal(gh.refs.get("release"), base, "the hourly job never releases it");
+  assert.ok(!(await said(r0.id)).includes("seq_released"));
+}));
+
+test("site served: the site does not answer at all: it waits, as for a deploy still building", { skip }, () => realGates(async () => {
+  const r0 = await siteBuildToHour();
+  const real = s.SEQ_DEPS.siteGet;
+  s.SEQ_DEPS.siteGet = async () => { throw new Error("connect ECONNREFUSED"); };
+  try {
+    await assert.rejects(step(), isDefer);
+    assert.equal((await buildRow(r0.id)).status, "shipping");
+  } finally { s.SEQ_DEPS.siteGet = real; }
+  st.now += 60_000;
+  assert.match(await step(), /^shipped: .* \(site, released at [0-9a-f]{40}\)$/);
+  assert.ok((await said(r0.id)).includes("seq_released"));
+}));
+
 test("site: while the website does not deploy release, the brain's pick of a site change is a no-build (nothing can say it is live)", { skip }, async () => {
   st.kind = "site";
   s.SEQ.siteLive = false;
@@ -1143,6 +1263,38 @@ test("site: while the website does not deploy release, the brain's pick of a sit
   assert.equal(await active(), null);
   assert.ok(st.alerts.some((a) => /does not deploy from the build repository's release branch/.test(a)));
   assert.equal((await sql`select 1 from log where kind = 'announce'`).length, before, "nothing announced");
+});
+
+test("site: once the website takes site changes, the site ideas killed before are queued again, once", { skip }, async () => {
+  st.kind = "site";
+  s.SEQ.siteLive = false;
+  assert.match(await step(), /^no-build: .* \(the website does not take site changes yet\)$/);
+  const [k] = await sql<{ id: string }[]>`select id from idea_queue where kind = 'build' and status = 'killed' and data->>'why' like 'no-build: the website does not take%'`;
+  assert.ok(k, "a site idea killed for the website");
+  // the live engine's older wording, signed as the engine signs it
+  await (await import("../src/idea-queue.ts")).setBuildStatus(k.id, "killed", "killed", "no-build: the website does not take the dev team's changes yet");
+  s.SEQ.siteLive = true;
+  await step();
+  assert.notEqual((await sql`select status from idea_queue where id = ${k.id}`)[0].status, "killed", "queued again (and picked up)");
+  assert.ok(st.alerts.some((a) => a.includes(`idea ${k.id} is back in the queue`)));
+  const n = st.alerts.length;
+  // and the scan of killed ideas runs once a process, not every minute
+  const real = s.SEQ_DEPS.queue;
+  let scans = 0;
+  s.SEQ_DEPS.queue = async () => { const q = await real(); return { ...q, requeueKilled: (...a: Parameters<typeof q.requeueKilled>) => { scans++; return q.requeueKilled(...a); } }; };
+  const pace = { maxInflight: s.SEQ.maxInflight, dailyTarget: s.SEQ.dailyTarget };
+  Object.assign(s.SEQ, { maxInflight: 3, dailyTarget: 5 }); // room for another build: each step looks for one
+  try {
+    await step();
+    st.now += 60_000;
+    await step();
+    assert.equal(scans, 0, "no second scan in this process");
+    s._test.requeueAgain(); // a new process
+    st.now += 60_000;
+    await step();
+    assert.equal(scans, 1, "a new process scans once");
+  } finally { s.SEQ_DEPS.queue = real; Object.assign(s.SEQ, pace); }
+  assert.ok(!st.alerts.slice(n).some((a) => a.includes("is back in the queue")), "once");
 });
 
 test("site: a site build from before the switch-off: its verdict is not announced, and its release is not announced as live", { skip }, () => realGates(async () => {

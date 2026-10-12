@@ -96,7 +96,7 @@ export function Sequencer({ head }: { head: ReactNode }) {
       <ul className={s.legend} aria-label="Colour key">
         <li style={tone("ai")}><i />Brain and fee loop</li>
         <li style={tone("idea")}><i />Ideas</li>
-        <li style={tone("dev")}><i />Dev team</li>
+        <li style={tone("dev")}><i />Sequencer</li>
         <li style={tone("game")}><i />Games</li>
         <li style={tone("guard")}><i />Public hour and Safe</li>
         {money && <li style={tone("money")}><i />Money</li>}

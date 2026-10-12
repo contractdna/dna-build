@@ -16,7 +16,7 @@ import { parseArgs } from "node:util";
 import { getContractAddress, type Hex, keccak256 } from "viem";
 import { compile, forkGate, idOf, linksOf, runtimeCode, workspace } from "../../engine/src/seq-forge.ts";
 import {
-  abiGate, bytecodeGate, depGate, engineReachGate, gameInterface, gate, type GateResult, moduleAbiGate, nodes, roots, scopeIssue, solPatternGate, specBounds, textGate, webGate,
+  abiGate, bytecodeGate, depGate, engineReachGate, gameInterface, gate, type GateResult, moduleAbiGate, nodes, roots, scopeIssue, siteNewIssues, solPatternGate, specBounds, textGate, webGate,
 } from "../../engine/src/seq-gates.ts";
 import { type DevRole, type Kind, kindOf, Order } from "../../engine/src/seq-order.ts";
 import { firstAttemptOnly } from "./ci.ts";
@@ -92,6 +92,9 @@ export async function build(o: Order, root: string, driver: Driver, env: Record<
     // the gates' own reach (G1, path by path): a plan never names a file the gates would refuse
     const outside = planned.filter((f) => scopeIssue(kind, o.slug, f) !== null);
     if (outside.length) return stop(`the plan writes outside ${kind === "site" || kind === "engine" ? "the change's reach" : `the ${kind}'s folders`}: ${outside.join(", ")}`, plan.data);
+    // a site change: new files only, in a new route folder, on a URL no page serves yet (G1 against the checkout's base)
+    const notNew = kind === "site" ? siteNewIssues(planned, basePaths(root)) : [];
+    if (notNew.length) return stop(`the plan does not add a new route: ${notNew.slice(0, 3).join("; ")}`, plan.data);
     if (new Set(planned).size !== planned.length) return stop("the plan gives one file to two tasks", plan.data);
     // a module's plan names its policy and the bounds proposed to the Safe; nothing else's does
     const bounds = specBounds(plan.data.bounds);
@@ -191,6 +194,9 @@ export function writeModuleSpec(root: string, o: Order, plan: Plan) {
   mkdirSync(join(root, src), { recursive: true });
   writeFileSync(join(root, src, "SPEC.json"), `${JSON.stringify({ spec: o.spec, specSha256: o.specSha256, module: plan.module, interface: [], bounds: plan.bounds, files }, null, 2)}\n`);
 }
+
+/** Every file of the checkout's base (HEAD). */
+const basePaths = (root: string) => execFileSync("git", ["-C", root, "ls-tree", "-r", "--name-only", "HEAD"], { maxBuffer: 64 * 1024 ** 2 }).toString().split("\n").filter(Boolean);
 
 /** What the gates' static checks find in a site or an engine change's files as they are on disk (a planned file not written yet is
  *  an issue too). */

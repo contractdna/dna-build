@@ -8,7 +8,7 @@ import { Defer, type Handler } from "./jobs.ts";
 import { trusted } from "./log.ts";
 import { type QueueRow, queuedRow } from "./idea-queue.ts";
 import type { XUser } from "./ideas.ts";
-import { COMPETITOR_NAMES, impersonator, injection, isAlly, phishing, replyPath, summoned, tierOf } from "./tiers.ts";
+import { COMPETITOR_NAMES, impersonator, injection, isAlly, linksOut, phishing, replyPath, spamShape, summoned, tierOf } from "./tiers.ts";
 import { classifyMention, questionOf, SCRIPTS } from "./voice.ts";
 import { ideaShip } from "./sequencer.ts";
 import { braked, enqueueX, LOOSE_ADDRESS, MENTION_FIELDS, type Mention, overCeiling, statusUrl, xApi } from "./x.ts";
@@ -38,8 +38,8 @@ const STEP_LINK = new Set(["building", "merged", "shipped"]);
 /** Every X idea that moved in the last day: a reply under our latest free posted reply in its conversation (the first
  *  read, the last update, or a thread turn there), tagging its author. One per idea and step; it waits while a reply of
  *  ours there is not out yet, and an idea we never answered gets none (X takes replies only to posts that summoned
- *  us, or in our own thread). A shipped build says shipped only once it is live: a module, or a site change in its
- *  public hour, is told as merged. */
+ *  us, or in our own thread). A shipped build says shipped only once it is live: a module, or a site change the site
+ *  does not serve yet (sequencer.ts ideaShip), is told as merged. */
 export const ideaUpdatesHandler: Handler = {
   lane: "x",
   run: async () => {
@@ -56,8 +56,8 @@ export const ideaUpdatesHandler: Handler = {
   },
 };
 async function ideaUpdate(r: QueueRow, step: string, postId: string) {
-  // a built idea's shipped means live: a module waits on the Safe, a site change in its public hour can still be vetoed
-  // (both: merged). A fee idea is shipped when its rule is kept (no build behind it)
+  // a built idea's shipped means live: a module waits on the Safe, a site change on its public hour and then on the site
+  // serving it (both: merged). A fee idea is shipped when its rule is kept (no build behind it)
   let ship: { target: string; vetoable: boolean } | undefined;
   if (step === "shipped" && r.kind === "build") {
     const s = await ideaShip(r.id);
@@ -76,7 +76,7 @@ async function ideaUpdate(r: QueueRow, step: string, postId: string) {
   if (!last) return "no free posted reply of ours to thread under";
   // the first read went out after the idea was queued: it already said so
   if (step === "picked" && (await sql`select 1 from x_outbox where event_key = ${`reply:${postId}`} and status = 'posted' and updated_at > (select created_at from idea_queue where id = ${r.id})`).length) return "the first reply said it";
-  const id = await enqueueX(key, "reply", { event: "idea_update", step, ...ship, title: r.data.title, self: true, mention: postId, author: m.author_id, lead: `@${handle}`, tier: tierOf(userOf(m)) },
+  const id = await enqueueX(key, "reply", { event: "idea_update", step, ...ship, ...(step === "picked" && r.data.rejudged ? { again: true } : {}), title: r.data.title, self: true, mention: postId, author: m.author_id, lead: `@${handle}`, tier: tierOf(userOf(m)) },
     { replyTo: last.tweet_id!, ...(STEP_LINK.has(step) ? { link: `${LOG_BASE_URL}/sequencer` } : {}) });
   return id ? step : "waiting: that reply of ours was just taken";
 }
@@ -188,7 +188,8 @@ async function threadTurn(c: { conv: string; mention: string }, posts: Found[], 
     if (tier === "normal" || replyPath(tier) === "off" || !p.author_id || p.author_id === X.userId || summoned(p, X.userId)) continue;
     if ((await sql`select 1 from x_outbox where event_key = ${`thread:${p.id}`}`).length) continue;
     const handle = handleOf(u);
-    if (!handle || impersonator(u) || LOOSE_ADDRESS.test(p.text) || phishing(p.text, p.entities ? (p.entities.urls ?? []).map((x) => x.expanded_url) : undefined) || injection(p.text)) continue;
+    const urls = p.entities ? (p.entities.urls ?? []).map((x) => x.expanded_url) : undefined;
+    if (!handle || impersonator(u) || LOOSE_ADDRESS.test(p.text) || phishing(p.text, urls) || injection(p.text) || (!isAlly(p.author_id) && spamShape(p.text))) continue;
     if ((await sql`select 1 from x_optout where author_id = ${p.author_id}`).length || (await braked(p.author_id))) continue;
     const r = (await classifyMention(p.text)).data; // the quarantined reader; a Defer waits for the next run
     if (r.kind === "scam" || r.kind === "abuse") { // recorded, so the reader never sees it again
@@ -196,6 +197,10 @@ async function threadTurn(c: { conv: string; mention: string }, posts: Found[], 
       continue;
     }
     const relationship = isAlly(p.author_id) ? "ally" : tier === "competitor" ? "competitor" : undefined;
+    if (r.kind === "bait" && !relationship && linksOut(p.text, urls)) { // link spam: recorded like a hard line
+      await sql`insert into x_outbox (type, event_key, event, status, error) values ('reply', ${`thread:${p.id}`}, '{}', 'skipped', 'bait with a link') on conflict do nothing`;
+      continue;
+    }
     const rival = relationship === "competitor" ? COMPETITOR_NAMES[p.author_id] : undefined;
     const kind = r.kind === "bait" && relationship ? "greeting" : ["idea", "official_contract"].includes(r.kind) ? "bait" : r.kind; // a thread turn never takes an idea in or gives the fixed line
     const lang = r.lang in SCRIPTS ? r.lang : undefined;

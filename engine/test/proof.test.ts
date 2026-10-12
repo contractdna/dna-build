@@ -153,7 +153,7 @@ test("compose: refuses unfilled launch values, a tag instead of a digest, a bad 
   assert.match(render(P).yaml, /LLM_LAUNCH_AT: ""/);
   // X's approval of AI replies is a measured literal: off ("") unless the launch values say X approved
   assert.match(render(P).yaml, /X_AI_REPLIES_APPROVED: ""/);
-  // how ideas reach the dev team, and the public Telegram chat: measured literals (rounds and none by default)
+  // how ideas reach the sequencer, and the public Telegram chat: measured literals (rounds and none by default)
   assert.match(render(P).yaml, /IDEA_MODE: "rounds"/);
   assert.match(render({ ...P, ideaMode: "live", telegramPublicChat: "@dna_news" }).yaml, /IDEA_MODE: "live"\n {6}TELEGRAM_PUBLIC_CHAT: "@dna_news"/);
   assert.throws(() => render({ ...P, ideaMode: "fast" as never }), /ideaMode/);

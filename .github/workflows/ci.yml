@@ -169,7 +169,7 @@ jobs:
           DSTACK_SIMULATOR_ENDPOINT: ${{ github.workspace }}/dstack/sdk/simulator/dstack.sock
           TEST_DATABASE_URL: "postgres://postgres:postgres@127.0.0.1:55435/postgres"
 
-  # the Sequencer's workflow code (order check, the dev team's guard, budget and pipeline with a scripted team, publish
+  # the Sequencer's workflow code (order check, its guard, budget and pipeline with a scripted team, publish
   # against a local fake of GitHub's API); no model is called
   sequencer:
     needs: changes

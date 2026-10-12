@@ -25,10 +25,10 @@ const STEPS = [
 
 // the short rules; the rest sits behind "Full rules"
 const RULES = [
-  ["Winners", "10 different wallets per draw, equal shares. The prize is at least 0.25 ETH and at most 3 ETH."],
+  ["Winners", "10 different wallets per draw, equal shares. The prize is at least 0.25 ETH and at most 3 ETH. Each draw first pays its Chainlink fee from the pot (up to 0.1364 ETH), so a draw needs at least 0.25 ETH after that fee."],
   ["Who can win", "Anyone averaging 1,000+ DNA over the window. Not the Safe or its signers, the AI's wallets, DNA's contracts or the exchange wallets listed before the window."],
   ["Fair odds", "No wallet holds more than 2% of the tickets (1% once a recent draw had 100+ wallets). Fewer than 50 eligible wallets: no draw, the pot rolls over."],
-  ["Draw timing", "Every 12 hours to 3 days. The AI sets the timing and posts each window's rules before it opens."],
+  ["Draw timing", "Every 12 to 24 hours. The AI sets the timing and posts each window's rules before it opens. A window whose rules were not posted before it opened is not drawn; its pot carries over."],
   ["Payout", "Sent to each winner automatically. A wallet that can't receive ETH has 7 days to claim."],
   ["Proof", "Every draw gets a page you can check in your browser."],
   ["Who can play", "18+ only. Check that it's legal where you live."],
@@ -65,15 +65,24 @@ function jackpot(p?: PlayLive, gamesBps = 0): Game {
     how: "Hold at least 1,000 DNA on average through a draw window and you're in. Staking counts ×2 to ×4. Each draw picks 10 wallets with Chainlink randomness and splits the prize equally, up to 3 ETH, sent straight to them." };
   if (!p) return { ...base, ...PRE, move: LIVE ? UNREAD : <>Nothing to do yet. At launch: hold at least 1,000 DNA through a draw window and you are in.</> };
   const j = p.jackpot, at = ["window open", "list posted", "drawing", "settling"].indexOf(j.stage);
+  const open = j.stage === "window open", skipped = open && !j.drawn; // this window is never drawn (engine paramsOf)
+  // GamePot.requestDraw: a draw waits (the pot accrues) until the pot covers 0.25 ETH after the VRF top-up
+  const low = j.prizeEth === null
+    ? <> The pot is under {j.gateEth} ETH: a draw needs at least 0.25 ETH after the Chainlink fee, so draws wait until it fills from the games share of fees{gamesBps === 0 ? <>, which is 0% for now and turns on later</> : null}.</>
+    : null;
   return {
     ...base, at, status: base.states[at],
-    fact: { value: `${j.potEth} ETH`, label: `in the pot · prize up to ${j.prizeEth} ETH · window ${j.window}` },
-    timer: j.stage === "window open" && j.windowEndsAt ? { label: "Window closes in", to: j.windowEndsAt } : undefined,
+    fact: { value: `${j.potEth} ETH`, label: `in the pot · ${j.prizeEth === null ? `a draw needs ${j.gateEth} ETH` : `prize about ${j.prizeEth} ETH`} · window ${j.window}` },
+    timer: !open ? undefined
+      : skipped ? (j.next.drawn ? { label: `Window ${j.next.window} closes in`, to: j.next.endsAt } : undefined)
+      : j.windowEndsAt ? { label: "Window closes in", to: j.windowEndsAt } : undefined,
     move: [
-      // GamePot.MIN_PRIZE: a draw waits (the pot accrues) until the pot covers 0.25 ETH
-      Number(j.potEth) < 0.25
-        ? <>Hold at least 1,000 DNA on average until the window closes. Staked DNA counts double or more. The pot is under 0.25 ETH, the least a draw pays out, so draws wait until it fills from the games share of fees{gamesBps === 0 ? <>, which is 0% for now and turns on later</> : null}.</>
-        : <>Hold at least 1,000 DNA on average until the window closes. Staked DNA counts double or more.</>,
+      skipped
+        ? <>This window isn&apos;t drawn (its rules were not posted before it opened). Its pot carries over.{" "}
+          {j.next.drawn
+            ? <>The {j.lastWin ? "next" : "first"} draw is after the next window closes at {when(j.next.endsAt)}. Hold at least 1,000 DNA on average through that window to be in it.</>
+            : <>It goes to the next window whose rules are posted before it opens.</>}{low}</>
+        : <>Hold at least 1,000 DNA on average until the window closes. Staked DNA counts double or more.{low}</>,
       <>The list is posted and fixed. The draw can start once the 1-hour veto has passed.</>,
       <>Chainlink is picking the winning tickets. Nobody can change the list now.</>,
       <>The 10 winners are known; their shares are on their way to their wallets.</>,
@@ -155,6 +164,9 @@ export default async function PlayPage() {
   const games = [jackpot(live, split.find((x) => x.dest === "games")?.bps ?? 0), vote(live), mystery(live)];
   const last = live?.jackpot.lastWin; // the latest draw's winners (up to 10)
   const winners = last ? last.winners : [];
+  // the first draw: after the open window if it is drawn, else after the next one if that one is
+  const j = live?.jackpot, first = j?.stage !== "window open" ? null
+    : j.drawn ? `window ${j.window} closes` : j.next.drawn ? `window ${j.next.window} closes (${when(j.next.endsAt)})` : null;
   return (
     <Shell>
       <div className={ui.page}>
@@ -177,7 +189,7 @@ export default async function PlayPage() {
         <Section title="Jackpot winners" note={<Link className={ui.link} href="/announcements">Every draw in the news →</Link>}>
           {winners.length === 0 ? (
             <p className={s.none}>
-              {LIVE ? "No draws yet. The first one comes after the first window closes and its list survives the 1-hour veto." : "No draws yet: the first window opens at launch."}{" "}
+              {LIVE ? `No draws yet. The first one comes after ${first ?? "the first window with posted rules closes"} and its list survives the 1-hour veto.` : "No draws yet: the first window opens at launch."}{" "}
               <a className={ui.link} href={X_URL} target="_blank" rel="noopener noreferrer">Follow on X</a> to hear the first one.
             </p>
           ) : (

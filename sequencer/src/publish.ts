@@ -3,7 +3,7 @@
 // as data, checked again (paths: G1; PR text and key-shaped strings: G12), then sent through the REST API, which is
 // how GitHub signs an App's commit (verified). The engine closes the previous round's pull request (next()).
 //   node sequencer/src/publish.ts --order <order.json> --patch <patch.diff> --body <pr.md> --title <title> [--root <checkout>]
-// Env: GITHUB_REPOSITORY (owner/name), SEQ_APP_ID, SEQ_APP_KEY (the App's private key, PEM).
+// Env: GITHUB_REPOSITORY (owner/name), SEQ_APP_ID, SEQ_APP_KEY (the App's private key, PEM or base64 of the PEM).
 import { createSign } from "node:crypto";
 import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
@@ -19,7 +19,10 @@ const b64url = (b: Buffer | string) => Buffer.from(b).toString("base64url");
 export function appJwt(appId: string, pem: string, nowS = Math.floor(Date.now() / 1000)) {
   const head = b64url(JSON.stringify({ alg: "RS256", typ: "JWT" }));
   const body = b64url(JSON.stringify({ iat: nowS - 60, exp: nowS + 540, iss: appId }));
-  const sig = createSign("RSA-SHA256").update(`${head}.${body}`).sign(pem);
+  // the key as PEM, or that PEM base64'd (a secret pasted as one line)
+  const key = pem.includes("-----BEGIN") ? pem : Buffer.from(pem.trim(), "base64").toString("utf8");
+  if (!key.includes("-----BEGIN")) throw new Error("SEQ_APP_KEY is neither a PEM nor base64 of one");
+  const sig = createSign("RSA-SHA256").update(`${head}.${body}`).sign(key);
   return `${head}.${body}.${b64url(sig)}`;
 }
 

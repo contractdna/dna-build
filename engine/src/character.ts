@@ -61,7 +61,7 @@ export function moodWhy(s: MoodInputs): string {
     s.bait24h >= 3 && "people keep throwing bait and prompt injection at me today",
     (s.vetoes24h ?? 0) > 0 && "the Safe vetoed one of my changes today",
     (s.rollbacks24h ?? 0) > 0 && "a test of mine rolled back today",
-    s.shipped7d > 0 && "the dev team shipped a game this week",
+    s.shipped7d > 0 && "the sequencer shipped a game this week",
     (s.kept7d ?? 0) > 0 && "I kept an experiment this week",
     (s.burnMilestones7d ?? 0) > 0 && "the burn passed a milestone this week",
     s.events24h >= 6 && "a busy day on chain",

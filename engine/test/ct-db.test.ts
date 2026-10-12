@@ -149,7 +149,7 @@ test("x:ct: a flat take is dropped (never digested); a take waiting past its hou
   } finally { X.spacingMs = spacing; }
   const [o] = await sql<{ status: string; error: string }[]>`select status, error from x_outbox where event_key = ${key}`;
   assert.equal(o.status, "skipped");
-  assert.match(o.error, /^flat take: alive 2, wit 2/);
+  assert.match(o.error, /^flat take: alive 2, clarity /);
   const [m] = await sql<{ doc: Json }[]>`select doc from log where kind = 'x_post' and ref = ${key} order by seq desc limit 1`;
   assert.equal(m.doc.status, "miss");
 

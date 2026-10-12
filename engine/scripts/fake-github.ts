@@ -157,7 +157,8 @@ export async function startFakeGitHub(o: { repo?: string; bot?: string } = {}) {
     if ((m = p.match(/^\/compare\/([0-9a-f]{40})\.\.\.([0-9a-f]{40})$/))) {
       const skip = ancestors(m[1]);
       const list = [...ancestors(m[2])].filter((s) => !skip.has(s));
-      return send(200, { total_commits: list.length, commits: list.map((sha) => ({ sha })) });
+      const status = m[1] === m[2] ? "identical" : ancestors(m[2]).has(m[1]) ? "ahead" : skip.has(m[2]) ? "behind" : "diverged";
+      return send(200, { status, total_commits: list.length, commits: list.map((sha) => ({ sha })) });
     }
     if ((m = p.match(/^\/git\/ref\/heads\/(.+)$/))) return refs.has(m[1]) ? send(200, { ref: `refs/heads/${m[1]}`, object: { sha: refs.get(m[1]), type: "commit" } }) : send(404, { message: "Not Found" });
     if ((m = p.match(/^\/git\/refs\/heads\/(.+)$/)) && method === "PATCH") {

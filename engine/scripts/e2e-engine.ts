@@ -191,12 +191,10 @@ try {
   assert.equal((await sql`select count(*)::int as n from log where kind = 'anchor' and ref = ${day}`)[0].n, 1);
 
   // ---------------------------------------------------------------- X pipeline; Telegram approval → X post; mentions; /halt
-  // the agent's queued op was posted on its own: fact sheet → (synthetic) writer → filter → code appends the tx link
-  // (the second synthetic candidate, or the third when an earlier own post, a milestone from the chain's burns, already
-  // opened with "Synthetic post about": character memory refuses a repeated opening)
-  const auto = await until("pipeline post", async () => fakes.calls.find((c) => c.path === "/2/tweets" && /^(Synthetic post about a queued event|Zq[a-z]{6} queued)\.\nhttps:\/\/etherscan\.io\/tx\/0x[0-9a-f]{64}$/.test(String(c.body.text))));
+  // the engine's queued op was posted on its own: fact sheet → code's template (no writer) → filter → the tx link
+  const auto = await until("pipeline post", async () => fakes.calls.find((c) => c.path === "/2/tweets" && /^Queued[ .][^\n]*\nhttps:\/\/etherscan\.io\/tx\/0x[0-9a-f]{64}$/.test(String(c.body.text))));
   assert.ok(!auto.body.reply, "a state-change post is not a reply");
-  assert.ok((await sql`select 1 from log where kind = 'x_post' and doc->>'status' = 'attempt' and doc->'candidates'->0->'issues' ? 'number 999'`).length, "the failing candidate is logged with its verdict");
+  assert.ok((await sql`select 1 from log where kind = 'x_post' and doc->>'status' = 'attempt' and doc->'facts'->>'event' = 'queued' and doc->>'model' = 'code'`).length, "code wrote it from the fact sheet");
   const text = "Breaker tripped on a dev canary; the keeper rolled the fee route back to baseline. $DNA";
   const draftId = (await engineCli("draft", "x_post", JSON.stringify({ text }))).trim().split(" ")[1];
   await until("draft message", async () => tgTexts().find((t) => t.startsWith(`Draft #${draftId}`) && t.includes(text)));
@@ -220,9 +218,9 @@ try {
   assert.ok(tgTexts().some((t) => t.startsWith(`draft #${draftId} approved by Safe owner ${OWNER.address.toLowerCase()}`)));
   await rpc("anvil_setCode", [d.safe, "0x"]); // the Safe is a plain EOA again (it sends txs below)
   await mine(1);
-  fakes.mentions.push({ id: "1001", text: "gm @contractdna", author_id: "77" }, { id: "1002", text: "stop", author_id: "78" }); // not ideas: the intake skips them
+  fakes.mentions.push({ id: "1001", text: "how does the jackpot work? @contractdna", author_id: "77" }, { id: "1002", text: "stop", author_id: "78" }); // not ideas: the intake skips them
   await until("mention stored", async () => (await sql`select 1 from x_mention where id = '1001'`).length);
-  // a reply (in_reply_to the mention; the writer never saw "gm @contractdna"); "stop" opts its author out
+  // a reply (in_reply_to the mention; the writer never saw the mention text); "stop" opts its author out
   const reply = await until("reply", async () => fakes.calls.find((c) => c.path === "/2/tweets" && c.body.reply?.in_reply_to_tweet_id === "1001"));
   // a reply is measured against earlier replies only (none yet), so the synthetic second candidate goes
   assert.equal(reply.body.text, "Synthetic post about a reply event.");

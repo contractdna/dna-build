@@ -85,13 +85,13 @@ function sitePatch(files: Record<string, string>) {
 }
 const SITE_BODY = "A questions page with plain answers about who decides what ships.";
 
-test("a site order: its pages and docs go out as one commit and a pull request", async () => {
-  const { patch, dir, base } = sitePatch({ "web/app/questions/page.tsx": "export default function Q() { return <main>Questions</main>; }\n", "docs/QUESTIONS.md": "# Questions\n" });
+test("a site order: its new pages go out as one commit and a pull request", async () => {
+  const { patch, dir, base } = sitePatch({ "web/app/questions/page.tsx": "export default function Q() { return <main>Questions</main>; }\n", "web/app/questions/questions.module.css": ".q { color: inherit; }\n" });
   calls.length = 0;
   const p = await pub.publish({ ...order(base), kind: "site", slug: "questions-7" }, patch, SITE_BODY, "Questions", dir, "o/r", "tok");
   assert.equal(p.branch, "seq/o-test-0001-r1");
   const tree = calls.find((c) => c.path.endsWith("/git/trees"))!.body as { tree: { path: string }[] };
-  assert.deepEqual(tree.tree.map((x) => x.path).sort(), ["docs/QUESTIONS.md", "web/app/questions/page.tsx"]);
+  assert.deepEqual(tree.tree.map((x) => x.path).sort(), ["web/app/questions/page.tsx", "web/app/questions/questions.module.css"]);
 });
 
 for (const [what, file, want] of [
@@ -99,6 +99,8 @@ for (const [what, file, want] of [
   ["the hook", "contracts/src/DNAHook.sol", /contracts\/src\/DNAHook\.sol: never reachable \(the hook\)/],
   ["a workflow", ".github/workflows/x.yml", /never reachable \(the repository's workflows and settings\)/],
   ["the engine's transaction guards", "engine/src/tx.ts", /never reachable \(the transaction guards\)/],
+  ["a doc", "docs/QUESTIONS.md", /docs\/QUESTIONS\.md: outside the site's pages/],
+  ["the page template (it exists at the base)", "web/app/g/_template/page.tsx", /changed \(a site change only adds new files\)/],
 ] as const) {
   test(`planted: a site order whose patch touches ${what} is refused before any call to GitHub`, async () => {
     const { patch, dir, base } = sitePatch({ "web/app/questions/page.tsx": "export default function Q() { return null; }\n", [file]: "x\n" });
@@ -128,4 +130,6 @@ test("the App's JWT is RS256 over its id, valid for 9 minutes", () => {
   const [h, b, s] = jwt.split(".");
   assert.deepEqual(JSON.parse(Buffer.from(b, "base64url").toString()), { iat: 999_940, exp: 1_000_540, iss: "1234" });
   assert.ok(createVerify("RSA-SHA256").update(`${h}.${b}`).verify(publicKey, Buffer.from(s, "base64url")));
+  const pem = privateKey.export({ type: "pkcs1", format: "pem" }).toString();
+  assert.equal(pub.appJwt("1234", Buffer.from(pem).toString("base64"), 1_000_000), pub.appJwt("1234", pem, 1_000_000), "a base64'd PEM signs the same");
 });

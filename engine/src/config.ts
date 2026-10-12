@@ -106,7 +106,7 @@ export const AGENT_LOOP = env.AGENT_LOOP !== "0";
 export const LOG_BASE_URL = env.LOG_BASE_URL ?? "https://genomedna.xyz";
 export const PORT = num(env.PORT, 8080);
 export const SCHEDULER_MS = num(env.SCHEDULER_MS, 60_000);
-/** How ideas reach the dev team (a compose literal in the enclave):
+/** How ideas reach the sequencer (a compose literal in the enclave):
  *  - rounds: IdeaMarket's on-chain rounds; a round is researched once it closes, its outcome proposed after the public
  *    hour and finalized after the Safe's 24 h, and only then do its accepted ideas queue;
  *  - live: every idea (an X mention past the screen, a site submit) is judged as it comes in and an accepted fee or build
@@ -115,7 +115,7 @@ export const SCHEDULER_MS = num(env.SCHEDULER_MS, 60_000);
 export const IDEA_MODE = (env.IDEA_MODE || "rounds") as "rounds" | "live";
 if (IDEA_MODE !== "rounds" && IDEA_MODE !== "live") throw new Error("IDEA_MODE must be rounds or live");
 export const IDEAS_LIVE = IDEA_MODE === "live";
-/** The dev team's pace: at most SEQ_MAX_INFLIGHT builds at once (1-5), and new builds start until SEQ_DAILY_TARGET
+/** The sequencer's pace: at most SEQ_MAX_INFLIGHT builds at once (1-5), and new builds start until SEQ_DAILY_TARGET
  *  builds shipped or are on their way that UTC day (1-10). Code defaults: neither is an allowed env in the enclave, so
  *  the enclave runs 3 and 5 (a change is a new image); the env only sets them outside it (rehearsals, tests). */
 const pace = (k: string, v: string | undefined, d: number, max: number) => {
