@@ -53,7 +53,8 @@ export const JACKPOT_DEPS = {
 
 /** GamePot._sync without sending it: arrivals above every liability (queued idea rewards included) split 70/30, the
  *  jackpot capped at POT_CAP.
- *  Nothing has to call sync() for the engine to see the pot it will hold (requestDraw syncs first). */
+ *  The engine reads the pot it will hold from this without a sync() (requestDraw syncs first); the keeper still syncs
+ *  small arrivals hourly (games.ts potActions) because the site shows the on-chain jackpotPot. */
 export function syncedPot(v: { claims: bigint; eth: bigint; jackpotPot: bigint; ideaReserve: bigint; queuedRewards: bigint; escrow: bigint; owed: bigint; potCap: bigint; jackpotBps: bigint }) {
   const assets = v.claims + v.eth;
   const liab = v.jackpotPot + v.ideaReserve + v.queuedRewards + v.escrow + v.owed;

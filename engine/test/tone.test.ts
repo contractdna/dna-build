@@ -3,7 +3,7 @@
 // answer something, and the judge (it only orders candidates that already passed; safety never depends on it).
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { allyIssues, BITS, bitsFor, chooseShapes, EMOJI, factNumbers, factSheet, FOILS, namesAlly, parrotIssue, pickBest, postFilter, SHAPE_KEYS, shapesFor, STANDING, WriterOut, writerCall } from "../src/voice.ts";
+import { allyIssues, BITS, bitsFor, chooseShapes, EMOJI, factNumbers, factSheet, feeFacts, isVoiceIssue, namesAlly, parrotIssue, pickBest, postFilter, SHAPE_KEYS, shapesFor, STANDING, voiceIssues, WriterOut, writerCall } from "../src/voice.ts";
 
 test("emoji: the allow-list only, at most 2; every other pictograph still refused", () => {
   assert.equal(EMOJI.length, 10);
@@ -28,11 +28,15 @@ test("allies: Hazar is one, by name; 'hazard' is not", () => {
 });
 
 test("shapes: 4 a call, least used first, never the last one used for the same event; reasoning and complaint only when they fit", () => {
-  assert.deepEqual([...SHAPE_KEYS].sort(), ["complaint", "deadpan", "diary", "hype", "reasoning", "roast", "self-review", "status ledger", "two-panel"]);
-  const plain = shapesFor("post", factSheet({ event: "burn_summary", hours: 6 }), "steady");
-  assert.ok(!plain.includes("reasoning") && !plain.includes("complaint") && !plain.includes("status ledger"));
-  assert.ok(shapesFor("post", factSheet({ event: "outcome", mind: { why: "volatile hours pay more", confidencePct: 60 } }), "steady").includes("reasoning"));
-  assert.ok(shapesFor("post", factSheet({ event: "cancelled", by: "the Safe owners" }), "steady").includes("complaint"));
+  assert.deepEqual([...SHAPE_KEYS].sort(), ["complaint", "deadpan", "diary", "hype", "plain", "reasoning", "roast", "self-review", "status ledger", "technical", "two-panel"]);
+  // a person's idea and its verdict: the plain shape only, never a riddle or a joke
+  assert.deepEqual(shapesFor("reply", factSheet({ event: "reply", category: "idea", verdict: "out" })), ["plain"]);
+  assert.deepEqual(shapesFor("post", factSheet({ event: "idea_judged", idea: 4, title: "Last Click", verdict: "rejected", reason: "x" })), ["plain"]);
+  assert.ok(!shapesFor("reply", factSheet({ event: "reply", category: "state_question" })).includes("plain"));
+  const plain = shapesFor("post", factSheet({ event: "recap", days: 7 }), "steady");
+  assert.ok(!plain.includes("reasoning") && !plain.includes("complaint"));
+  assert.ok(shapesFor("post", factSheet({ event: "status", hours: 6, mind: { why: "volatile hours pay more", confidencePct: 60 } }), "steady").includes("reasoning"));
+  assert.ok(shapesFor("post", factSheet({ event: "status", hours: 6 }), "stung").includes("complaint"));
   assert.ok(shapesFor("post", factSheet({ event: "status", hours: 12 }), "steady").includes("status ledger"));
   const recent = [{ shape: "diary", event: "burn_summary" }, { shape: "hype", event: "online" }, { shape: "two-panel", event: "burn_summary" }];
   const four = chooseShapes(plain, recent, "burn_summary");
@@ -42,8 +46,8 @@ test("shapes: 4 a call, least used first, never the last one used for the same e
   assert.equal(new Set(four).size, 4);
 });
 
-test("bits: a label used in the last 6 posts rests; foils and standing truths are on hand", () => {
-  assert.ok(BITS.length >= 3 && FOILS.length >= 3 && STANDING.length >= 4);
+test("bits: a label used in the last 6 posts rests; standing truths are on hand", () => {
+  assert.ok(BITS.length >= 3 && STANDING.length >= 4);
   const label = BITS[0].label;
   assert.ok(!bitsFor(BITS, [{ joke: label }]).some((b) => b.label === label));
   assert.ok(bitsFor(BITS, [1, 2, 3, 4, 5, 6].map(() => ({})).concat([{ joke: label }])).some((b) => b.label === label), "older than 6 posts: back");
@@ -68,15 +72,16 @@ test("bounds only where they answer something", () => {
   assert.equal(factSheet({ event: "burn_summary", hours: 6 }).bounds, undefined);
 });
 
-test("writer call: 4 candidates in the asked shapes, temperature 1, effort low; shapes, bits, foils, standing and emoji in the input", () => {
+test("writer call: 4 candidates in the asked shapes, temperature 1, effort low; shapes, bits, standing and emoji in the input, nothing to roast", () => {
   assert.equal(WriterOut.safeParse({ candidates: ["a", "b", "c", "d"], shapes: ["hype", "diary", "deadpan", "roast"] }).success, true);
   assert.equal(WriterOut.safeParse({ candidates: ["a", "b", "c", "d", "e"] }).success, false);
-  const c = writerCall(factSheet({ event: "burn_summary", hours: 6 }), [], undefined, { recent: [], banned: [], mood: "steady", jokes: [], shapes: ["hype", "diary", "deadpan", "roast"] });
+  const c = writerCall(factSheet({ event: "status", hours: 6 }), [], undefined, { recent: [], banned: [], mood: "steady", jokes: [], shapes: ["hype", "diary", "deadpan", "roast"] });
   assert.deepEqual([c.temperature, c.effort], [1, "low"]);
   const input = c.input as { shapes: { name: string; rule: string }[]; bits: unknown[]; foils: string[]; standing: string[]; emoji: string[] };
   assert.deepEqual(input.shapes.map((s) => s.name), ["hype", "diary", "deadpan", "roast"]);
   assert.ok(input.shapes.every((s) => s.rule.length > 5));
-  assert.ok(input.bits.length && input.foils.length && input.standing.length);
+  assert.ok(input.bits.length && input.standing.length);
+  assert.deepEqual(input.foils, []);
   assert.deepEqual(input.emoji, [...EMOJI]);
 });
 
@@ -116,4 +121,79 @@ test("named roasts: only in a reply to a competitor that engaged first, by code'
   // a competitor is never read as an ally, whatever the draft calls them
   assert.deepEqual(allyIssues({ event: "reply", category: "greeting", relationship: "competitor", rival: "CLAUS" }, "an ally in the replies is the only hype i rate."), ["calls a competitor an ally"]);
   assert.deepEqual(allyIssues({ event: "reply", category: "greeting", relationship: "competitor", rival: "CLAUS" }, "CLAUS ships daily. so does my burn."), []);
+});
+
+test("mechanics take the technical shape: a queued SetParams / SetShadow gets a plain request with who pays, how long and the fee in %", () => {
+  // the registry op behind the confusing post: SetParams 22000 / 1500 / 30000 pips on a test plate, then SetShadow
+  const fee = feeFacts([22_000, 1_500, 30_000]);
+  const params = factSheet({ event: "queued", op: "SetParams", target: "test", opId: 10, plate: "A", fee, activatesAt: { utcHour: 14, utcMinute: 5 } });
+  const shadow = factSheet({ event: "queued", op: "SetShadow", opId: 11, plate: "A", fee, activatesAt: { utcHour: 14, utcMinute: 6 } });
+  for (const f of [params, shadow]) {
+    assert.deepEqual(shapesFor("post", f, "restless"), ["technical"], String(f.change));
+    // never twice in a row does not apply to the only shape open: every candidate takes it
+    const shapes = chooseShapes(shapesFor("post", f), [{ shape: "technical", event: "queued" }], "queued");
+    assert.deepEqual(shapes, ["technical", "technical", "technical", "technical"]);
+    const input = writerCall(f, [], undefined, undefined, shapes).input as Record<string, unknown>;
+    assert.deepEqual((input.shapes as { name: string; rule: string }[]).map((x) => x.name), shapes);
+    assert.match((input.shapes as { rule: string }[])[0].rule, /no joke/);
+    assert.deepEqual([input.bits, input.foils, input.emoji], [[], [], []], "no joke material in a technical request");
+    const facts = input.facts as Record<string, unknown>;
+    assert.deepEqual(facts.fee, { basePct: 2.2, multiplier: 0.15, capPct: 3 }, "pips → %: 22000 is 2.2%");
+    assert.equal(facts.platformFeePct, 0.3);
+    assert.match(String(facts.pays), /nobody/);
+    assert.match(String(facts.pays), /current fee/);
+  }
+  assert.equal(shadow.hours, 2, "the shadow test's hours");
+  assert.equal(params.hours, undefined);
+  // a tune of the live fee is never told as a test nobody pays
+  const live = factSheet({ event: "queued", op: "SetParams", target: "live", opId: 12, fee });
+  assert.match(String(live.pays), /every trade/);
+  assert.match(String(live.change), /live fee/);
+  assert.equal(factSheet({ event: "queued", op: "SetParams", opId: 13, fee }).pays, undefined, "who pays is unknown without the experiment");
+  // the rest of the mechanics, and a fee change by the Safe; a status or a burn keeps the joke shapes
+  for (const raw of [{ event: "test_live", op: "SetCanary", plate: "A", fee }, { event: "outcome", outcome: "killed", plate: "A", fee }, { event: "rolled_back", route: "fee" }, { event: "cancelled", by: "the Safe owners" }, { event: "module_approved", kind: "fee" }, { event: "change_done", change: "a new fee", fee: { basePct: 2, multiplier: 1, capPct: 3 } }]) {
+    assert.deepEqual(shapesFor("post", factSheet(raw)), ["technical"], raw.event);
+  }
+  assert.equal(factSheet({ event: "test_live", op: "SetCanary", plate: "A", fee }).hours, 4);
+  assert.match(String(factSheet({ event: "rolled_back", route: "fee" }).pays), /baseline fee/);
+  assert.equal(factSheet({ event: "rolled_back", route: "fee" }).stage, undefined, "no stage line a plain draft would parrot");
+  assert.equal(factSheet({ event: "queued", op: "SetParams", opId: 13, fee }).change, "new fee parameters", "a SetParams of unknown target is never called a test");
+  assert.deepEqual(shapesFor("post", factSheet({ event: "change_done", change: "the draw interval", hours: 6 })), ["technical"], "any on-chain change is told plainly");
+  assert.ok(!shapesFor("post", factSheet({ event: "status", hours: 12 })).includes("technical"));
+  assert.ok(!shapesFor("reply", factSheet({ event: "reply", category: "bait" })).includes("technical"));
+});
+
+test("every on-chain event post is told plainly: the technical shape only, no joke material, nothing to roast", () => {
+  const events = ["liquidity_added", "burn_summary", "first_burn", "fees_distributed", "progress_day", "treasury_buy", "treasury_transfer", "jackpot_drawn", "jackpot_voided",
+    "prize_claimed", "prize_expired", "reward_paid", "game_retired", "seq_shipped", "seq_started", "site_changed", "milestone", "online", "lab"];
+  for (const event of events) {
+    const f = factSheet({ event, hours: 6, ethAdded: 0.363 });
+    assert.deepEqual(shapesFor("post", f, "restless"), ["technical"], event);
+    const input = writerCall(f, [], undefined, undefined, chooseShapes(shapesFor("post", f), [], event)).input as Record<string, unknown>;
+    assert.deepEqual([input.bits, input.foils, input.emoji], [[], [], []], event);
+    assert.ok((input.shapes as { name: string }[]).every((s) => s.name === "technical"), event);
+    assert.match((input.shapes as { rule: string }[])[0].rule, /no jab/, event);
+  }
+  // only posts about no single event keep the other shapes, and no shape anywhere roasts
+  for (const [type, event] of [["post", "status"], ["post", "recap"], ["post", "ct"], ["reply", "reply"]] as const) assert.ok(!shapesFor(type, { event }).includes("roast"), event);
+  // an idea's progress, tagged to its author: told plainly, never in the chain-event register
+  assert.deepEqual(shapesFor("reply", factSheet({ event: "idea_update", step: "killed", title: "Last Click" })), ["plain"]);
+});
+
+test("a jab at unnamed others is refused in every post and reply, and the redraft hears it", () => {
+  for (const t of ["teams that can pull liquidity later are renting the pool. this add stays.", "projects that edit fees later. not me.", "argue with the vault.",
+    "an admin key that edits the fee later is a roadmap with a signature.", "bold of them to call it a feature.", "upgradeable is trust me bro.", "rival teams that post plans."]) {
+    for (const facts of [{ event: "liquidity_added" }, { event: "burn_summary" }, { event: "reply", category: "bait" }, { event: "ct" }]) {
+      const issues = voiceIssues(facts, t, { linked: true });
+      assert.ok(issues.includes("a jab at unnamed others"), `${facts.event}: ${t}`);
+      assert.ok(issues.some(isVoiceIssue));
+    }
+  }
+  assert.deepEqual(voiceIssues({ event: "liquidity_added" }, "0.363 ETH went into the pool's locked liquidity today. no key can take it back out.", { linked: true }), []);
+  // DNA may describe itself and its own people; a reply may answer a question about rivals; an idea may be said back
+  for (const t of ["a protocol that burns every DNA it buys.", "the team that signs for the Safe said no.", "the dev who built this gate is AI."])
+    assert.ok(!voiceIssues({ event: "burn_summary" }, t, { linked: true }).includes("a jab at unnamed others"), t);
+  assert.ok(!voiceIssues({ event: "reply", category: "rules_question", question: "what about your competitors?" }, "no competitors in my contract, just the pool.", { linked: false }).includes("a jab at unnamed others"));
+  assert.ok(voiceIssues({ event: "burn_summary" }, "competitors post plans.", { linked: true }).includes("a jab at unnamed others"), "rivals as a group: never in a post");
+  assert.ok(!voiceIssues({ event: "reply", category: "idea", verdict: "in", understood: "a leaderboard of projects that use the hook" }, "a leaderboard of projects that use the hook: it's in the queue.", { linked: false }).includes("a jab at unnamed others"));
 });

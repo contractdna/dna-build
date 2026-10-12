@@ -96,9 +96,13 @@ stand-ins for the model API and GitHub, with the real Agent SDK in between.
 Besides new games, the brain can order a change to DNA's own website: its pages (`web/app/`) and its public docs
 (`docs/*.md`). The order says which kind it is, and the enclave signs it like any other.
 
+Not yet switched on: the website does not deploy from the build repository's `release` branch, so a released site change
+would never reach it. Until it does (`SEQ.siteLive`, a code constant), the brain's pick of a site change is a no-build
+with an alert to the owners, and a site change released before the switch is not announced.
+
 - **What it may touch.** Pages, components, CSS modules and plain `.ts` modules in route folders under `web/app/`, and
   the public docs. Never the site's data layer, its shared shell and scene, the game pages, the API routes, the proof,
-  security and Sequencer pages, the root layout, any layout, route or middleware file, the wallet guard and helper,
+  security, Sequencer and play pages, the root layout, any layout, route or middleware file, the wallet guard and helper,
   the server and content-policy settings, packages, or the docs on verifying DNA, its security model and its
   operations, and this file (in any case; nor a new doc named like one of them but for case). A page removed by the
   change is removed from the page check's build too.
@@ -215,6 +219,16 @@ A game's page is code an AI wrote. It lives in `web/app/g/<game>/` and is served
    public hour during which the project's Safe can veto it.
 6. **A kill switch.** A pulled game's page stops at once for new visitors. Pages already open check every minute and
    before every transaction, and stop too. If the check itself can't be reached, the page stops as well.
+
+### Until the play address is up
+
+The play address is not running yet. Until it is, a game is played on the main site's `/play` page through a panel
+the site's own code draws, never the game's page: the game's state, a form per read, a button per call. Its list is
+the games the GameFactory deployed, named by their signed ship records. Each game's ABI is the `game.json` its ship
+record pins: taken only if its bytes are the file the record lists and it names the same address and code hash. A
+call goes only to that game, with no value, never one of the kit's admin calls (a retired game: only `claim`), and only
+after the code at the address hashes to the ship record's and the call was simulated. No approval or signature is ever
+asked.
 
 ### Writing a page
 

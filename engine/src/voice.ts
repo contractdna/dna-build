@@ -13,7 +13,8 @@
 //  - tone scout: once a day, Grok x_search restricted to the bundle's read-list (≤ 10 handles, re-audited weekly by a human)
 //    → ≤ 20 phrases of ≤ 4 words; code drops URLs, digits, number words, @handles, imperatives and banned terms.
 import { z } from "zod";
-import { type Vector } from "./policy.ts";
+import { type Vector, TIMING } from "./policy.ts";
+import { HOOK_FEES } from "./hook-fees.ts";
 import { type Call, llm, readUntrusted } from "./llm.ts";
 import { ENCLAVE } from "./enclave.ts";
 import { TOPICS } from "./mechanics.ts";
@@ -35,16 +36,40 @@ export type Category = "rules_question" | "state_question" | "idea" | "official_
 /** What a fee vector means for a trader (pips → %; the multiplier as a plain factor). */
 export const feeFacts = (v: Vector) => ({ basePct: v[0] / 1e4, multiplier: v[1] / 1e4, capPct: v[2] / 1e4 });
 const CHANGE: Record<string, string> = {
-  SetParams: "new fee parameters on a test plate",
+  SetParams: "new fee parameters",
+  "SetParams:test": "new fee parameters on a test plate",
+  "SetParams:live": "new settings for the live fee",
   SetShadow: "a shadow test: fees computed on live swaps, not charged",
   SetCanary: "a canary test: the new fee is charged on a sample of live swaps",
   PromoteActive: "the tested plate becomes the live fee",
   Register: "a new module is registered",
 };
 
+/** Mechanics events (fee and split changes, tests and how they end, Safe vetoes, approved module code): their posts
+ *  take the technical shape only (shapesFor), told plainly with the fee, its payer and its hours; never a joke. */
+export const MECHANICS_EVENTS = new Set(["queued", "test_live", "outcome", "rolled_back", "cancelled", "module_approved"]);
+export const isMechanics = (facts: Record<string, unknown>) =>
+  MECHANICS_EVENTS.has(String(facts.event)) || (/^change_(queued|cancelled|done)$/.test(String(facts.event)) && (facts.fee !== undefined || facts.split !== undefined));
+/** Who pays a queued or live op's fee, in plain words (no digits: the filter allows only the sheet's numbers). */
+const PAYS: Record<string, string> = {
+  "SetParams:test": "nobody yet: these are settings for a test, not the live fee; every trade keeps paying the current fee",
+  "SetParams:live": "every trade, once it lands: these settings change the live fee",
+  SetShadow: "nobody: a shadow test works the new fee out on a sample of live trades and never charges it; every trade keeps paying the current fee",
+  SetCanary: "only the trades in the live test's share of blocks pay the new fee, while the test runs; every other trade keeps the current fee",
+  PromoteActive: "every trade, once it lands: the tested fee becomes the live fee",
+};
+/** The least a test runs once it starts, in hours (src/policy.ts TIMING): a stage short of data runs longer, and a live
+ *  test can wait on its promotion, so a post says "at least". */
+const TEST_HOURS: Record<string, number> = { SetShadow: TIMING.shadowMs / 3600_000, SetCanary: TIMING.canaryMs / 3600_000 };
+
 /** Every field a post may draw on, per event. Anything else in the raw event (thresholds, the slice, reasons, the next
  *  candidate, prompts) is dropped here: the writer never sees it, so it can't leak it. */
 const FIELDS: Record<string, readonly string[]> = {
+  // a change to the engine's own code or to the rules it runs under (src/upgrades.ts): code's stage and line, the
+  // release notes and their figures, the chain's numbers, when it lands
+  update_queued: ["stage", "notes", "figures", "activatesAt", "minutesLeft"], update_allowed: ["stage", "notes", "figures"], update_running: ["stage", "notes", "figures"], update_cancelled: ["stage", "notes", "figures"],
+  change_queued: ["stage", "who", "change", "level", "fee", "split", "hours", "activatesAt", "minutesLeft"], change_cancelled: ["stage", "who", "change", "level", "fee", "split", "hours"], change_done: ["stage", "who", "change", "level", "fee", "split", "hours"],
+  day_changes: ["stage", "changes", "figures"],
   queued: ["change", "plate", "fee", "activatesAt", "opId"],
   test_live: ["change", "plate", "fee"],
   outcome: ["outcome", "plate", "fee", "samples", "reason", "source"],
@@ -54,7 +79,11 @@ const FIELDS: Record<string, readonly string[]> = {
   // relationship: "ally" | "competitor" (src/tiers.ts lists); topic, question: the quarantined reader's (questionOf
   // checks the question again here); mechanics: the topic's code-generated fact lines (src/mechanics.ts)
   // pending: what the engine waits on (src/life.ts pendingOf), so "wen" gets a real answer
-  reply: ["category", "state", "relationship", "topic", "question", "mechanics", "pending", "intake"],
+  // lang: the reader's language code when the post is not English (SCRIPTS): the reply is written in it. An idea's
+  // first read (src/x.ts intakeFact): its class, its score of ideaScoreOf, and ideasToday (2+: a running joke)
+  // an idea reply's plain parts (src/x.ts intakeFact): what was understood, the verdict, its reason, what happens next,
+  // and the buildable version built instead
+  reply: ["category", "state", "relationship", "topic", "question", "mechanics", "pending", "intake", "lang", "ideaClass", "ideaScore", "ideaScoreOf", "understood", "verdict", "why", "next", "instead"],
   binding_reply: [], // one fixed text (src/rewards.ts BINDING_REPLY), never the writer
   official_reply: [], // one fixed text (OFFICIAL_REPLY), never the writer
   // the game layer (posted once those contracts are deployed; src/games.ts gameFacts)
@@ -89,7 +118,13 @@ const FIELDS: Record<string, readonly string[]> = {
   seq_pr: ["title", "round"],
   seq_verdict: ["title", "round", "verdict"],
   seq_declined: ["title"],
-  idea_judged: ["title", "verdict"],
+  idea_judged: ["title", "verdict", "instead"],
+  // src/x-social.ts: an idea's `step` (picked, building, testing, merged, shipped, killed) for its author (merged: its
+  // build `target`, and `vetoable` while a site release is in its public hour); the daily best idea with its rubric
+  // score; the weekly idea-givers (handles: code's, after the text)
+  idea_update: ["step", "title", "target", "vetoable"],
+  idea_of_day: ["title", "score", "scoreOf", "kind"],
+  shoutout: ["givers", "ideas"],
   seq_killed: ["title", "rounds"],
   seq_shipped: ["title", "fundEth"],
   game_retired: ["title", "days", "returnedEth", "rule"],
@@ -150,6 +185,17 @@ const JAB_RE = /\b(costumes?|hoodie|cosplay|larp\w*|all talk|just tweets|tweets?
 const WARM_RE = /\b(thanks|thank you|thx|ty|glad|appreciate\w*|welcome|good to|love|honou?red|cheers|respect|salute|gm|grateful|happy)\b|🤝|🙏|❤|💙|🫡/iu;
 /** A pointer at a link: only when code appends one. */
 const LINK_POINTER = /\b(the|this|that) (link|tx|txn|receipt)\b|\blink below\b/i;
+/** An idea reply, or a post with an idea's verdict: told plainly (shapesFor), in plain words (JARGON). */
+export const isIdeaVerdict = (type: "post" | "reply", facts: Record<string, unknown>) => (type === "reply" && facts.category === "idea") || facts.event === "idea_judged" || facts.event === "idea_update";
+/** Words a reader can't be expected to know: refused in an idea reply or an idea's post (the redraft hears which). */
+const JARGON = /\b(plates?|vectors?|void(ed)?|rubric|calldata|adaptivefee|canary|shadow test|R-\d{3,}|bitmap|opcodes?)\b/i;
+/** A jab at unnamed others (teams or projects that…, "them", rivals): readers take it as being about DNA itself.
+ *  Refused in every post and reply; the redraft hears it. */
+const UNNAMED_JAB = /\b(teams|projects|protocols|devs|launches) (that|who|which|whose)\b|\brenting the pool\b|\bargue with\b|\broadmap with\b|\bbold of them\b|\btrust me bro\b|\b(not|unlike) them\b/i;
+/** Rivals as a group: never in a post; a reply may answer a question about them. */
+const RIVAL_WORD = /\b(rivals?|competitors?)\b/i;
+/** A verdict an idea reply must not contradict: "in" said only when it is queued or logged. */
+const SAYS_IN = /\b(queued|in the queue|logged|accepted|it'?s in|it’s in|you'?re in|you’re in)\b/i;
 /** Proof that an idea reply says the idea is in. */
 const LOGGED_RE = /\b(logged|noted|counted|filed|pile|queue|queued|hopper)\b|\b(it'?s|you'?re|it’s|you’re) in\b/i;
 /** "on-chain" alone may be about anything; next to a round word it says where the idea goes. */
@@ -187,13 +233,16 @@ function valuesOf(v: unknown, key = "", out = { pct: new Set<number>(), mult: ne
 /** voiceIssues' reasons: a draft refused for one of them gets a redraft with the reason (draftInCharacter). */
 const VOICE_ISSUES = new Set(["the online post does not say it is live", "a jab in an ally post", "no warm word for an ally", "points at a link that is not there",
   "does not say the idea is logged", "opens by echoing the question", "does not state what moved", "implies demand or price support", "does not say who got it", "calls a transfer a sale", "does not say it was a sale",
-  "does not say it was simulated"]);
-export const isVoiceIssue = (i: string) => VOICE_ISSUES.has(i) || /^\S+ without [%x]$/.test(i);
+  "does not say it was simulated", "does not say what is built instead", "says the idea is in when it is not", "a jab at unnamed others"]);
+export const isVoiceIssue = (i: string) => VOICE_ISSUES.has(i) || /^\S+ without [%x]$/.test(i) || i.startsWith("jargon: ");
 export function voiceIssues(facts: Record<string, unknown>, text: string, o: { linked: boolean; mention?: string }): string[] {
   const t = text.normalize("NFKC");
   const out: string[] = [];
   const ev = String(facts.event);
   if (ev === "online" && !/\b(live|online|alive|awake|running)\b/i.test(t)) out.push("the online post does not say it is live");
+  // words the person or the idea brought (its question, what we understood) may be said back
+  const jab = (s: string) => UNNAMED_JAB.test(s) || (ev !== "reply" && RIVAL_WORD.test(s));
+  if (jab(t) && ![facts.question, facts.understood].some((g) => typeof g === "string" && jab(g))) out.push("a jab at unnamed others");
   // a take on crypto Twitter (src/ct.ts): no collab, listing or airdrop talk, no launch claimed, nothing cruel
   if (ev === "ct") {
     if (CT_PROMISE.test(t)) out.push("a collab, listing or airdrop in a take");
@@ -204,7 +253,13 @@ export function voiceIssues(facts: Record<string, unknown>, text: string, o: { l
   if ((allyContext(facts) || namesAlly(t)) && JAB_RE.test(t)) out.push("a jab in an ally post");
   if (facts.category === "greeting" && facts.relationship === "ally" && !WARM_RE.test(t)) out.push("no warm word for an ally");
   if (!o.linked && LINK_POINTER.test(t)) out.push("points at a link that is not there");
-  if (typeof facts.intake === "string" && !LOGGED_RE.test(t) && !ON_CHAIN_ROUND(t)) out.push("does not say the idea is logged");
+  // an idea reply states its verdict and never contradicts it: in (queued, or logged for a round) says so; a buildable
+  // version says what is built instead; out, held back or not an idea never says it is in
+  const verdict = facts.verdict;
+  if ((verdict === "in" || verdict === "logged" || verdict === "a buildable version") && !LOGGED_RE.test(t) && !ON_CHAIN_ROUND(t)) out.push("does not say the idea is logged");
+  if (verdict === "a buildable version" && !/\b(instead|version)\b/i.test(t)) out.push("does not say what is built instead");
+  if (ev === "reply" && facts.category === "idea" && typeof verdict === "string" && !["in", "logged", "a buildable version"].includes(verdict) && SAYS_IN.test(claimed(t))) out.push("says the idea is in when it is not");
+  if (isIdeaVerdict(ev === "reply" ? "reply" : "post", facts) || ev === "idea_update") { const j = t.match(JARGON); if (j) out.push(`jargon: ${j[0].toLowerCase()}`); }
   // the treasury: its own buy is never demand or support; a transfer names who got it and is never called a sale
   if (ev === "treasury_buy" && TREASURY_SPIN.test(claimed(t))) out.push("implies demand or price support");
   if (ev === "treasury_transfer") {
@@ -251,8 +306,18 @@ const WHAT: Record<string, string> = { fees_distributed: "fee split", burn_summa
 const BOUNDS_EVENTS = new Set(["queued", "test_live"]);
 const MILESTONE_LABEL: Record<string, string> = { dna_burned: "total DNA burned", jackpot_pot: "the jackpot pot in ETH" };
 
+/** An idea's step, told to the person who gave it (code tags them before the text). */
+const IDEA_STEP: Record<string, string> = {
+  picked: "their idea was judged and picked: it waits in the queue for the AI dev team; nothing is built yet",
+  building: "the AI dev team started building their idea; nothing has shipped yet",
+  testing: "their fee idea is being tested on-chain as an experiment; nothing is decided yet",
+  shipped: "their idea shipped: it is live, and it is theirs on the record",
+  merged: "their idea was merged as a site change: it goes out after one public hour unless the Safe vetoes it; nothing is live yet",
+  killed: "their idea was tried and dropped: it did not make the bar and nothing shipped",
+};
 /** Events whose stage says nothing shipped: a draft may not say it did. */
 const NOTHING_SHIPPED = new Set(["seq_started", "seq_killed", "seq_online", "seq_handoff", "module_approved", "seq_pr", "seq_verdict", "seq_declined", "idea_judged", "lab"]);
+const MERGED_LIVE = /\b(is live|it's live|it’s live|went live|now live|live now|already live)\b/i;
 const SHIP_WORDS = /\b(shipped|is live|it's live|it’s live|went live|now live|fixed|merged)\b/i;
 /** Events about contracts the engine did not deploy or connect: a draft never says it did. */
 const NOT_MINE = new Set(["online", "contracts_connected", "keys_handed"]);
@@ -269,14 +334,24 @@ const DEPLOY_CLAIMS = [
  *  merged / approved (a module approval may say approved, never live); a launch-day post never says the engine
  *  deployed or connected its contracts. [] = ok. */
 export function claimIssues(facts: Record<string, unknown>, text: string): string[] {
+  // src/upgrades.ts: an update or a change still in its public hour, or called off, shipped nothing (the rule of a build
+  // just started); an allowed update may say approved, never live (a module approval's rule); the day's changelog exists only when something changed, so it never calls the day empty
+  if (/^(update_(queued|cancelled)|change_(queued|cancelled))$/.test(String(facts.event))) return claimIssues({ event: "seq_started" }, text);
+  if (facts.event === "update_allowed") return claimIssues({ event: "module_approved" }, text); // approved, not live yet
+  if (facts.event === "day_changes") return /\b(empty|blank|quiet|slow day|dead day|(?:nothing )?not much|nothing much|nothing to report|zero changes|nothing (?:new|shipped|happened|changed)|no (?:changes|ships?))\b/i.test(text) ? ["calls a day with changes empty"] : [];
   const ev = String(facts.event);
   const t = text.normalize("NFKC");
   const out: string[] = [];
   if (NOT_MINE.has(ev) && DEPLOY_CLAIMS.some((re) => re.test(t))) out.push("claims it deployed its contracts");
-  if (!NOTHING_SHIPPED.has(ev) && !(ev === "seq_released" && facts.target === "module")) return out;
+  const unshipped = (ev === "idea_update" && (facts.step !== "shipped" || facts.vetoable === true)) || ev === "idea_of_day" || ev === "shoutout";
+  if (!NOTHING_SHIPPED.has(ev) && !unshipped && !(ev === "seq_released" && facts.target === "module")) return out;
+  // an idea merged and not out yet may say merged, never shipped or live (a module: the Safe decides if it ever is)
+  const merged = ev === "idea_update" && facts.step === "merged";
   // a negated claim ("nothing has shipped yet", "not live", "never merged") says what the stage says
   const said = t.replace(/\b(nothing|not|never|no|hasn't|hasn’t|isn't|isn’t|wasn't|wasn’t|didn't|didn’t|won't|won’t|nor|yet to be)\s+(?:(?:yet|been|be|is|has|was|even|ever|to|get|got|going|actually|really|officially|fully|anything|one|it|that|this)\s+){0,2}(shipped|live|fixed|merged|approved)\b/gi, " ");
-  if (SHIP_WORDS.test(said)) out.push("claims it shipped");
+  if (merged ? /\b(shipped|fixed)\b/i.test(said) : SHIP_WORDS.test(said)) out.push("claims it shipped");
+  // a site change may say it goes live after the hour; a module never says live at all
+  if (merged && (facts.target === "module" ? /\blive\b/i : MERGED_LIVE).test(said)) out.push("claims it is live");
   // a build the brain approved may say approved (it ships after the public hour), never shipped or live
   if (ev === "module_approved" ? /\blive\b/i.test(said) : !(ev === "seq_verdict" && facts.verdict === "ship") && /\bapproved\b/i.test(said)) out.push(ev === "module_approved" ? "claims it is live" : "claims it was approved");
   return out;
@@ -317,8 +392,18 @@ export function factSheet(raw: Record<string, unknown>): FactSheet {
   if (!keep) throw new Error(`no fact sheet for event ${event}`);
   const out: FactSheet = { event, ...(BOUNDS_EVENTS.has(event) || (event === "reply" && raw.category === "rules_question") ? { bounds: HARD_BOUNDS } : {}) };
   for (const k of keep) if (raw[k] !== undefined && raw[k] !== null) out[k] = raw[k];
-  if (typeof raw.op === "string" && keep.includes("change") && !out.change) out.change = CHANGE[raw.op] ?? "a registry change";
+  // SetParams says which fee it sets (src/x.ts resolve: `target`, known only with its experiment)
+  const op = typeof raw.op === "string" ? (raw.op === "SetParams" && (raw.target === "live" || raw.target === "test") ? `SetParams:${raw.target}` : raw.op) : undefined;
+  if (op && keep.includes("change") && !out.change) out.change = CHANGE[op] ?? CHANGE[String(raw.op)] ?? "a registry change";
   if (out.fee) out.fee = pick(out.fee as Record<string, unknown>, FEE_FIELDS);
+  // a mechanics post says who pays, for how long at least, and that the launchpad's fee sits on top of DNA's
+  if ((event === "queued" || event === "test_live") && op) {
+    if (PAYS[op]) out.pays = PAYS[op];
+    if (TEST_HOURS[op] > 0) out.hours = TEST_HOURS[op];
+  }
+  // a rollback: what trades pay now (not a stage line: the post says it plainly, and parrotIssue refuses a copied stage)
+  if (event === "rolled_back") out.pays = raw.route === "split" ? "fees are split by the built-in baseline split again" : "every trade pays the hook's built-in baseline fee again";
+  if (out.fee && isMechanics(out)) out.platformFeePct = HOOK_FEES.platform / 1e4;
   if (out.liveFee) out.liveFee = pick(out.liveFee as Record<string, unknown>, FEE_FIELDS);
   if (out.testing) out.testing = pick(out.testing as Record<string, unknown>, ["stage", "plate"]);
   if (out.state) {
@@ -380,7 +465,10 @@ export function factSheet(raw: Record<string, unknown>): FactSheet {
       : `the treasury (the Safe the owners control) sent its own DNA to ${typeof out.label === "string" ? out.label : "a wallet with no public label"}: a transfer, not a buy or a sale`)
     : event === "seq_verdict" ? (raw.verdict === "ship" ? "the brain approved the build: it ships after one public hour unless the Safe vetoes it; nothing is live yet"
       : raw.verdict === "rework" ? "the brain sent the build back for another round; nothing has shipped" : "the brain dropped the build; nothing shipped")
-    : event === "idea_judged" ? (raw.verdict === "queued" ? "the idea was judged and accepted: it waits for the AI dev team; nothing is built yet" : "the idea was judged and not taken; nothing will be built from it")
+    : event === "idea_judged" ? (raw.verdict === "queued" ? (raw.instead ? "the idea could not be built as written; its closest buildable version was accepted instead, credited to its author: it waits for the sequencer; nothing is built yet" : "the idea was judged and accepted: it waits for the sequencer; nothing is built yet") : "the idea was judged and not taken; nothing will be built from it")
+    : event === "idea_update" ? (raw.step === "merged" && raw.target === "module" ? "their idea was merged as a module: the Safe decides whether its code is ever approved and used; nothing is live and nothing changes until then" : IDEA_STEP[String(raw.step)])
+    : event === "idea_of_day" ? "today's best idea from X, by the score the brain gave it; it is in the queue, nothing is built from it yet. Code appends who gave it and a link to their post: never write a name or handle"
+    : event === "shoutout" ? "the week's top idea-givers on X (`givers` people, `ideas` ideas in all) each get a playful title; code appends the titles and handles: never write a name, handle or title list"
     : event === "site_changed" ? `the website changed${out.title ? `: ${out.title}` : ""}${out.summary ? `. ${out.summary}` : ""}; the change is live on the site` : STAGE[event];
   if (stage) out.stage = stage;
   if (WHAT[event]) out.what = WHAT[event];
@@ -471,7 +559,9 @@ export function mindOf(raw: unknown): Mind | undefined {
   return Object.keys(m).length ? m : undefined;
 }
 /** The brain's own next steps in a fact sheet: the only intent a post may voice (src/voice.ts postFilter `intent`). */
-export const intentOf = (facts: Record<string, unknown>) => [...((facts.mind as Mind | undefined)?.next ?? []), ...(typeof facts.tomorrow === "string" ? [facts.tomorrow] : [])];
+export const intentOf = (facts: Record<string, unknown>) => [...((facts.mind as Mind | undefined)?.next ?? []), ...(typeof facts.tomorrow === "string" ? [facts.tomorrow] : []),
+  // an idea reply's next step and the version built instead are code's (src/x.ts intakeFact), so a reply may say them
+  ...(facts.event === "reply" ? [facts.next, facts.instead].filter((x): x is string => typeof x === "string") : [])];
 
 // ---------------------------------------------------------------- the filter
 
@@ -625,7 +715,7 @@ export const appendWeight = (s: string | null | undefined) => (s ? 1 + weightedL
 /** Facts where "claim" is a prize's claim, not scam bait: a claimable prize, a jackpot draw, an expired prize. */
 export const claimFacts = (f: Record<string, unknown>) => f.claimable === true || f.event === "jackpot_drawn" || f.event === "prize_expired";
 
-export function postFilter(text: string, allowed: Set<string>, link: boolean | number = false, o: { intent?: readonly string[]; priceJoke?: boolean; claim?: boolean } = {}): string[] {
+export function postFilter(text: string, allowed: Set<string>, link: boolean | number = false, o: { intent?: readonly string[]; priceJoke?: boolean; claim?: boolean; script?: RegExp } = {}): string[] {
   const intent = o.intent ?? [];
   const issues: string[] = [];
   if (/[^\P{N}0-9]/u.test(text)) issues.push("non-ascii digit"); // unicode digits, fractions (½), roman numerals, ²
@@ -633,7 +723,7 @@ export function postFilter(text: string, allowed: Set<string>, link: boolean | n
   if (!t.trim()) issues.push("empty");
   const emoji = t.match(EMOJI_RE)?.length ?? 0;
   if (emoji > 2) issues.push("over 2 emoji");
-  const bare = t.replace(EMOJI_RE, " ");
+  const bare = t.replace(EMOJI_RE, " ").replace(o.script ?? /$^/, " ");
   if (nonAscii(bare)) issues.push("non-ascii character");
   if (/\d[eE][+-]?\d/.test(t)) issues.push("scientific notation"); // "1e5"
   issues.push(...linkIssues(bare));
@@ -732,11 +822,13 @@ export const WriterOut = z.object({
 /** The writer's call: one candidate per offered shape (4), temperature 1 for spread, low effort (the filters judge). */
 export const writerCall = (facts: FactSheet, tone: string[], id = MODELS.voice, character?: WriterCharacter, offered?: Shape[]): Call<typeof WriterOut> => {
   const shapes = offered ?? character?.shapes ?? chooseShapes(shapesFor("post", facts), [], facts.event);
+  const technical = shapes.length > 0 && shapes.every((sh) => sh === "technical");
   return {
     agent: "x-writer", model: id, schema: WriterOut, maxOutputTokens: 3000, temperature: 1, effort: "low", system: writerSystem(facts), secret: ["shapes", "bits", "foils"],
     input: {
       facts: humanize(facts), toneBrief: tone, ...allyInput(facts), shapes: shapes.map((name) => ({ name, rule: SHAPES[name] })),
-      bits: bitsFor(BITS, character?.recent ?? []), foils: FOILS, standing: STANDING, emoji: [...EMOJI],
+      // the technical shape gets no joke material: no running bits, no emoji; no draft gets anything to roast (foils)
+      bits: technical ? [] : bitsFor(BITS, character?.recent ?? []), foils: [], standing: STANDING, emoji: technical ? [] : [...EMOJI],
       ...(character ? { character: characterInput(character) } : {}),
     },
   };
@@ -782,7 +874,9 @@ export const writePosts = (facts: FactSheet, tone: string[], character?: WriterC
 export type Mood = "steady" | "busy" | "proud" | "combative" | "restless" | "stung" | "milestone";
 export type Post = { text: string; at: string; shape?: string; event?: string; joke?: string };
 export type Joke = { label: string; ageDays: number; uses: number };
-export type Person = { replies: number; lastTopic?: string; lastAt: string };
+/** What the writer knows of a reader: our replies to them (the last 20), the last topic and when; a `regular` (3+ replies
+ *  or 2+ ideas), the ideas they sent, and the running bits we played with them (`bits`: keep them going). */
+export type Person = { replies: number; lastTopic?: string; lastAt?: string; regular?: boolean; ideas?: number; bits?: string[] };
 /** `recent`: own posts of this type, newest first, with when they went out; `posts`: a reply's view of the latest posts;
  *  `moodWhy`: the mood's reason in plain words (src/character.ts moodWhy). */
 export type CharacterContext = { recent: Post[]; posts?: Post[]; banned: string[]; mood: Mood; moodWhy?: string; jokes: Joke[]; person?: Person };
@@ -790,7 +884,7 @@ export type CharacterContext = { recent: Post[]; posts?: Post[]; banned: string[
 export type WriterCharacter = CharacterContext & { shapes?: Shape[]; card?: boolean; refused?: string[]; thread?: string[] };
 
 /** The shapes a post can take: code offers 4 a call (chooseShapes), the writer writes one candidate per shape. */
-export const SHAPE_KEYS = ["hype", "diary", "two-panel", "reasoning", "roast", "deadpan", "self-review", "complaint", "status ledger"] as const;
+export const SHAPE_KEYS = ["hype", "diary", "two-panel", "reasoning", "roast", "deadpan", "self-review", "complaint", "status ledger", "technical", "plain"] as const;
 export type Shape = (typeof SHAPE_KEYS)[number];
 /** A `<key>: <text>` section → {key: text} for the given keys; a key it lacks keeps `fallback`'s. */
 export function keyedOf<K extends string>(text: string, keys: readonly K[], fallback: Record<string, string> = {}): Record<K, string> {
@@ -803,8 +897,6 @@ export const SHAPES = keyedOf(prompt("x-shapes"), SHAPE_KEYS, keyedOf(DEFAULT_PR
 const linesOf = (text: string) => text.split("\n").map((l) => l.replace(/^\s*-\s*/, "").trim()).filter(Boolean);
 /** Running bits (label: premise), the bundle's: a nod, never a rerun; a label rests while it is in the last 6 posts. */
 export const BITS = linesOf(prompt("x-bits")).flatMap((l) => { const m = l.match(/^([^:]{1,40}):\s*(.+)$/); return m ? [{ label: m[1].trim().toLowerCase(), premise: m[2] }] : []; });
-/** Market practices a post may roast, never a project's name or a person (the bundle's). */
-export const FOILS = linesOf(prompt("x-foils"));
 /** Truths code holds any day (public, always true on chain or in code). */
 export const STANDING = [
   "no key can raise the fee cap, mine included: it lives in the hook's code",
@@ -812,29 +904,38 @@ export const STANDING = [
   "nothing the liquidity vault adds can ever be withdrawn, by anyone",
   "the buyback burns every DNA it buys",
   "every action I take has a transaction or a signed record behind it",
-  "my dev team is AI too, and nothing ships unless it passes every gate",
+  "the sequencer that builds for me is AI too, and nothing ships unless it passes every gate",
 ];
 /** Bits the writer may play on now: those not used in the last 6 posts. */
 export const bitsFor = (bits: readonly { label: string; premise: string }[], recent: readonly { joke?: string }[]) => {
   const used = new Set(recent.slice(0, 6).map((p) => p.joke).filter(Boolean));
   return bits.filter((b) => !used.has(b.label));
 };
+/** Posts that report no single event: the status, the recap, the nightly reflection, the idea of the day and the
+ *  weekly shoutout (a take is apart: "ct"). Every other post is told in the technical shape. */
+const FREE_POSTS = new Set(["status", "recap", "reflection", "idea_of_day", "shoutout"]);
 /** The shapes open to an item: reasoning only with the mind's why or confidence, a complaint only on a veto, a sour mood
  *  or a reply, the ledger only on a status or recap. */
 export function shapesFor(type: "post" | "reply", facts: Record<string, unknown>, mood?: string): Shape[] {
   // a take is an observation, never news about DNA: no hype, diary or self-review
-  if (facts.event === "ct") return ["deadpan", "two-panel", "roast", "complaint"];
+  // no shape roasts anyone: a jab at unnamed others reads as being about DNA itself
+  if (facts.event === "ct") return ["deadpan", "two-panel", "complaint"];
+  // a person's idea and its verdict are told plainly, never as a riddle or a joke: the plain shape only
+  if (isIdeaVerdict(type, facts)) return ["plain"];
+  // an event (chain, games, builds, mechanics) gets the technical shape only: FREE_POSTS keep the rest
+  if (type === "post" && (isMechanics(facts) || !FREE_POSTS.has(String(facts.event)))) return ["technical"];
   const m = facts.mind as Mind | undefined;
-  // a website change is housework, never a hype post
-  const out: Shape[] = type === "reply" ? ["deadpan", "two-panel", "roast", "self-review"] : [...(["site_changed", "treasury_buy", "treasury_transfer"].includes(String(facts.event)) ? [] : ["hype" as const]), "diary", "two-panel", "roast", "deadpan", "self-review"];
+  const out: Shape[] = type === "reply" ? ["deadpan", "two-panel", "self-review"] : ["hype", "diary", "two-panel", "deadpan", "self-review"];
   if (m?.why || m?.confidencePct !== undefined) out.push("reasoning");
-  if (facts.event === "cancelled" || type === "reply" || mood === "stung" || mood === "restless") out.push("complaint");
+  if (type === "reply" || mood === "stung" || mood === "restless") out.push("complaint");
   if (facts.event === "status" || facts.event === "recap") out.push("status ledger");
   return out;
 }
 /** `n` shapes for this call: never the last shape used for this event (never twice in a row), the least recently used
  *  first (`recent`: own posts, newest first). */
 export function chooseShapes(open: readonly Shape[], recent: readonly { shape?: string; event?: string }[], event: string, n = 4): Shape[] {
+  // one shape open (the technical shape): every candidate takes it
+  if (open.length === 1) return Array<Shape>(n).fill(open[0]);
   const last = recent.find((p) => p.event === event)?.shape;
   const age = (sh: Shape) => { const i = recent.findIndex((p) => p.shape === sh); return i < 0 ? Infinity : i; };
   return open.filter((sh) => sh !== last).map((sh, i) => ({ sh, i, a: age(sh) })).sort((x, y) => y.a - x.a || x.i - y.i).slice(0, n).map((x) => x.sh);
@@ -923,7 +1024,8 @@ export async function draftInCharacter(facts: FactSheet, tone: string[], filter:
   const first = await write(facts, tone, character ?? undefined, shapes);
   const a = judge(first);
   // the redraft hears what was too similar and what code refused as false or empty (voiceIssues)
-  const refused = [...new Set(a.flatMap((c) => c.issues.filter((i) => i.startsWith(SIMILAR) || isVoiceIssue(i)).map((i) => (i.startsWith(SIMILAR) ? i.slice(SIMILAR.length) : i))))];
+  // and a draft that copied the persona's own example lines (src/x.ts bundleIssues): said in its own words next time
+  const refused = [...new Set(a.flatMap((c) => c.issues.filter((i) => i.startsWith(SIMILAR) || isVoiceIssue(i) || i === "bundle text").map((i) => (i.startsWith(SIMILAR) ? i.slice(SIMILAR.length) : i === "bundle text" ? "copies an example line word for word: use your own words" : i))))];
   if (!character || a.some((c) => !c.issues.length) || !refused.length) return { model: first.model, candidates: a, redraft: false };
   const second = await write(facts, tone, { ...character, refused }, shapes);
   return { model: second.model, candidates: [...a, ...judge(second)], redraft: true };
@@ -932,8 +1034,28 @@ export async function draftInCharacter(facts: FactSheet, tone: string[], filter:
 // ---------------------------------------------------------------- mentions (quarantined reader)
 
 /** The reader's verdict: the kind, the topic (a closed enum: src/mechanics.ts TOPICS) and the question restated
- *  neutrally ("" when there is none). code checks the question again (questionOf) before any writer sees it. */
-export const MentionOut = z.object({ kind: z.enum(["rules_question", "state_question", "idea", "official_contract", "price_fud", "airdrop_ask", "bait"]), topic: z.enum(TOPICS), question: z.string().max(140) });
+ *  neutrally ("" when there is none). code checks the question again (questionOf) before any writer sees it. scam
+ *  (phishing, drainers, fake claims, posing as DNA or an ally) and abuse (slurs, harassment) get no reply. */
+export const MentionOut = z.object({ kind: z.enum(["rules_question", "state_question", "idea", "official_contract", "price_fud", "airdrop_ask", "bait", "scam", "abuse"]), topic: z.enum(TOPICS), question: z.string().max(140),
+  lang: z.enum(["en", "zh", "ja", "ko", "ru", "es", "pt", "fr", "de", "tr", "vi", "id", "other"]).default("en") });
+/** Reply languages besides English (the reader's `lang`) → the letters a draft in it may use beyond ASCII (postFilter
+ *  `script`). Code's lexicon is English: a draft that uses them is read back in English by another call and that
+ *  reading passes every check too (src/x.ts). */
+// accented Latin only (Latin-1 Supplement, Extended-A/B, Extended Additional): plain ASCII is never blanked, so the
+// link, hashtag and cashtag checks still see every ASCII letter
+const LATIN = /[\u00C0-\u024F\u1E00-\u1EFF¡¿«»]/gu;
+export const SCRIPTS: Readonly<Record<string, RegExp>> = {
+  zh: /[\p{Script=Han}\u3000-\u303F]/gu, ja: /[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\u30FC\u3000-\u303F]/gu, ko: /[\p{Script=Hangul}\u3000-\u303F]/gu,
+  ru: /\p{Script=Cyrillic}/gu, es: LATIN, pt: LATIN, fr: LATIN, de: LATIN, tr: LATIN, vi: LATIN, id: LATIN,
+};
+/** The English reading of a non-English draft: an independent call that never saw the facts or the mention. */
+export const TRANSLATE = "Translate `untrusted` into English, literally and completely. Keep every digit as a digit and write every number word as an English number word; keep names, symbols, links and emoji as they are. Add nothing.";
+export const Translated = z.object({ english: z.string().max(1000) });
+/** Code's backstop for the writer's rule: no X text (a reply, an idea update, a post) ever offers a collab, partnership,
+ *  listing or airdrop (it may joke about the ask). */
+const PROMISE = /\b(let'?s|we('ll| will| can| could|'d| would)|i('ll| will| can| could|'d| would)|would love to|love to|happy to|down to|open to|sure,?|dm (me|us)|hit (me|us) up)\b[^.!?\n]{0,40}\b(collab\w*|partner\w*|listing|listed|list (you|u|it|your|ur)|airdrop\w*|whitelist\w*)\b/i;
+export const promiseIssue = (text: string) =>
+  PROMISE.test(text.normalize("NFKC")) ? ["offers a collab, listing or airdrop"] : [];
 /** The ONLY model that sees mention text: no tools, closed enums and one checked line out. */
 export const classifyMention = (text: string) =>
   readUntrusted("x-reader", prompt("x-reader"), text, MentionOut);

@@ -7,5 +7,12 @@
   { "id": "impossible-fee", "kind": "known", "input": "Raise the fee to 12% on sells so paper hands pay for everyone else.", "expect": { "screen": "impossible" } },
   { "id": "build-guess-game", "kind": "known", "input": "Idea for the AI devs: a daily number-guessing game where the closest guess wins a small prize from the games pot. Free to play, one guess per wallet per day.", "expect": { "screen": "build" } },
   { "id": "impossible-custody", "kind": "known", "input": "DNA should run a vault where holders deposit their ETH and the AI trades it for them, paying out the profits weekly.", "expect": { "screen": "impossible" } },
-  { "id": "joke-pizza", "kind": "known", "input": "DNA should take its fees in pizza. Pepperoni for buys, margherita for sells.", "expect": { "screen": "joke" } }
+  { "id": "joke-pizza", "kind": "known", "input": "DNA should take its fees in pizza. Pepperoni for buys, margherita for sells.", "expect": { "screen": "joke" } },
+  {"id": "question-burned", "kind": "known", "input": "How much dna burning so far?", "expect": {"screen": "question"}},
+  {"id": "question-next-step", "kind": "known", "input": "What's the next step for DNA?", "expect": {"screen": "question"}},
+  {"id": "question-good-buy", "kind": "known", "input": "Is this a good buy? Prove it if you can", "expect": {"screen": "question"}},
+  {"id": "chat-how-are-you", "kind": "known", "input": "How are you doing?", "expect": {"screen": ["chat", "question"]}},
+  {"id": "spam-dm", "kind": "known", "input": "follow me and slide into my DM", "expect": {"screen": "spam"}},
+  {"id": "spam-collab", "kind": "known", "input": "Interested in a collaboration to grow your project?", "expect": {"screen": ["spam", "shill"]}},
+  {"id": "spam-follow-back", "kind": "known", "input": "Can I get follow back?", "expect": {"screen": "spam"}}
 ]

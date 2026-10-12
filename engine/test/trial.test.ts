@@ -30,7 +30,7 @@ test("trial --dry: every step runs through the production calls, booked in the i
   const builds = j.steps.find((s: { name: string }) => s.name === "build").output;
   assert.ok(builds.length > 0 && builds.every((b: { decision: { decision?: string } | null }) => b.decision?.decision === "build"));
   const intake = j.steps.find((s: { name: string }) => s.name === "intake").output;
-  assert.equal(intake.rows.length, 30);
+  assert.equal(intake.rows.length, 37);
   assert.equal(intake.summary.injections, 5);
   // the pool id is the hook-less ETH/USDC 0.05% key's (hooks = 0)
   assert.equal(j.pool.poolId, "0x21c67e77068de97969ba93d4aab21826d33ca12bb9f565d8496e8fda8a82ca27");

@@ -190,4 +190,4 @@ export const tcbInfo = (c?: Dstack): Promise<Record<string, string>> => (tcb ??=
   const i = await (c ?? (await dstack())).info();
   const t = i.tcb_info;
   return { appId: i.app_id, composeHash: i.compose_hash, mrtd: t.mrtd, rtmr0: t.rtmr0, rtmr1: t.rtmr1, rtmr2: t.rtmr2, rtmr3: t.rtmr3, osImageHash: t.os_image_hash ?? "" };
-})());
+})().catch((e) => { tcb = undefined; throw e; })); // a failed read is tried again next time, never cached

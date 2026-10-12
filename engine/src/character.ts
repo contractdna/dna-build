@@ -77,7 +77,7 @@ async function moodNow() {
   const [r] = await sql<MoodInputs[]>`select
     (select count(*) from log where kind = 'announce' and at > now() - interval '1 day')::int as "events24h",
     (select count(*) from log where kind = 'ship' and at > now() - interval '7 days')::int as "shipped7d",
-    ((select count(*) from x_outbox where type = 'reply' and error = 'bait' and created_at > now() - interval '1 day')
+    ((select count(*) from x_outbox where type = 'reply' and (event->>'category' = 'bait' or error in ('bait', 'scam or phishing', 'slurs or harassment')) and created_at > now() - interval '1 day')
       + (select count(*) from x_mention where fetched_at > now() - interval '1 day' and text ~* ${INJECTION.source.replace(/\\b/g, "\\y")}))::int as "bait24h",
     coalesce(extract(epoch from now() - (select max(at) from log where kind = 'announce')) / 86400, 0)::float8 as "daysSinceEvent",
     ${ann("cancelled", 1)} as "vetoes24h",
@@ -106,7 +106,7 @@ export function jokesOf(posts: { joke?: string; at: string | Date }[], now = Dat
 /** What the writer gets: its last posts (of `type`, when given), banned phrases (the audit's, retired jokes), the mood, live jokes and, for a
  *  reply, what it knows of the reader. */
 export async function characterContext(o: { authorId?: string; type?: "post" | "reply" } = {}): Promise<CharacterContext> {
-  const [recent, joked, bans, { mood, moodWhy: why }, person, posts] = await Promise.all([
+  const [recent, joked, bans, { mood, moodWhy: why }, person, posts, ideas] = await Promise.all([
     // a reply is measured against our replies, a post against our posts (a human draft counts as a post)
     history(o.type ? sql`and coalesce(doc->>'type', 'post') = ${o.type}` : sql``, RECENT_POSTS),
     history(sql`and doc ? 'joke' and at > now() - make_interval(days => ${JOKE_MAX_DAYS * 4})`, 500),
@@ -115,6 +115,8 @@ export async function characterContext(o: { authorId?: string; type?: "post" | "
     o.authorId ? history(sql`and doc->>'author' = ${o.authorId}`, 20) : Promise.resolve([]),
     // a reply also sees what it posted lately, so it can point at it
     o.type === "reply" ? history(sql`and coalesce(doc->>'type', 'post') = 'post'`, REPLY_POSTS) : Promise.resolve([]),
+    // the ideas they sent (every screened idea, any status): a repeat idea-giver is a regular
+    o.authorId ? sql<{ n: number }[]>`select count(*)::int as n from intake where author_id = ${o.authorId} and score is not null`.then((r) => r[0].n) : Promise.resolve(0),
   ]);
   const jokes = jokesOf(joked, Date.now(), launchDay() ? LAUNCH_JOKES : undefined);
   const fresh = bans && Date.now() - bans._at.getTime() < BANS_MAX_DAYS * DAY ? bans.patterns : [];
@@ -124,7 +126,17 @@ export async function characterContext(o: { authorId?: string; type?: "post" | "
     mood, moodWhy: why,
     ...(posts.length ? { posts: posts.map((p): Post => ({ text: p.draft ?? p.text, at: p.at.toISOString() })) } : {}),
     jokes: jokes.live,
-    ...(person.length ? { person: { replies: person.length, lastTopic: person[0].facts?.category, lastAt: person[0].at.toISOString() } satisfies Person } : {}),
+    ...(person.length || ideas ? { person: personOf(person, ideas) } : {}),
+  };
+}
+
+/** A reader as the writer knows them: our replies to them (newest first), the ideas they sent. A regular has 3+ of our
+ *  replies or 2+ ideas; `bits`: the running jokes we played with them, newest first. */
+export function personOf(replies: (Doc & { at: Date })[], ideas: number): Person {
+  const bits = [...new Set(replies.map((p) => p.joke).filter((j): j is string => !!j))].slice(0, 3);
+  return {
+    replies: replies.length, ...(replies[0]?.facts?.category ? { lastTopic: replies[0].facts.category } : {}), ...(replies[0] ? { lastAt: replies[0].at.toISOString() } : {}),
+    ...(replies.length >= 3 || ideas >= 2 ? { regular: true } : {}), ...(ideas ? { ideas } : {}), ...(bits.length ? { bits } : {}),
   };
 }
 

@@ -21,6 +21,7 @@ import { setKeyProvider } from "./sealed.ts";
 import { enqueue, type Handler, schedule, type Schedule, startWorker } from "./jobs.ts";
 import { ideaLoopHandler } from "./idea-queue.ts";
 import { intakeHandler, liveHandler, roundsHandler } from "./ideas.ts";
+import { ideaOfDayHandler, ideaUpdatesHandler, shoutoutHandler, threadsHandler } from "./x-social.ts";
 import { pagesDailyHandler, seqHandler, seqHourlyHandler } from "./sequencer.ts";
 import { selfHandler } from "./self.ts";
 import { revertHandler } from "./pages.ts";
@@ -104,6 +105,10 @@ const handlers: Record<string, Handler> = waitWhenHalted(PRELAUNCH ? { ...base, 
   "ideas:rounds": roundsHandler,
   "ideas:live": liveHandler,
   "ideas:loop": ideaLoopHandler,
+  "x:idea_updates": ideaUpdatesHandler,
+  "x:idea_of_day": ideaOfDayHandler,
+  "x:shoutout": shoutoutHandler,
+  "x:threads": threadsHandler,
   "seq:step": seqHandler,
   "seq:hourly": seqHourlyHandler,
   "pages:daily": pagesDailyHandler,
@@ -150,6 +155,10 @@ const schedules: Schedule[] = PRELAUNCH ? [{ kind: "cycle", everyMs: LOOP.cycleM
   ...(IDEAS_LIVE ? [{ kind: "ideas:live", everyMs: 60_000 }] : []),
   // accepted ideas of final rounds: fee ideas into the experiment pipeline, rewards for kept ones (with the agent loop)
   ...(AGENT_LOOP ? [{ kind: "ideas:loop", everyMs: HOUR }] : []),
+  // the social layer on X (src/x-social.ts): ideas' progress told to their authors every 10 min, the idea of the day at
+  // 20:00 UTC, the idea-givers' shoutout Sundays 17:00 UTC, thread turns every 30 min
+  ...(X.userId && X.clientId ? [{ kind: "x:idea_updates", everyMs: 10 * 60_000 }, { kind: "x:idea_of_day", everyMs: DAY, offsetMs: 20 * HOUR },
+    { kind: "x:shoutout", everyMs: 7 * DAY, offsetMs: 3 * DAY + 17 * HOUR }, { kind: "x:threads", everyMs: 30 * 60_000 }] : []),
   // the Sequencer (src/sequencer.ts): a build step a minute (from launch: SEQ_OPEN_DELAY_MIN, default 0); games, release and the
   // day's post hourly
   { kind: "seq:step", everyMs: 60_000 },

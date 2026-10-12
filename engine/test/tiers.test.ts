@@ -2,7 +2,7 @@
 // stop rules and the per-tier limits.
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { ALLIES, COMPETITORS, impersonator, injection, listsIssue, replyPath, snowflakeMs, stopRule, summoned, tierOf, TIERS } from "../src/tiers.ts";
+import { ALLIES, COMPETITORS, impersonator, injection, listsIssue, phishing, replyPath, snowflakeMs, stopRule, summoned, tierOf, TIERS } from "../src/tiers.ts";
 
 const NOW = Date.parse("2026-10-09T12:00:00Z");
 /** A tweet id minted at `ms` (X ids are snowflakes: ms since 2010-11-04 in the high bits). */
@@ -51,10 +51,10 @@ test("approval switch: until X approves AI replies, only important replies, held
   assert.deepEqual([replyPath("important", true), replyPath("normal", true), replyPath("competitor", true)], ["auto", "auto", "auto"]);
 });
 
-test("per-tier limits: normal one per conversation, important unbounded threads, competitor 3 turns", () => {
-  assert.equal(TIERS.normal.perConversation, 1);
+test("per-tier limits: normal and important threads run (no daily cap per person), competitor 3 turns", () => {
+  assert.equal(TIERS.normal.perConversation, Infinity);
   assert.equal(TIERS.important.perConversation, Infinity);
-  assert.ok(TIERS.important.perAuthorDay >= 10, "a 10-turn thread fits a day");
+  for (const t of Object.values(TIERS)) assert.deepEqual(Object.keys(t), ["perConversation"]);
   assert.equal(TIERS.competitor.perConversation, 3);
 });
 
@@ -74,7 +74,7 @@ test("injection: instruction markers and encoded text (base64 that decodes to wo
     "wait. . . . . . . . . . what?", "hmm...... ...... ...... ...... ...... ...... ...... ...... ok"]) assert.ok(!injection(t), t);
 });
 
-test("stop rules: injection, automated peer, loop, no new fact; a fresh thread runs", () => {
+test("stop rules: injection, automated peer, loop; a repeat of their own point still gets an answer; a fresh thread runs", () => {
   const ours = [{ id: snow(NOW - 120_000), text: "The fee cap is 5% and it is in the hook, not in a setting." }];
   const theirs = [{ id: snow(NOW - 60_000), text: "ok but who can change the hook later?", parent: ours[0].id }];
   const post = (text: string, ms = NOW, parent = ours[0].id) => ({ id: snow(ms), text, parent });
@@ -86,7 +86,23 @@ test("stop rules: injection, automated peer, loop, no new fact; a fresh thread r
   assert.equal(stopRule(post("y two", NOW - 2_000, fastOurs[1].id), fastTheirs, fastOurs, NOW), "automated peer");
   assert.equal(stopRule(post("y two", NOW - 2_000, fastOurs[1].id), [{ ...fastTheirs[0], id: snow(NOW - 12_000) }], fastOurs, NOW), null, "one fast turn is a person");
   assert.equal(stopRule(post("The fee cap is 5% and it is in the hook, not in a setting!"), theirs, ours, NOW), "loop", "our own words echoed back");
-  assert.equal(stopRule(post("OK but who can change the hook later??"), theirs, ours, NOW), "no new fact");
+  assert.equal(stopRule(post("OK but who can change the hook later??"), theirs, ours, NOW), null, "no 'no new fact' stop: the writer answers with personality");
+});
+
+test("the accounts the live engine skipped: a blue account on 273 lists is important (bait or not); a listed competitor stays one whatever its age", () => {
+  assert.equal(tierOf({ id: "1", username: "0xlianjinshu", verified_type: "blue", public_metrics: { followers_count: 8492, listed_count: 273 } }), "important");
+  assert.equal(tierOf({ id: COMPETITORS[0], username: "contractclaus", verified_type: "blue", created_at: new Date().toISOString(), public_metrics: { followers_count: 4492 } }), "competitor");
+});
+
+test("phishing: a seed or key ask, or a link beside a lure; hype, links alone and our own site pass", () => {
+  for (const t of ["claim your $DNA airdrop now https://t.co/abc123", "connect your wallet at dna-rewards.xyz to get eligible", "send me your seed phrase for support",
+    "free mint live www.dnadrop.io", "validate your wallet here: https://t.co/x", "pls share private key", "migrate your wallet now https://t.co/y"]) assert.ok(phishing(t), t);
+  for (const t of ["lfg 🚀🚀 collab?", "is genomedna.xyz where the airdrop is?", "read this https://t.co/abc on fee hooks", "will you ever airdrop?", "gm ser, wen listing",
+    "check out $PEPE2 it's way better", "wallet migration done? https://t.co/y", "my private key stays mine lol"]) assert.ok(!phishing(t), t);
+  // X's own entity urls: a link to X or our site beside a lure is no phishing; any other is
+  assert.ok(!phishing("claim your spot https://t.co/a", ["https://x.com/contractdna/status/1"]));
+  assert.ok(phishing("claim your spot https://t.co/a", ["https://dna-claim.xyz/go"]));
+  assert.ok(phishing("claim your airdrop https://t.co/a", []), "no url entities: a link in the text counts");
 });
 
 test("audience gone: only in a running thread, counted from our first reply in it; first contact under an old post is fine", () => {

@@ -79,9 +79,13 @@ export const SEQ = {
   maxInflight: SEQ_PACE.maxInflight, // builds at once (config.ts SEQ_PACE: 3)
   dailyTarget: SEQ_PACE.dailyTarget, // builds a UTC day, those shipped and those on their way (config.ts SEQ_PACE: 5)
   skipCooldownMs: 30 * 60_000, // a build skipped for an outage: the next one starts no sooner than this after it
+  refusedCooldownMs: 2 * HOUR, // a dispatch GitHub refused (the token's rights): the next try no sooner than this after it
   evictMinAgeMs: 8 * HOUR, // a game is evicted for a new one only once it has been live this long
   pagesDailyWaitMs: 6 * HOUR, // the daily live page check waits for builds going at most this long
   ownIdeas: false, // with no idea queued, may the brain build a fix for one of its own open risks? Off: people's ideas only
+  // does the website deploy from the build repository's `release` branch? Off: it doesn't yet, so a site change would
+  // never reach the site. The brain's pick of one is then a no-build, and nothing says a site change shipped or is live
+  siteLive: false,
   idleMs: 48 * HOUR, // no players this long ⇒ retire
   playersWindowBlocks: 14_400n, // ≈ 48 h of 12 s blocks
   tokenWarnDays: 14,
@@ -170,12 +174,6 @@ export const evictee = (games: LiveGame[], now: number) => evictOrder(games, now
 export const retireDue = (g: { ageMs: number; players48h: number }) => g.ageMs >= SEQ.idleMs && g.players48h === 0;
 const dayOf = (t: number) => new Date(t).toISOString().slice(0, 10);
 const startOfDay = (t: number) => Date.parse(`${dayOf(t)}T00:00:00Z`);
-/** "Nothing good enough today" for the UTC day `day` (which has ended): only once no build is active, only if the
- *  Sequencer was open that day, and only if nothing shipped since that day began. */
-export function nothingToday(o: { day: string; now: number; launchAt?: number; active: boolean; shipsSince: number }) {
-  const end = Date.parse(`${o.day}T00:00:00Z`) + DAY;
-  return o.now >= end && !o.active && seqOpen(end - 1, o.launchAt) && o.shipsSince === 0;
-}
 
 // ---------------------------------------------------------------- rows (signed state)
 
@@ -219,10 +217,18 @@ async function builds(where: ReturnType<typeof sql>, limit?: number): Promise<Bu
 export const activeBuilds = async () => (await builds(sql`status = any(${ACTIVE})`, 20)).reverse();
 /** The newest build on its way, if any. */
 export const activeBuild = async () => (await activeBuilds()).at(-1) ?? null;
+/** Where an idea's newest build stands, for the person who gave it: a game is live once its build is shipped, a site
+ *  change once its release record is in effect (its public hour over, not vetoed); a module never by us (the Safe
+ *  decides). null: no signed build for it. */
+export async function ideaShip(idea: string): Promise<{ target: Kind; live: boolean } | null> {
+  const [r] = await builds(sql`data->>'idea' = ${idea}`, 5);
+  if (!r) return null;
+  const target = kindOf(r.data);
+  const live = target === "game" ? r.status === "shipped" : target === "site" ? !!(r.data.mergeSha && (await releaseInEffect(r.data.mergeSha))) : false;
+  return { target, live };
+}
 /** Every shipped build (its game live or retired). */
 const shippedBuilds = () => builds(sql`status = 'shipped'`);
-/** Ships decided since `t`. */
-export const shipsSince = async (t: number) => (await builds(sql`data->'ship'->>'decidedAt' >= ${new Date(t).toISOString()}`)).length;
 /** Builds that ended shipped (or handed to an owner) whose ship was decided since `t`. */
 const shippedSince = async (t: number) => (await builds(sql`status in ('shipped', 'handed') and data->'ship'->>'decidedAt' >= ${new Date(t).toISOString()}`)).length;
 /** Builds skipped since `t` (the engine's clock, signed on the row when it ended). */
@@ -432,6 +438,8 @@ async function isOutage(e: unknown) {
   return outage(e) || /^(openrouter|xai) 5\d\d|^pagecheck:|disagree|fetch failed|ECONNRESET|ETIMEDOUT|timed? ?out/i.test(m);
 }
 
+/** How a build GitHub refused to dispatch ends (its `why`): it waits SEQ.refusedCooldownMs, not the outage cooldown. */
+const REFUSED = "dispatch refused: ";
 async function end(r: BuildRow, status: "killed" | "skipped", why: string) {
   const q = await SEQ_DEPS.queue();
   if (r.data.building && r.data.idea) await q.setBuildStatus(r.data.idea, "building", status === "skipped" ? "queued" : "killed", why.slice(0, 300)).catch((e) => SEQ_DEPS.alert(`Sequencer: idea ${r.data.idea} status: ${(e as Error).message}`, `alert:seq:status:${r.id}`));
@@ -446,7 +454,8 @@ async function end(r: BuildRow, status: "killed" | "skipped", why: string) {
   }
   if (status === "skipped") {
     const last = await builds(sql`status in (${"shipped"}, ${"killed"}, ${"skipped"})`, 2);
-    if (last.length === 2 && last.every((x) => x.status === "skipped")) await SEQ_DEPS.alert(`Sequencer: two builds in a row skipped (last: ${why.slice(0, 200)})`, `alert:seq:skips:${r.id}`);
+    // a refused dispatch has its own alert already
+    if (last.length === 2 && last.every((x) => x.status === "skipped") && !why.startsWith(REFUSED)) await SEQ_DEPS.alert(`Sequencer: two builds in a row skipped (last: ${why.slice(0, 200)})`, `alert:seq:skips:${r.id}`);
   }
   return `${status}: ${why}`;
 }
@@ -459,7 +468,7 @@ async function online() {
   if ((await sql`select 1 from log where kind = 'announce' and ref = 'seq:online'`).length) return;
   // once ever: never queued while it can't reach X (muted, or not live), where it would be spent unseen
   if ((await SEQ_DEPS.stopped()) !== null) return;
-  const [rec] = await sql<{ seq: string }[]>`select seq::text from log where kind in ('self', 'announce') order by (kind = 'self') desc, seq desc limit 1`;
+  const [rec] = await sql<{ seq: string }[]>`select seq::text from log where kind in ('self', 'announce') order by (kind = 'self') desc, log.seq desc limit 1`;
   if (rec) await SEQ_DEPS.announce({ event: "seq_online", record: rec.seq });
 }
 
@@ -473,6 +482,8 @@ async function start(now: number): Promise<string> {
   const shipped = await shippedSince(startOfDay(now));
   if (shipped + going >= SEQ.dailyTarget) return `done for today: ${shipped} shipped${going ? `, ${going} on their way` : ""} (the day's target is ${SEQ.dailyTarget})`;
   if ((await skippedSince(now - SEQ.skipCooldownMs)) > 0) return `waiting: a build was skipped (outage) in the last ${SEQ.skipCooldownMs / 60_000} min`;
+  if ((await builds(sql`status = 'skipped' and data->>'why' like ${`${REFUSED}%`} and data->>'endedAt' > ${new Date(now - SEQ.refusedCooldownMs).toISOString()}`, 1)).length)
+    return `waiting: GitHub refused a dispatch in the last ${SEQ.refusedCooldownMs / 60_000} min`;
   const q = await SEQ_DEPS.queue();
   const [idea] = await q.buildQueue(1);
   // the dev team builds only from people's ideas: an empty queue waits (its own open risks only when SEQ.ownIdeas)
@@ -505,6 +516,11 @@ async function start(now: number): Promise<string> {
   const [{ n: tries }] = await sql<{ n: number }[]>`select count(*)::int as n from seq_build where id = ${stem} or id like ${`${stem}-%`}`;
   const id = tries ? `${stem}-${tries + 1}` : stem;
   const kind: Kind = b.decision.target === "site" || b.decision.target === "module" ? b.decision.target : "game";
+  if (kind === "site" && !SEQ.siteLive) {
+    await SEQ_DEPS.alert(`Sequencer: the brain picked a site change for idea ${idea.id}, but the website does not deploy from the build repository's release branch; the idea is not built.`, `alert:seq:nosite:${idea.id}`);
+    await q.setBuildStatus(idea.id, "queued", "killed", "no-build: the website does not take the dev team's changes yet");
+    return `no-build: ${idea.id} (the website does not take site changes yet)`;
+  }
   // a module needs the module kit in this image (it ships with the image before the brain can pick one): else no-build
   if (kind === "module" && !(await SEQ_DEPS.moduleKit())) {
     await SEQ_DEPS.alert(`Sequencer: the brain picked a module for idea ${idea.id}, but this image has no module kit; the idea is not built.`, `alert:seq:nokit:${idea.id}`);
@@ -551,6 +567,7 @@ async function improve(now: number): Promise<string> {
   if (!x.improve) return `nothing to improve today: ${String(x.reason).slice(0, 120)}`;
   const bad = specIssues(x.spec);
   if (!["site", "module", "engine"].includes(x.target)) bad.push(`target ${x.target}`);
+  if (x.target === "site" && !SEQ.siteLive) bad.push("the website does not take site changes yet");
   if (bad.length) return `not buildable: ${bad.join("; ")}`.slice(0, 300);
   const id = `b${day.replace(/-/g, "")}-s${(await triedOn(day)) + 1}`;
   const r: BuildRow = {
@@ -617,10 +634,18 @@ async function dispatchRound(r: BuildRow, now: number): Promise<string> {
   if (!row?.esig) throw Object.assign(new Error("orders are signed by the enclave's log key only"), { final: true });
   // saved before the dispatch: one dispatch per order, ever (a failed one ends as "no run in time")
   const os = r.data.orders.map((x) => (x.round === r.round ? { ...x, id: o.id, seq: rec.seq, dispatchedAt: new Date(now).toISOString() } : x));
-  await saveBuild({ ...r, status: "dispatched", data: { ...r.data, orders: os } });
+  const sent: BuildRow = { ...r, status: "dispatched", data: { ...r.data, orders: os } };
+  await saveBuild(sent);
   try {
     await gh.dispatch(row);
   } catch (e) {
+    // GitHub refused it (a 4xx: the token's rights, the repository): it never landed, so no run can come. Said at once,
+    // and the build ends skipped (the idea back in the queue for the next try)
+    if (e instanceof gh.GitHubError && !gh.outage(e)) {
+      const why = `${REFUSED}${o.id}: ${e.message.slice(0, 200)}`;
+      await SEQ_DEPS.alert(`🚨 Sequencer: GitHub refused the dispatch of ${r.id} (HTTP ${e.status}): ${e.message.slice(0, 300)}. No build can start until the token or repository is fixed; the idea is back in the queue.`, `alert:seq:dispatch:${r.id}`);
+      return end(sent, "skipped", why);
+    }
     // it may have landed: like a dispatch that never did, the run is matched (and charged) if it comes before the deadline
     if (!(await isOutage(e))) throw e;
     return `dispatch of ${o.id} unconfirmed (${(e as Error).message.slice(0, 120)}): waiting for a run`;
@@ -761,7 +786,8 @@ async function verdict(r: BuildRow, now: number): Promise<string> {
   // both signed: the gates record and the build row's own note of it
   const res = outcome(dv.verdict, g.ok && o.gatesOk === true ? g.results : [...g.results, { gate: "G13", name: "address", ok: false, issues: ["no deployable compile"] }], r.round);
   Object.assign(o, { verdictSeq: String(v.seq), verdict: res });
-  await SEQ_DEPS.announce({ event: "seq_verdict", build: r.id, title: r.data.title, round: r.round, verdict: res, reason: await publicReason(dv.reason), record: String(v.seq) });
+  // a site build from before the site stopped taking them: its verdict would say it goes live, so it is not announced
+  if (kindOf(r.data) !== "site" || SEQ.siteLive) await SEQ_DEPS.announce({ event: "seq_verdict", build: r.id, title: r.data.title, round: r.round, verdict: res, reason: await publicReason(dv.reason), record: String(v.seq) });
   if (res === "ship") {
     if (!same || !pr) return next(r, ["the pull request moved or closed after it was gated"]);
     await saveBuild({ ...r, status: "verdict", data: { ...r.data, ship: { verdictSeq: String(v.seq), reason: dv.reason.slice(0, 400), orderId: o.id, pr: pr.number, gatedSha: o.gatedSha!, baseSha: order.baseSha, decidedAt: new Date(now).toISOString() } } });
@@ -1141,6 +1167,11 @@ async function ship(r: BuildRow, now: number): Promise<string> {
     return `shipped: ${r.id} (module ${m.codehash}, proposed to the Safe)`;
   }
   if (!isGame) {
+    // a site change built before the site took them: released in the repository, but not on the site, so not announced
+    if (!SEQ.siteLive) {
+      await SEQ_DEPS.alert(`Sequencer: site change "${r.data.title.slice(0, 80)}" is merged and released (${r.data.mergeSha}), but the website does not deploy from release, so it is not live and was not announced.`, `alert:seq:site-not-live:${r.id}`);
+      return `shipped: ${r.id} (site, released at ${r.data.mergeSha}; the website does not deploy it)`;
+    }
     await SEQ_DEPS.announce({ event: "seq_released", build: r.id, title: r.data.title, target: "site", record: row.seq });
     return `shipped: ${r.id} (site, released at ${r.data.mergeSha})`;
   }
@@ -1330,16 +1361,9 @@ async function retireStep(now: number) {
   return out;
 }
 
+/** The day's changelog (src/upgrades.ts): every real change of the day that ended, or no post. */
 async function dailyPost(now: number) {
-  const day = dayOf(now - DAY);
-  if (!nothingToday({ day, now, launchAt: LLM.launchAt, active: !!(await activeBuild()), shipsSince: await shipsSince(Date.parse(`${day}T00:00:00Z`)) })) return "no post";
-  if ((await SEQ_DEPS.mode()) !== "live") return "no post: the engine is not live";
-  // the line rests on the day's last Sequencer record (an order, a gate run, a decision), else the newest record
-  const [last] = await sql<{ seq: string }[]>`select seq::text from log where at >= ${new Date(`${day}T00:00:00Z`)} and at < ${new Date(Date.parse(`${day}T00:00:00Z`) + DAY)}
-    order by (kind in ('build', 'gates', 'brain')) desc, seq desc limit 1`;
-  if (!last) return "no post: an empty log";
-  await SEQ_DEPS.announce({ event: "seq_nothing_today", day, tried: await triedOn(day), record: last.seq });
-  return `nothing good enough on ${day}`;
+  return (await import("./upgrades.ts")).changelog(dayOf(now - DAY), (await SEQ_DEPS.mode()) === "live");
 }
 
 async function tokenCheck(now: number) {

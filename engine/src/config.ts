@@ -19,6 +19,8 @@ export type Deployment = Record<"safe" | "poolManager" | "token" | "hook" | "reg
   gameFactory?: Address; gameFunder?: Address;
   /** the funding path's Zodiac modules (contracts/script/FundingSetup.s.sol): the funder key queues through Roles into Delay */
   roles?: Address; delay?: Address;
+  /** the engine's code update path: the DstackApp and its owner, the TimelockController the Safe schedules through */
+  dstackApp?: Address; codeTimelock?: Address;
   /** public labels for addresses the treasury sends DNA to (address → a few plain words, no digits or links, e.g.
    *  "growth team"); the treasury posts look back to `treasuryFromBlock` */
   labels?: Record<string, string>; treasuryFromBlock?: number;
@@ -152,8 +154,8 @@ export const X = {
   refreshToken: env.X_REFRESH_TOKEN, // seed (and re-auth); rotated tokens live SEALED in the `secret` table
   userId: env.X_USER_ID,
   // ≤ 25 own posts a UTC day, ≥ 20 min apart (≤ 40, ≥ 10 min apart in the launch window). Replies (src/tiers.ts) only to posts that @mention or quote us, from
-  // accounts at least 30 days old with 50 followers, no badge needed (src/ideas.ts accountIssue); ≤ 2 per author a UTC day for a normal account (the
-  // tiers set their own), under a safety ceiling of 200 a day and 30 an hour. An item queued longer than staleMs is
+  // any account (no age, follower or badge gate); an anti-loop brake of ≤ 10 replies an hour to one account, under a
+  // safety ceiling of 1,000 a day and 120 an hour. An item queued longer than staleMs is
   // dropped. Mentions are read every minute (X bills per mention returned, not per call)
   dailyPosts: num(env.X_DAILY_POSTS, 25),
   // the launch window: every UTC day the X_LAUNCH_WINDOW_H after LLM_LAUNCH_AT touch, up to X_LAUNCH_DAILY_POSTS a
@@ -161,9 +163,9 @@ export const X = {
   launchDailyPosts: num(env.X_LAUNCH_DAILY_POSTS, 40),
   launchSpacingMs: num(env.X_LAUNCH_POST_SPACING_MIN, 10) * 60_000,
   launchWindowMs: num(env.X_LAUNCH_WINDOW_H, 48) * 3600_000,
-  dailyReplies: num(env.X_DAILY_REPLIES, 200),
-  hourlyReplies: num(env.X_HOURLY_REPLIES, 30),
-  repliesPerAuthor: num(env.X_REPLIES_PER_AUTHOR, 2),
+  dailyReplies: num(env.X_DAILY_REPLIES, 1000),
+  hourlyReplies: num(env.X_HOURLY_REPLIES, 120),
+  repliesPerAuthorHour: num(env.X_REPLIES_PER_AUTHOR_HOUR, 10),
   spacingMs: num(env.X_POST_SPACING_MIN, 20) * 60_000,
   staleMs: num(env.X_STALE_HOURS, 6) * 3600_000,
   mentionsMs: num(env.X_MENTIONS_INTERVAL_MS, 60_000),
@@ -173,7 +175,7 @@ export const X = {
   // approved: every eligible author gets an automatic reply, important accounts too. X_HOLD_IMPORTANT=1 (default off)
   // puts an important account's reply back behind a signer's Send tap
   holdImportant: env.X_HOLD_IMPORTANT === "1",
-  sendMs: num(env.X_SEND_INTERVAL_MS, 60_000), // x:send drains one outbox item per run
+  sendMs: num(env.X_SEND_INTERVAL_MS, 20_000), // x:send drains one outbox item per run (≤ 180 an hour: room for the reply ceiling)
 };
 /** Post media. The studio (outside the enclave) generates art; the enclave re-checks it, draws the facts and decides:
  *  a card that passes every check posts on its own. */

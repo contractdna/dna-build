@@ -107,7 +107,8 @@ test("every post and reply text is in a log record before the X API call; the wr
     assert.deepEqual(second.candidates[1].issues, ['too similar: repeat opening "synthetic post about"']);
     assert.equal(second.draft, sent[1].split("\n")[0]);
     assert.ok((SHAPE_KEYS as readonly string[]).includes(second.shape));
-    assert.notEqual(second.shape, (await attempt(sent[0])).shape, "the shape rotates: never twice in a row for an event");
+    // a rollback is mechanics: the technical shape every time (the rotation of the other shapes: test/character.test.ts)
+    assert.deepEqual([second.shape, (await attempt(sent[0])).shape], ["technical", "technical"], "a rollback is told plainly");
     assert.equal(second.mood, "stung", "a rollback today stings");
     // the persona by hash (null here: no persona configured, the neutral default), never its text
     assert.ok("personaSha256" in second && second.personaSha256 === persona.PERSONA.sha256);

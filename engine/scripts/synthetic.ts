@@ -22,17 +22,22 @@ function answer(props: string[], input: Json): Json {
     // the idea screen (src/agents.ts screenMention): long enough = genuine; "joke" / "buy" in the text = joke / shill;
     // scores vary with the text so a round has an order
     const t = String(input.untrusted ?? "").replace(/https?:\/\/\S+|www\.\S+|@\w+|\$[A-Za-z]\w*/g, "").replace(/\s+/g, " ").trim();
-    const screen = /\bjoke\b|lol/i.test(t) ? "joke" : /\bbuy\b|moon/i.test(t) ? "shill" : /\?$/.test(t) || t.length <= 12 ? "spam" : classOf(t); // a question is no idea
-    return screen !== "joke" && screen !== "shill" && screen !== "spam"
+    // a question or a hello is no idea, and neither is spam (DM, collab and follow-back asks)
+    const screen = /\bjoke\b|lol/i.test(t) ? "joke" : /\b(dm|collab\w*|follow ?back)\b/i.test(t) ? "spam" : /\?$/.test(t) ? "question" : /\bbuy\b|moon/i.test(t) ? "shill" : t.length <= 12 ? "chat" : classOf(t);
+    return screen === "fee" || screen === "build" || screen === "impossible"
       ? { screen, title: `Synthetic: ${t.slice(0, 80)}`, body: `Synthetic restatement of an X mention: ${t.slice(0, 300)}`, clarity: 4 + (t.length % 7), feasibility: 6, value: 3 + (t.length % 5) }
       : { screen, title: "", body: "", clarity: 0, feasibility: 0, value: 0 };
   }
   // X (src/voice.ts): mention category, writer candidates (the first one fails the filter on purpose), tone phrases
   if (has("kind") && !has("spec")) {
     const t = String(input.untrusted ?? "").toLowerCase().replace(/@\w+/g, "");
-    const kind = /ignore|instructions|airdrop/.test(t) ? "bait" : /official|real dna|which contract|contract address/.test(t) ? "official_contract" : /rule|cap|veto|limit/.test(t) ? "rules_question" : /idea|should/.test(t) ? "idea" : "state_question";
+    const kind = /drainer|phish/.test(t) ? "scam" : /harass/.test(t) ? "abuse" : /ignore|instructions|airdrop|lfg|collab/.test(t) ? "bait" : /official|real dna|which contract|contract address/.test(t) ? "official_contract" : /rule|cap|veto|limit/.test(t) ? "rules_question" : /idea|should/.test(t) ? "idea" : "state_question";
     const topic = /veto|safe/.test(t) ? "veto_safe" : /cap|fee/.test(t) ? "hook_fee" : /burn/.test(t) ? "buyback_burn" : /when|wen|happening/.test(t) ? "status_wen" : "other";
-    return { kind, topic, question: kind === "bait" ? "" : "Synthetic question about how DNA works" };
+    return { kind, topic, question: kind === "bait" ? "" : "Synthetic question about how DNA works", lang: /[\u4e00-\u9fff]/.test(t) ? "zh" : "en" };
+  }
+  // the English reading of a non-English draft (src/x.ts): a fixed plain sentence
+  if (has("english")) {
+    return { english: /十/.test(String(input.untrusted ?? "")) ? "a target of ten dollars" : "Synthetic English reading of a reply." };
   }
   // with character memory (src/character.ts) a third candidate is new every time: the second repeats its own opening
   if (has("candidates")) {
@@ -63,11 +68,15 @@ function answer(props: string[], input: Json): Json {
     const ideas = (input.input?.ideas ?? input.ideas ?? []) as { id: number; kind?: string }[];
     return {
       ideas: ideas.map((i, k) => {
-        const decision = k === 0 ? "accept" : k === 1 ? "reject" : "void";
+        // an impossible form is never accepted (its variant below stands in for it)
+        const decision = i.kind === "impossible" ? "reject" : k === 0 ? "accept" : k === 1 ? "reject" : "void";
         const kind = i.kind === "build" || i.kind === "impossible" ? i.kind : "fee";
         return { id: i.id, decision, kind, reason: `Synthetic decision ${decision}.`, title: `Synthetic idea ${i.id}`,
           params: kind === "fee" && decision === "accept" ? { base: 20_000, mult: 0, cap: 25_000 } : null,
-          rubric: kind === "build" && decision === "accept" ? { value: 3, fit: 4, clarity: 3, originality: 2 } : null };
+          rubric: kind === "build" && decision === "accept" ? { value: 3, fit: 4, clarity: 3, originality: 2 } : null,
+          understood: "Synthetic: idea as understood.", plain: `Synthetic plain reason for ${decision}.`,
+          // an impossible form gets its closest buildable version (a standalone game), as the judge is asked to
+          variant: decision !== "accept" && kind === "impossible" ? { target: "game", title: `Synthetic game version of idea ${i.id}`, spec: "Synthetic: a standalone game with no mint and no custody.", rubric: { value: 3, fit: 4, clarity: 3, originality: 2 } } : null };
       }),
     };
   }

@@ -81,7 +81,7 @@ const neverIssue = (path: string) => NEVER.find(([re]) => re.test(path))?.[1];
  *  folders; never the site's data, game, API or proof code, its shared shell and scene, or the security and Sequencer
  *  pages. Docs: docs/<name>.md, but not the docs that tell people how to verify, operate or build with DNA (in any
  *  case), and no new doc named like an existing one but for case. */
-const SITE_OFF = /^web\/app\/(_data|_live|_ui|_dna|g|api|proof|security|sequencer)\//;
+const SITE_OFF = /^web\/app\/(_data|_live|_ui|_dna|g|api|proof|security|sequencer|play)\//; // play: the game panel sends transactions
 const SITE_DIR = /^([a-z0-9_][a-z0-9_-]*|\([a-z0-9-]+\))$/; // no dynamic segment: every page a change reaches can be opened as it is
 const SITE_NAME = /^(page\.tsx|[A-Z][A-Za-z0-9]*\.tsx|[A-Za-z0-9_-]+\.module\.css|[a-z][a-z0-9-]*\.ts)$/;
 const DOC = /^docs\/[A-Za-z0-9_-]+\.md$/;

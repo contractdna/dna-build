@@ -44,3 +44,5 @@ export const getClones = LIVE ? live.getClones : async () => ({ clones: [] as Cl
 export const getProofChain = LIVE ? live.getProofChain : async () => ({ anchors: [] as live.AnchorRow[] });
 /** /proof: the persona, context and newest self-file hashes (LIVE; nothing before the engine's first self record). */
 export const getProofBrain = LIVE ? live.getProofBrain : async (): Promise<live.ProofBrain | null> => null;
+/** /play: the Sequencer's games, newest first (LIVE; none in mock mode). */
+export const getGames = LIVE ? live.getGames : async (): Promise<live.GameLive[]> => [];

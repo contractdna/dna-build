@@ -3,12 +3,12 @@
     "address": "0xc6CD8e3C58f557fBd68e977742Eeb62e3F24a34D",
     "startBlock": 26165041
   },
-  "commit": "fcec127e8dfe99d9d1802b44701a1024386a5e49",
+  "commit": "947a6fed19c115e9bfee7af6c4d8e10415b2ef72",
   "image": "ghcr.io/contractdna/dna-engine",
-  "imageDigest": "sha256:b345a3863a024b1a642194fadfb8fc1e4a1687d70578f9bd704cc23722c2763c",
+  "imageDigest": "sha256:49aed6baef72c6d56e3ebdba61c8334adafbbfe92b88331c12398ad9ff16c336",
   "pagecheckImage": "ghcr.io/contractdna/dna-pagecheck",
-  "pagecheckDigest": "sha256:6b907aeae84cee5e194088ec71003c891967a35f056b83d2d064eb87a0029a64",
-  "composeHash": "50bfb12876861ab2c45fac64a59c9dcd23a3b3086de142776b708253c9573898",
+  "pagecheckDigest": "sha256:0662073f8f123dc828004f8ad8ca2914f809474812b62125048e87e35851c291",
+  "composeHash": "bef4d9799ea314eb993f629363aad3cecf3ca9726f5279a7d3e540d3e6c32ffd",
   "allowedEnvs": [
     "DATABASE_URL",
     "ALCHEMY_KEY",

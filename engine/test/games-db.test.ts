@@ -152,6 +152,26 @@ test("keeper:games: a due draw is simulated first — a gate that says no (Prize
   st.claims = st.ideaReserve + E;
   await games.gameKeeperHandlers["keeper:games"].run(job());
   assert.deepEqual(sentFns(), ["sync"]);
+  // a small arrival: synced once a distribute period, judged from the latest indexed Synced
+  reset();
+  st.claims = st.ideaReserve + E / 50n;
+  await games.gameKeeperHandlers["keeper:games"].run(job());
+  assert.deepEqual(sentFns(), ["sync"], "no Synced yet");
+  reset();
+  await chain(9001, 0, ago(30 * 60), "Synced", { arrived: "0", jackpotPot: "0", ideaReserve: "0", overflowBurned: "0" });
+  await games.gameKeeperHandlers["keeper:games"].run(job());
+  assert.deepEqual(sentFns(), [], "synced 30 min ago");
+  await sql`delete from chain_log where block = 9001`;
+  // a due draw held back by a gate still lets the sync through; one that goes out syncs on its own
+  reset();
+  st.draw = listed();
+  st.reverts.requestDraw = "PrizeTooSmall";
+  await games.gameKeeperHandlers["keeper:games"].run(job());
+  assert.deepEqual(sentFns(), ["sync"], "PrizeTooSmall: the jackpot still moves");
+  reset();
+  await games.gameKeeperHandlers["keeper:games"].run(job());
+  assert.deepEqual(sentFns(), ["requestDraw"], "requestDraw syncs first");
+  st.draw = NO_DRAW();
   st.claims = st.ideaReserve;
 });
 

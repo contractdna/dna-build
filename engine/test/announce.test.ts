@@ -134,7 +134,8 @@ test("live idea mode lines: why a build was picked, an idea the brain will not b
   assert.equal(titleOf({ event: "seq_started", ...b }), 'The AI dev team started building "Last Click"');
   assert.equal(titleOf({ event: "seq_declined", idea: "im:4", title: "Last Click", reason: "it needs custody", record: "12" }), 'The AI dev team will not build "Last Click": it needs custody');
   assert.equal(seqKey({ event: "seq_declined", idea: "im:4", title: "t", reason: "r", record: "12" }), "seq:declined:im:4");
-  assert.equal(titleOf({ event: "idea_judged", idea: 4, title: "Last Click", verdict: "queued", reason: "a clear game" }), 'Idea "Last Click" was accepted and is queued for the AI dev team: a clear game');
+  assert.equal(titleOf({ event: "idea_judged", idea: 4, title: "Last Click", verdict: "queued", reason: "a clear game" }), 'Idea "Last Click" was accepted and is queued for the sequencer: a clear game');
+  assert.equal(titleOf({ event: "idea_judged", idea: 1000004, title: "Holder Hunt", instead: "Holder Hunt", verdict: "queued", reason: "an NFT needs approvals, so a holder game with no NFT instead" }), 'Idea #1000004 can\'t be built as written; its closest buildable version "Holder Hunt" is queued for the sequencer, credited to its author: an NFT needs approvals, so a holder game with no NFT instead');
   assert.equal(titleOf({ event: "idea_judged", idea: 4, title: "", verdict: "rejected", reason: "" }), "Idea #4 was not taken");
   for (const e of ["seq_declined", "idea_judged"]) assert.equal(onX(e), false, `${e}: live idea mode only`);
 });

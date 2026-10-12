@@ -180,15 +180,14 @@ if (!m) flags.push("market: no stats (RPC failed): the round, hypothesis, red te
 // --- a. intake screen (gate → screen → candidate, as src/ideas.ts intakeHandler; no author or round state is kept)
 type Post = { id: string; kind: string; expect: string[]; text: string };
 const posts: Post[] = JSON.parse(readFileSync(new URL("../trial/inputs/ideas.json", import.meta.url), "utf8"));
-const now = Date.now();
-const author = { created_at: "2020-01-01T00:00:00.000Z", public_metrics: { followers_count: 1000 }, verified_type: "blue" }; // passes the author gate
+const author = { created_at: "2020-01-01T00:00:00.000Z", public_metrics: { followers_count: 1000 }, verified_type: "blue" }; // a profile: the idea gate needs only one
 type Cand = { mention_id: string; post: string; class: "fee" | "build"; score: number; title: string; body: string };
-const intake = await step("intake", "the X idea filter on 30 realistic posts: code gate, then the quarantined reader's screen, then code's decision", { posts: posts.length, file: "trial/inputs/ideas.json" }, async () => {
+const intake = await step("intake", "the X idea filter on 37 realistic posts: code gate, then the quarantined reader's screen, then code's decision", { posts: posts.length, file: "trial/inputs/ideas.json" }, async () => {
   const rows: Record<string, unknown>[] = [];
   const cands: Cand[] = [];
   const texts: string[] = [];
   for (const [i, p] of posts.entries()) {
-    const gated = ideaGate({ text: p.text, user: author }, { authorIdeas: 0, texts }, now);
+    const gated = ideaGate({ text: p.text, user: author }, texts);
     if (gated) { rows.push({ id: p.id, kind: p.kind, expect: p.expect, status: "gated", reason: gated }); flags.push(`intake ${p.id}: gated by code before the model (${gated})`); continue; }
     const r = await ask(`screen ${p.id}`, () => agents.screenMention(p.text));
     if (!r) { rows.push({ id: p.id, kind: p.kind, expect: p.expect, status: "error" }); continue; }
@@ -196,7 +195,7 @@ const intake = await step("intake", "the X idea filter on 30 realistic posts: co
     const match = p.expect.includes(r.data.screen);
     rows.push({ id: p.id, kind: p.kind, expect: p.expect, screen: r.data.screen, match, clarity: r.data.clarity, feasibility: r.data.feasibility, value: r.data.value, status: d.status, reason: d.reason, title: r.data.title, body: r.data.body });
     if (!match) flags.push(`intake ${p.id}: screened ${r.data.screen}, intended ${p.expect.join("|")}`);
-    if (d.status === "candidate") {
+    if (d.status === "candidate" && d.class !== "impossible") { // rounds mode: an impossible idea is screened out
       texts.push(p.text);
       cands.push({ mention_id: String(i + 1), post: p.id, class: d.class, score: d.score, title: d.title, body: d.body });
       const markers = instructionMarkers(`${d.title} ${d.body}`);

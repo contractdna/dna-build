@@ -65,28 +65,34 @@ export type PendingInput = {
   /** `fromX`: ideas from X the intake took in for this round (they go on-chain after it closes) */
   ideaRound: { endsMs: number; ideas: number; fromX?: number } | null;
   draw: { stage: "veto" | "randomness"; etaMs?: number } | null;
+  /** a code update scheduled in the timelock, in its hour (src/upgrades.ts pendingUpdate) */
+  update?: { etaMs: number } | null;
 };
 const OP_WORDS: Record<string, string> = { SetParams: "new fee parameters", SetShadow: "shadow test", SetCanary: "canary test", PromoteActive: "promotion of the tested plate", Register: "module registration" };
 const mins = (now: number, at: number) => Math.max(0, Math.ceil((at - now) / 60_000));
 /** A build title a post may carry (digit-free, no link or handle), quoted; else none. */
 const titled = (t: string | undefined) => (t && !/\p{N}/u.test(t) && !/https?:|www\.|@|#|\$/.test(t) ? `"${t.replace(/"/g, "").slice(0, 80)}"` : undefined);
-/** The pending block (pure): what is queued, what waits for the Safe's signers, the dev team, the idea round, a draw. */
-export function pendingOf(i: PendingInput): Pending[] {
+/** The pending block (pure): what is queued, what waits for the Safe's signers, the dev team, the idea round, a draw.
+ *  `broadcast` (a status, the opening post): the Safe's queued ops and a code update are left out, each has its own post
+ *  (src/upgrades.ts); a reply keeps them ("wen?" gets the minutes). */
+export function pendingOf(i: PendingInput, broadcast = false): Pending[] {
   const out: Pending[] = [];
   for (const q of i.queued.slice(0, 3)) {
+    if (broadcast && !q.byAgent) continue;
     out.push(q.byAgent
       ? { what: `my ${OP_WORDS[q.op] ?? "change"} sits in the public veto hour`, waitingOn: "the clock and the Safe", minutesLeft: mins(i.now, q.etaMs) }
       : { what: `the Safe's ${q.op} in its public hour`, waitingOn: "the clock", minutesLeft: mins(i.now, q.etaMs) });
   }
+  if (i.update && !broadcast) out.push({ what: "an update to my own code in its public hour", waitingOn: "the clock and the Safe", minutesLeft: mins(i.now, i.update.etaMs) });
   if (!i.agentSet) out.push({ what: ENCLAVE.on ? "the Safe's signers to hand my keys to the enclave (SetAgent)" : "the Safe's signers to hand me the agent role (SetAgent)", waitingOn: "the Safe's signers" });
   if (i.promoteRequested) out.push({ what: "the Safe's signers to make the tested plate the live fee", waitingOn: "the Safe's signers" });
   if (!i.splitSet) out.push({ what: "the Safe to switch on a split module (the games get no fee share until then)", waitingOn: "the Safe's signers" });
-  if (!i.gameFactory) out.push({ what: "the game factory: my dev team can't ship a game before it is deployed", waitingOn: "the team" });
+  if (!i.gameFactory) out.push({ what: "the game factory: the sequencer can't ship a game before it is deployed", waitingOn: "the team" });
   if (i.build) {
     const t = titled(i.build.title);
     out.push(i.build.stage === "shipping"
       ? { what: `${t ?? "a new game"} waiting out its public hour`, waitingOn: "the clock and the Safe" }
-      : { what: t ? `my dev team building ${t}` : "my dev team building a game", waitingOn: "the dev team" });
+      : { what: t ? `the sequencer building ${t}` : "the sequencer building a game", waitingOn: "the sequencer" });
   }
   if (i.ideaRound) out.push({ what: i.ideaRound.ideas ? "the idea round closing, then my verdicts on its ideas" : i.ideaRound.fromX ? "the idea round closing: ideas from X are logged for it, the top ones go on-chain after" : "ideas for the open round (none in yet)", waitingOn: "holders", minutesLeft: mins(i.now, i.ideaRound.endsMs) });
   if (i.draw) out.push(i.draw.stage === "veto"
@@ -96,8 +102,8 @@ export function pendingOf(i: PendingInput): Pending[] {
 }
 
 /** The pending block now, from the indexed chain, the snapshot, the open run and the dev team's build (code reads only;
- *  a failed read leaves its line out, never a guessed one). */
-export async function pendingNow(now = Date.now()): Promise<Pending[]> {
+ *  a failed read leaves its line out, never a guessed one). `event`: the post it is for (pendingOf's broadcast). */
+export async function pendingNow(now = Date.now(), event?: string): Promise<Pending[]> {
   const { d } = await import("./config.ts");
   const { addressOf, pub } = await import("./tx.ts");
   const { OPS } = await import("./lib.ts");
@@ -126,8 +132,9 @@ export async function pendingNow(now = Date.now()): Promise<Pending[]> {
   }
   const draw = chain[0]?.value.game?.pot?.draw;
   const num = (v: unknown) => Number(v ?? 0);
+  const update = await (await import("./upgrades.ts")).pendingUpdate(now).catch(() => null);
   return pendingOf({
-    now, agentSet,
+    now, agentSet, update,
     queued: queued.map((q) => ({ op: OPS[q.op] ?? "change", byAgent: q.proposer?.toLowerCase() === agent, etaMs: Number(q.eta) * 1000 })),
     promoteRequested: run[0]?.stage === "promote_requested",
     splitSet: !chain[0] || !/^0x0{40}$/i.test(chain[0].value.split?.module ?? "0x0000000000000000000000000000000000000000"),
@@ -135,7 +142,7 @@ export async function pendingNow(now = Date.now()): Promise<Pending[]> {
     build: build ? { stage: build.status === "verdict" || build.status === "shipping" ? "shipping" : "building", title: build.data.title } : null,
     ideaRound,
     draw: !draw || !num(draw.eta) ? null : num(draw.fulfilledAt) ? null : num(draw.requestedAt) ? { stage: "randomness" } : { stage: "veto", etaMs: num(draw.eta) * 1000 },
-  });
+  }, event !== undefined && event !== "reply");
 }
 
 // ---------------------------------------------------------------- the story so far

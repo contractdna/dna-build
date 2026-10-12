@@ -16,5 +16,6 @@
   "dstackApp": null,
   "attestationUrl": null,
   "measurements": null,
-  "logSigner": null
+  "logSigner": null,
+  "notes": ["TODO: 3 to 6 plain one-liners of what this version changes, for the public (no internals)"]
 }

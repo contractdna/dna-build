@@ -113,7 +113,7 @@ test("fact sheets: allow-list only, hard bounds only, never thresholds / slice /
   for (const k of ["threshold", "minRetention", "slice", "canaryPeriod", "canaryLen", "next", "nextCandidate", "reason", "prompt", "gates", "600", "100", "0.7", "65"]) assert.ok(!json.includes(k), `${k} leaked: ${json}`);
   assert.deepEqual(f.bounds, HARD_BOUNDS);
   assert.equal(f.change, "a canary test: the new fee is charged on a sample of live swaps");
-  assert.deepEqual(Object.keys(f).sort(), ["activatesAt", "bounds", "change", "event", "fee", "opId", "plate"], "no agent address: its digits could only fail the filter");
+  assert.deepEqual(Object.keys(f).sort(), ["activatesAt", "bounds", "change", "event", "fee", "hours", "opId", "pays", "plate", "platformFeePct"], "no agent address: its digits could only fail the filter");
   const live = factSheet({ event: "test_live", op: "SetShadow", plate: "A", killAt: 0.7 });
   assert.equal(live.rollback, ROLLBACK_LINE);
   assert.ok(!("killAt" in live));
@@ -140,9 +140,9 @@ test("tone scout: schema ≤ 20 phrases; code drops URLs, digits, number words, 
   assert.equal(toneBrief(Array(30).fill(0).map((_, i) => `word ${String.fromCharCode(97 + (i % 26))}${i > 25 ? "q" : ""}`)).length, 20);
 });
 
-test("X limits: ≤ 25 own posts a day 20 min apart; replies ≤ 200 a day, 30 an hour, 2 per author", async () => {
+test("X limits: ≤ 25 own posts a day 20 min apart; replies ≤ 1000 a day, 120 an hour, 10 an hour to one account", async () => {
   const { X } = await import("../src/config.ts");
-  assert.deepEqual([X.dailyPosts, X.spacingMs / 60_000, X.dailyReplies, X.hourlyReplies, X.repliesPerAuthor], [25, 20, 200, 30, 2]);
+  assert.deepEqual([X.dailyPosts, X.spacingMs / 60_000, X.dailyReplies, X.hourlyReplies, X.repliesPerAuthorHour], [25, 20, 1000, 120, 10]);
 });
 
 test("replies: 'stop' / 'unsubscribe' opt out (code, not a model)", () => {

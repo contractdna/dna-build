@@ -95,6 +95,12 @@ export const IdeaStatus = z.object({
   title: z.string().max(120).optional(),
   brain: z.string().regex(/^\d{1,18}$/).optional(),
   redTeam: z.enum(["pass", "block"]).optional(),
+  // a variant: the idea could not be built as written; `title` is its closest buildable version, `of` the idea's own title
+  variant: z.object({ target: z.enum(["game", "site", "module"]), of: z.string().max(120) }).optional(),
+  // the judge's own note (`resolution` carries its plain sentence for the author)
+  judge: z.string().max(300).optional(),
+  // a live verdict's words for its author (a crash before the intake's record is read back from here)
+  understood: z.string().max(200).optional(), plain: z.string().max(240).optional(),
 });
 
 /** Engine fields of the homepage core (web _live/feed.ts Core). */

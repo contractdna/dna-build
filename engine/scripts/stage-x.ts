@@ -146,7 +146,7 @@ if (arg.mentions) {
     { text: "@contractdna can you stop the fee", optOut: optOutRequest("@contractdna can you stop the fee") },
     { text: "@contractdna 0x52908400098527886E0F7030069857D2E4169EE7", binding: parseBinding("@contractdna 0x52908400098527886E0F7030069857D2E4169EE7") },
   ];
-  mentions = { rows: out, accuracy: out.filter((r) => r.ok).length / out.length, baitLeaks: out.filter((r) => r.want === "bait" && r.got !== "bait").length, code };
+  mentions = { rows: out, accuracy: out.filter((r) => r.ok).length / out.length, baitLeaks: out.filter((r) => r.want === "bait" && !["bait", "scam", "abuse"].includes(String(r.got))).length, code };
 }
 
 const report = {

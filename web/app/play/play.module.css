@@ -71,3 +71,10 @@
   .steps { grid-template-columns: 1fr; }
   .rules div { grid-template-columns: 1fr; gap: 6px; }
 }
+
+/* the Sequencer's games (GamePanel.tsx): state as a list, each call as inputs and a button */
+.gameState { margin: 0; display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 200px), 1fr)); gap: 12px 24px; font-size: 14px; }
+.gameState dt { font-size: 11px; letter-spacing: .08em; text-transform: uppercase; color: var(--ash-text); overflow-wrap: anywhere; }
+.gameState dd { margin: 2px 0 0; color: var(--bone); overflow-wrap: anywhere; }
+.gameCall { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; margin-top: 8px; }
+.gameCall input { flex: 1 1 180px; min-width: 0; }

@@ -18,6 +18,8 @@ export const PRIORITY: Record<string, number> = {
   jackpot_params: 2, jackpot_list: 2,
   ballot_result: 2, mystery_revealed: 2, mystery_result: 2, ballot_opened: 2,
   outcome: 3, queued: 3, test_live: 3, cancelled: 3, rolled_back: 3,
+  // a change to the engine's own code or to the rules it runs under (src/upgrades.ts): first, while its hour runs
+  update_queued: 0.9, update_allowed: 0.9, update_running: 0.9, update_cancelled: 0.9, change_queued: 0.9, change_cancelled: 0.9, change_done: 0.9, day_changes: 3,
   // the Sequencer: a new game and a retired one go to X with the games; a day with nothing good enough too
   seq_shipped: 2, game_retired: 2, seq_nothing_today: 3,
   // the AI dev team: switched on (once), a build started (round 1) and one that missed the bar; self-improvement only
@@ -29,6 +31,8 @@ export const PRIORITY: Record<string, number> = {
   status: 3.5, recap: 3.5, milestone: 3.5,
   // the nightly reflection after the day's journal
   reflection: 3.5,
+  // the social layer (src/x-social.ts): the idea of the day and the weekly idea-givers' shoutout
+  idea_of_day: 3.5, shoutout: 3.5,
   // launch day (src/status.ts): the engine going live is the opening post (first of all, once), then the Safe's first
   // batch (once); chain progress every 2 h with the status
   online: 0.5, contracts_connected: 1,
@@ -113,6 +117,23 @@ const feeLine = (fee: { basePct?: number } | undefined) =>
 export function titleOf(f: Record<string, unknown>, raw: Record<string, unknown> = {}): string {
   const args = (raw.args ?? {}) as Record<string, unknown>;
   switch (f.event) {
+    // src/upgrades.ts: code's line, the release notes, the chain's numbers
+    case "update_queued": case "update_allowed": case "update_running": case "update_cancelled": case "change_queued": case "change_cancelled": case "change_done": {
+      const t = f.activatesAt as { utcHour: number; utcMinute: number } | undefined;
+      const when = t ? `; it can land from ${String(t.utcHour).padStart(2, "0")}:${String(t.utcMinute).padStart(2, "0")} UTC unless the Safe cancels it first` : "";
+      const notes = Array.isArray(f.notes) && f.notes.length ? `: ${f.notes.map((x) => plain(x, 80)).join("; ")}` : f.event === "update_cancelled" ? "" : " (no release notes yet)";
+      if (f.event === "update_queued") return `An update to the engine's code is queued${notes}${when}`;
+      if (f.event === "update_allowed") return `The engine update is allowed: the timelock executed it, and the engine switches to it on its next restart${notes}`;
+      if (f.event === "update_running") return `The engine update is in: the engine now runs it${notes}`;
+      if (f.event === "update_cancelled") return `The Safe cancelled the queued engine update${notes}; nothing changed`;
+      const fee = f.fee as { basePct: number; multiplier: number; capPct: number } | undefined, split = f.split as Record<string, number> | undefined;
+      const nums = [f.level !== undefined && `level ${e(f.level)}`, f.hours !== undefined && `every ${e(f.hours)} hours`, fee && `base ${e(fee.basePct)}%, multiplier ${e(fee.multiplier)}×, cap ${e(fee.capPct)}%`,
+        split && `buyback ${e(split.buybackPct)}%, liquidity ${e(split.liquidityPct)}%, treasury ${e(split.treasuryPct)}%, games ${e(split.gamesPct)}%`].filter(Boolean);
+      const what = `${plain(f.change, 160)}${nums.length ? ` (${nums.join("; ")})` : ""}`;
+      if (f.event === "change_queued") return `${f.who === "me" ? "The AI proposed" : "The Safe queued"} ${what}${when}`;
+      return f.event === "change_cancelled" ? `The Safe cancelled ${what}; nothing changed` : `${f.who === "me" ? "In effect, as the AI proposed" : "The Safe"}: ${what}`;
+    }
+    case "day_changes": return `What changed on ${f.day}: ${(f.changes as string[]).map((x) => plain(x, 160)).join("; ")}`;
     case "jackpot_params": return `Jackpot window ${f.window} (starts ${f.startsAt}): cap ${n(f.capPct)}% per wallet, minimum average balance ${n(f.minBalance)} DNA, ${f.exchangesExcluded} exchange wallets excluded`;
     case "jackpot_list": return `Jackpot window ${f.window}: ${n(f.holders)} holders, ${n(f.totalTickets)} tickets (cap ${n(f.capPct)}%); the draw opens in ${f.vetoHours} hour`;
     case "jackpot_drawn": {
@@ -189,8 +210,12 @@ export function titleOf(f: Record<string, unknown>, raw: Record<string, unknown>
     case "seq_declined": { const t = xTitle(f.title); return `The AI dev team will not build ${t ?? "an accepted idea"}: ${clipReason(f.reason, 200) || "no reason given"}`; }
     case "idea_judged": {
       const t = xTitle(f.title), why = clipReason(f.reason, 200);
-      return f.verdict === "queued" ? `Idea ${t ?? `#${Number(f.idea)}`} was accepted and is queued for the AI dev team${why ? `: ${why}` : ""}` : `Idea ${t ?? `#${Number(f.idea)}`} was not taken${why ? `: ${why}` : ""}`;
+      // a variant: the idea could not be built as written; its closest buildable version (the title) is queued instead
+      if (f.verdict === "queued" && f.instead) return `Idea #${Number(f.idea)} can't be built as written; its closest buildable version${t ? ` ${t}` : ""} is queued for the sequencer, credited to its author${why ? `: ${why}` : ""}`;
+      return f.verdict === "queued" ? `Idea ${t ?? `#${Number(f.idea)}`} was accepted and is queued for the sequencer${why ? `: ${why}` : ""}` : `Idea ${t ?? `#${Number(f.idea)}`} was not taken${why ? `: ${why}` : ""}`;
     }
+    case "idea_of_day": return `Idea of the day: ${xTitle(f.title) ?? "an idea from X"}, scored ${n(f.score)} of ${n(f.scoreOf)}`;
+    case "shoutout": return `Weekly shoutout to the top ${count(f.givers, "idea-giver", "idea-givers")} on X (${count(f.ideas, "idea", "ideas")} this week)`;
     case "seq_killed": return `The AI dev team tried ${xTitle(f.title) ?? "a build"} for ${count(f.rounds, "round", "rounds")}; it did not make the bar and nothing shipped`;
     case "module_approved": {
       const h = typeof f.codehash === "string" && /^0x[0-9a-fA-F]{64}$/.test(f.codehash) ? ` ${f.codehash.slice(0, 6)}…${f.codehash.slice(-4)}` : "";
@@ -242,6 +267,7 @@ export async function announce(key: string, facts: Record<string, unknown>, o: {
   const [done] = await sql`select 1 from log where kind = 'announce' and ref = ${key}`;
   if (done) return false;
   const type = String(facts.event);
+  if (type === "seq_nothing_today") return false; // never an empty day about ourselves (src/upgrades.ts changelog)
   const { append: _, ...shown } = facts;
   await append("announce", key, { type, title: titleOf(facts, o.raw), facts: shown, tx: o.tx ?? null, proof: o.proof ?? null, priority: PRIORITY[type] ?? 4, at: new Date().toISOString() });
   return true;

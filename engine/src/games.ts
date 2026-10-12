@@ -22,7 +22,7 @@ import { randomBytes } from "node:crypto";
 import { type Abi, type Address, BaseError, ContractFunctionRevertedError, encodePacked, type Hex, keccak256, parseAbi, stringToHex, toHex } from "viem";
 import { z } from "zod";
 import * as abi from "./abi.ts";
-import { d, LOG_BASE_URL } from "./config.ts";
+import { d, KEEPER, LOG_BASE_URL } from "./config.ts";
 import { edb as sql } from "./db.ts";
 import { Defer, type Handler, type Job } from "./jobs.ts";
 import { agentCall, keeperJob } from "./keepers.ts";
@@ -54,6 +54,11 @@ export const GAME_POLICY = {
   maxInterval: Math.min(C.MAX_INTERVAL, Math.max(C.MIN_INTERVAL, Math.round(Number(process.env.DRAW_MAX_INTERVAL_H) || 24) * H)),
   mysteryEveryS: 7 * DAY, // a new mystery each week (the contract allows one sealed at a time)
   ballotMinStakedBps: 100n, // ballots only while ≥ 1% of DNA is staked
+  // simplification: sync() is ~48k gas, ~0.000003 ETH at ~0.06 gwei, so any arrival worth showing is worth counting
+  syncMin: 10n ** 16n, // 0.01 ETH: below it the jackpot on the site doesn't move enough to matter
+  // at most one small sync per distribute period (hourly): arrivals land with distribute(). simplification: judged from
+  // the latest finalized Synced, so right after one, a lagging indexer can let up to 2 more through that hour
+  syncEveryS: KEEPER.intervalMs / 1000,
 };
 
 // ---------------------------------------------------------------- pure decisions (unit-tested)
@@ -61,6 +66,7 @@ export const GAME_POLICY = {
 export type PotView = {
   now: number; draw: { window: number; eta: number; reqId: bigint; requestedAt: number; fulfilledAt: number }; windowEnd: number; stalledSince: number;
   arrived: bigint; // fees above every liability that no sync() has counted yet
+  lastSync: number; // the latest indexed Synced (any caller, requestDraw's own included), 0 = none
   overCap: boolean; // counting them would push the jackpot over POT_CAP (the excess goes to BuybackBurn)
   pending: { eta: number };
 };
@@ -75,9 +81,12 @@ export function potActions(s: PotView): PotAction[] {
   if (d.window !== 0 && d.reqId === 0n && d.fulfilledAt === 0 && s.now >= d.eta) out.push("requestDraw");
   if (d.fulfilledAt !== 0) out.push(s.now >= d.fulfilledAt + C.DRAW_SETTLE_WINDOW ? "voidDraw" : "settle");
   if (s.pending.eta !== 0 && s.now >= s.pending.eta) out.push("executeDrawInterval");
-  // arrivals counted into the jackpot and the idea reserve (requestDraw syncs on its own)
-  // only when it matters: at least a minimum prize waiting, or the jackpot would cross POT_CAP (dust isn't worth the gas)
-  if ((s.arrived >= C.MIN_PRIZE || s.overCap) && !out.includes("requestDraw")) out.push("sync");
+  // arrivals counted into the jackpot and the idea reserve (a requestDraw that goes out syncs on its own: keeper:games
+  // skips this then; one held back by a gate, PrizeTooSmall or GasTooHigh, doesn't, so the jackpot still moves)
+  // so the jackpot people see keeps up: at least syncMin waiting, once a distribute period; right away when a minimum
+  // prize is waiting or the jackpot would cross POT_CAP
+  const small = s.arrived >= GAME_POLICY.syncMin && s.now >= s.lastSync + GAME_POLICY.syncEveryS;
+  if (small || s.arrived >= C.MIN_PRIZE || s.overCap) out.push("sync");
   return out;
 }
 
@@ -179,9 +188,10 @@ async function potView(): Promise<PotView> {
   ]);
   const { potState } = await import("./jackpot.ts");
   const { arrived, overCap } = await potState(pub);
+  const [last] = await sql<{ at: Date }[]>`select at from chain_log where event = 'Synced' order by block desc, log_index desc limit 1`;
   return {
     now, draw: { window: Number(draw[0]), eta: Number(draw[1]), requestedAt: Number(draw[2]), fulfilledAt: Number(draw[3]), reqId: draw[5] }, windowEnd: Number(windowEnd),
-    stalledSince: Number(stalledSince), arrived, overCap, pending: { eta: Number(pend[1]) },
+    stalledSince: Number(stalledSince), arrived, overCap, lastSync: last ? Math.floor(last.at.getTime() / 1000) : 0, pending: { eta: Number(pend[1]) },
   };
 }
 
@@ -226,6 +236,7 @@ export const gameKeeperHandlers: Record<string, Handler> = {
     const v = await potView();
     for (const a of potActions(v)) {
       if (a === "settle") { await run.do(() => settleDraw(job)); continue; }
+      if (a === "sync" && run.out.some((x) => (x as { fn?: string }).fn === "requestDraw" && !(x as { waiting?: string }).waiting)) continue;
       await run.do(() => act(job, d.gamePot!, abi.gamePotAbi, a));
     }
     // a cancelled VRF subscription (getSubscription reverts) between draws: recreate it

@@ -20,6 +20,9 @@ const R = z.number().int().min(0).max(5);
 /** The public rubric for build ideas (criteria: policy.ts RUBRIC, in the context). Score = the sum, 0-20. */
 export const Rubric = z.object({ value: R, fit: R, clarity: R, originality: R });
 export type Rubric = z.infer<typeof Rubric>;
+/** The closest buildable version of an idea (a standalone game, a site change or a fee/split module), with its rubric. */
+export const Variant = z.object({ target: z.enum(["game", "site", "module"]), title: z.string().min(1).max(120), spec: z.string().min(1).max(900), rubric: Rubric });
+export type Variant = z.infer<typeof Variant>;
 export const BrainOut = {
   build: z.object({ decision: z.enum(["build", "no-build"]), target: z.enum(["game", "site", "module"]).optional(), reason: s(400), risks: z.array(s(200)).max(5) }),
   verdict: z.object({ verdict: z.enum(["ship", "rework", "kill"]), reason: s(400), issues: z.array(s(200)).max(8) }),
@@ -27,10 +30,13 @@ export const BrainOut = {
   amend: z.object({ approve: z.boolean(), reason: s(400) }),
   retire: z.object({ retire: z.boolean(), reason: s(400) }),
   "model-swap": z.object({ approve: z.boolean(), reason: s(400) }),
+  // understood and plain are for the idea's author (the reply and the site say them); reason is the judge's own note.
+  // variant: the closest buildable version of an idea whose form can't be built, credited to its author (live mode)
   outcome: z.object({
     ideas: z.array(z.object({
       id: z.number().int(), decision: z.enum(["accept", "reject", "void"]), kind: z.enum(["fee", "build", "impossible"]), reason: s(200),
       title: z.string().max(120), params: Vec.nullable(), rubric: Rubric.nullable(),
+      understood: s(200), plain: s(240), variant: Variant.nullable(),
     })).max(128),
   }),
   reward: z.object({ amountEth: z.number().min(0).max(100), reason: s(400) }), // ETH; code clamps it into the on-chain caps

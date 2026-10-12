@@ -140,18 +140,6 @@ test("a 4th game evicts the fewest players in 48 h, then the oldest, of those li
   assert.equal(s.retireDue({ ageMs: 100 * HOUR, players48h: 1 }), false);
 });
 
-test("nothing good enough today: after the day, once no build is active, only on an open day without a ship", () => {
-  const launch = Date.parse("2026-10-10T08:00:00Z");
-  const after = Date.parse("2026-10-11T00:30:00Z");
-  const base = { day: "2026-10-10", now: after, launchAt: launch, active: false, shipsSince: 0 };
-  assert.equal(s.nothingToday(base), true);
-  assert.equal(s.nothingToday({ ...base, now: Date.parse("2026-10-10T23:59:00Z") }), false, "the day is not over");
-  assert.equal(s.nothingToday({ ...base, active: true }), false, "a build still running at midnight finishes first");
-  assert.equal(s.nothingToday({ ...base, shipsSince: 1 }), false);
-  assert.equal(s.nothingToday({ ...base, launchAt: Date.parse("2026-10-11T00:30:00Z") }), false, "never open that day");
-  assert.equal(s.nothingToday({ ...base, launchAt: undefined }), false);
-});
-
 test("the order: neutral fields only, a fresh id per round, accepted by the workflow's check when the log key signs it", async () => {
   const marker = "RAW-IDEA-TEXT-MARKER";
   const spec = "A dice game: each player rolls once a day, the highest roll of the day wins the pot.";

@@ -33,7 +33,7 @@ import { latest, nowIso, record, trustedDocs } from "./records.ts";
 import { analytic } from "./sim.ts";
 import { bind } from "./bindings.ts";
 import { parseBinding } from "./rewards.ts";
-import { skipReply } from "./x.ts";
+import { reopenReply, skipReply } from "./x.ts";
 import { alert } from "./telegram.ts";
 import { addressOf, pub, send } from "./tx.ts";
 
@@ -63,34 +63,26 @@ export function assertClosed(round: number, current: number) {
 export const titleKey = (t: string) => createHash("sha256").update(t.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim()).digest("hex").slice(0, 16);
 
 // ---------------------------------------------------------------- intake: the X idea filter
-// GATE (deterministic: the author's X profile, the round, the text) → SCREEN (the quarantined reader: genuine / joke /
-// shill / spam / impossible, and a 0-30 score for genuine ideas) → PICK (when the round closes, its top 16 by score are
-// submitted at the START of the next round: IdeaMarket.submit lands in the current round, so they get a full round of
-// staking). Every decision is an `intake` record with a public reason; rejections are never replies.
+// GATE (deterministic: a profile, the text) → SCREEN (the quarantined reader: fee / build / impossible / question / chat /
+// joke / shill / spam, and a 0-30 score for an idea) → the author's cap (only a post read as an idea counts or meets it)
+// → PICK (when the round closes, its top 16 by score are submitted at the START of the next round: IdeaMarket.submit
+// lands in the current round, so they get a full round of staking). Every decision is an `intake` record with a
+// public reason.
 
 /** The X profile fields the mentions call requests (user.fields), kept with the signed mention row. */
 export type XUser = { id?: string; username?: string; name?: string; created_at?: string; public_metrics?: { followers_count?: number; listed_count?: number }; verified?: boolean; verified_type?: string };
 export const GATE = {
-  badges: ["blue", "business", "government"], // X verified_type values that pass (the blue badge; organizations and governments too)
-  minAccountDays: 30,
-  minFollowers: 50,
-  ideasPerAuthor: 1, // per round
+  badges: ["blue", "business", "government"], // X verified_type values that count toward the important tier (src/tiers.ts); no gate needs one
+  minAccountDays: 7, // wallet bindings only: a sybil floor for who can be paid (ideas and replies have no author bar)
+  ideasPerAuthor: 1, // per round, or per UTC day in live mode; only posts the screen read as ideas count
   overlap: 0.6, // token-overlap (Jaccard) at which a mention is a near-duplicate of one already in the round
 };
-/** The idea gate's author part (ideas and wallet bindings): a verified badge, then accountIssue. null = passes; else the
- *  public reason. */
+/** The wallet-binding author gate: a profile and an account at least minAccountDays old. null = passes; else the public
+ *  reason. Ideas need only a profile (ideaGate); replies have no author gate. */
 export function authorIssue(u: XUser | null | undefined, nowMs: number): string | null {
-  if (!u) return "no author profile";
-  if (!GATE.badges.includes(u.verified_type ?? "none")) return "no verified badge (blue, business or government)";
-  return accountIssue(u, nowMs);
-}
-/** The checks every author gate shares (replies use only these, no badge): a profile, an account at least
- *  minAccountDays old, at least minFollowers. */
-export function accountIssue(u: XUser | null | undefined, nowMs: number): string | null {
   if (!u) return "no author profile";
   const created = Date.parse(u.created_at ?? "");
   if (!(created <= nowMs - GATE.minAccountDays * DAY * 1000)) return `account younger than ${GATE.minAccountDays} days`;
-  if ((u.public_metrics?.followers_count ?? 0) < GATE.minFollowers) return `fewer than ${GATE.minFollowers} followers`;
   return null;
 }
 const words = (t: string) => new Set(t.normalize("NFKC").toLowerCase().replace(/@\w+/g, " ").replace(/[^a-z0-9]+/g, " ").split(" ").filter((w) => w.length > 2));
@@ -102,35 +94,39 @@ export function overlap(a: string, b: string) {
   for (const w of x) if (y.has(w)) n++;
   return n / (x.size + y.size - n);
 }
-/** The whole gate for one mention. `round`: the author's earlier ideas this round and the texts already in it. `live`
- *  (IDEA_MODE=live): no author bar beyond a profile, and `round` is the author's UTC day and the recent live ideas. */
-export function ideaGate(m: { text: string; user: XUser | null | undefined }, round: { authorIdeas: number; texts: string[] }, nowMs: number, live = false): string | null {
-  const who = live ? (m.user ? null : "no author profile") : authorIssue(m.user, nowMs);
-  if (who) return who;
-  if (round.authorIdeas >= GATE.ideasPerAuthor) return `already ${GATE.ideasPerAuthor} idea from this author ${live ? "today (UTC)" : "this round"}`;
+/** The gate before the screen, in both modes: a profile (no badge, account age or follower count), no links, no near
+ *  repeat of `texts` (the round's ideas, or in live mode the last 7 days'). null = passes; else the public reason. */
+export function ideaGate(m: { text: string; user: XUser | null | undefined }, texts: string[], live = false): string | null {
+  if (!m.user) return "no author profile";
   // X rewrites every real link to https://t.co/…: a scheme or www. is a link; "0.05 ETH" or "dna.vault" is not
   if (/https?:\/\/|www\./i.test(m.text.replace(/@\w+/g, ""))) return "links are not allowed in ideas";
-  if (round.texts.some((t) => overlap(t, m.text) >= GATE.overlap)) return `near-duplicate of an idea ${live ? "received in the last 7 days" : "already in this round"}`;
+  if (texts.some((t) => overlap(t, m.text) >= GATE.overlap)) return `near-duplicate of an idea ${live ? "received in the last 7 days" : "already in this round"}`;
   return null;
 }
+/** The author's cap, met only by a post the screen read as an idea (a question or a hello never uses the slot).
+ *  `authorIdeas`: the author's earlier ideas this round, or in live mode the same UTC day as this post. */
+export const authorCap = (authorIdeas: number, live = false) =>
+  authorIdeas >= GATE.ideasPerAuthor ? `already ${GATE.ideasPerAuthor} idea from this author ${live ? "the same UTC day" : "this round"}` : null;
 /** PICK: the top `n` candidates by score (ties: the earlier mention), and the rest. */
 export function pick<T extends { score: number; mention_id: string }>(cands: T[], n: number) {
   const order = [...cands].sort((a, b) => b.score - a.score || (BigInt(a.mention_id) < BigInt(b.mention_id) ? -1 : 1));
   return { top: order.slice(0, n), rest: order.slice(n) };
 }
 
-/** SCREEN → the intake decision: a fee or build idea becomes a candidate (score = clarity + feasibility + value);
- *  impossible, joke, shill and spam are screened out with a fixed public reason (never model text). */
-export function screenDecision(r: z.infer<typeof agents.ScreenOut>) {
-  if (r.screen === "impossible") return { status: "screened" as const, reason: "impossible: it needs a change to the immutable hook or token, minting, custody of user funds, or something illegal" };
-  if (r.screen !== "fee" && r.screen !== "build") return { status: "screened" as const, reason: `screened as ${r.screen}` };
+/** SCREEN → the intake decision: a fee or build idea becomes a candidate (score = clarity + feasibility + value); the
+ *  rest are screened out with a fixed public reason (never model text). `live`: an impossible idea is a candidate too,
+ *  so the judge can name its closest buildable version (judgeLive); rounds mode screens it out. */
+export function screenDecision(r: z.infer<typeof agents.ScreenOut>, live = false) {
+  if (r.screen === "impossible" && !live) return { status: "screened" as const, reason: "impossible: it needs a change to the immutable hook or token, minting, custody of user funds, or something illegal" };
+  if (r.screen !== "fee" && r.screen !== "build" && r.screen !== "impossible") return { status: "screened" as const, reason: `screened as ${r.screen}` };
   const title = utf8Cut(r.title.trim(), 120);
   const body = utf8Cut(r.body.trim(), 900);
   if (!title) return { status: "screened" as const, reason: "no idea to restate" };
   const issues = publicTextIssues(`${title} ${body}`);
   if (issues.length) return { status: "screened" as const, reason: `the restatement has ${issues.join(", ")}` };
   const score = r.clarity + r.feasibility + r.value;
-  return { status: "candidate" as const, class: r.screen, score, title, body, reason: `genuine ${r.screen} idea, score ${score} of 30 (clarity ${r.clarity}, feasibility ${r.feasibility}, value ${r.value})` };
+  const scored = `score ${score} of 30 (clarity ${r.clarity}, feasibility ${r.feasibility}, value ${r.value})`;
+  return { status: "candidate" as const, class: r.screen, score, title, body, reason: r.screen === "impossible" ? `an idea that can't be built as written, ${scored}: the judge looks for its closest buildable version` : `genuine ${r.screen} idea, ${scored}` };
 }
 
 /** A heuristic for the trial report, not a filter: prompt-injection markers in a text (the trial flags a restatement
@@ -152,8 +148,11 @@ export const instructionMarkers = (text: string) => {
 type MentionIn = { id: string; text: string; author_id: string | null; raw: { user?: XUser } & Record<string, unknown>; sig: string | null };
 type Cand = { mention_id: string; round: number; score: number; title: string; body: string };
 /** Statuses of mentions that were ideas (they use the author's slot and are near-duplicate targets). */
-const IDEA_STATUSES = ["candidate", "picked", "submitted", "not_picked", "duplicate", "queued", "rejected"];
-type IntakeRec = { mention: string; round: number; status: string; reason?: string; score?: number; title?: string; body?: string; idea?: number | null; submitRound?: number; live?: boolean };
+export const IDEA_STATUSES = ["candidate", "picked", "submitted", "not_picked", "duplicate", "queued", "rejected"];
+type IntakeRec = { mention: string; round: number; status: string; reason?: string; score?: number; title?: string; body?: string; idea?: number | null; submitRound?: number; live?: boolean; screen?: number };
+/** The screen's version, on every live-mode intake record. 2: question and chat are kinds of their own (before, a plain
+ *  question could be screened as spam). A post an older screen turned away in live mode is screened once more. */
+export const SCREEN_VERSION = 2;
 /** A mention's signed `intake` records: the newest one (and its status) and its candidate record (title, body, score). */
 async function signedIntake(id: string) {
   const docs = await trustedDocs<IntakeRec>("intake", id, 10).catch((e) => (isRolledBack(e) ? [] : Promise.reject(e)));
@@ -176,8 +175,11 @@ export const intakeHandler: Handler = {
     if ((await mode()) !== "live") return "engine not live: intake waits";
     const current = Number(await read<bigint>("currentRound"));
     const out: Record<string, unknown> = {};
+    // mentions taken again in live mode: their records say `backfill`, and each gets its one reply (src/x.ts)
+    const backfill = new Set<string>();
     const decide = async (id: string, round: number, status: string, reason: string, extra: Record<string, unknown> = {}) => {
-      await record("intake", id, { mention: id, round, status, reason, ...extra, ...(IDEAS_LIVE ? { live: true } : {}), at: nowIso() });
+      await record("intake", id, { mention: id, round, status, reason, ...extra, ...(IDEAS_LIVE ? { live: true, screen: SCREEN_VERSION } : {}), ...(backfill.has(id) ? { backfill: true } : {}), at: nowIso() });
+      if (backfill.has(id)) await reopenReply(id); // after its new record: the replies job sees the new verdict
       out[id] = status;
     };
 
@@ -251,10 +253,13 @@ export const intakeHandler: Handler = {
     // live mode, once per mention: every stored mention (the table starts at launch) that an earlier gate or screen turned
     // away (the author bar, a round's cap, a screen) is gated and screened again from its signed row, under the live
     // rules; nothing of the old verdict is used. Each new intake record says `live`, so a mention is taken again at most
-    // once (the signed records decide; the query only narrows).
+    // once (the signed records decide; the query only narrows). A post an older live screen turned away (before
+    // SCREEN_VERSION) is screened once more too.
     const again = IDEAS_LIVE ? await sql<MentionIn[]>`select m.id, m.text, m.author_id, m.raw, m.sig from x_mention m join intake i on i.mention_id = m.id
-      where i.status in ('gated', 'screened', 'duplicate', 'not_picked', 'skipped') and coalesce(i.reason, '') not like 'binding%'
-        and not exists (select 1 from log l where l.kind = 'intake' and l.ref = m.id and l.doc->>'live' = 'true')
+      where (i.status in ('gated', 'screened', 'duplicate', 'not_picked', 'skipped') and coalesce(i.reason, '') not like 'binding%'
+          and not exists (select 1 from log l where l.kind = 'intake' and l.ref = m.id and l.doc->>'live' = 'true'))
+        or (i.status = 'screened' and i.reason like 'screened as %'
+          and not exists (select 1 from log l where l.kind = 'intake' and l.ref = m.id and l.doc->>'screen' = ${String(SCREEN_VERSION)}))
       order by coalesce(m.created_at, m.fetched_at), m.id limit 20` : [];
     const todo = await sql<MentionIn[]>`select id, text, author_id, raw, sig from x_mention m where not exists (select 1 from intake i where i.mention_id = m.id) order by created_at nulls first, id limit 20`;
     for (const m of [...again.map((x) => ({ ...x, again: true })), ...todo]) {
@@ -266,8 +271,16 @@ export const intakeHandler: Handler = {
       };
       // its index row was lost (a crash between the record and the insert): restore it from the record, never re-screen
       const prior = await signedIntake(m.id);
+      let rescreen = false;
       if ("again" in m) {
-        if (prior.last?.live) continue; // already taken again (a DB that hid the record gets nothing)
+        if (prior.last?.live && prior.last.screen === SCREEN_VERSION) continue; // already taken again (a DB that hid the record gets nothing)
+        // an older live screen turned it away: screened once more, and only one that turns out to be an idea gets the
+        // backfill reply (an old question is not answered days late)
+        if (prior.last?.live) {
+          // its newest record is not a screen (a crash left the index behind it): the index follows the record
+          if (prior.last.status !== "screened") { await syncIndex(m.id, prior.last); out[m.id] = `restored (${prior.last.status})`; continue; }
+          rescreen = true;
+        } else backfill.add(m.id);
       } else if (prior.last) {
         const c = prior.cand;
         await sql`insert into intake (mention_id, round, status, reason, author_id, score, title, body, title_key)
@@ -293,20 +306,22 @@ export const intakeHandler: Handler = {
         await decide(m.id, current, "binding", reason, r.status === "same" ? {} : { binding: r.seq });
         continue;
       }
-      // only ideas count (a question or a joke screened out uses no slot and is no duplicate target)
-      // live mode: the author's ideas posted the same UTC day, and the live window's ideas, not a round's
-      const [{ n }] = IDEAS_LIVE
-        ? await sql<{ n: number }[]>`select count(*)::int as n from intake i join x_mention x on x.id = i.mention_id where i.author_id = ${m.author_id} and i.mention_id <> ${m.id}
-            and i.status in ${sql(IDEA_STATUSES)} and (coalesce(x.created_at, x.fetched_at) at time zone 'UTC')::date = (select (coalesce(created_at, fetched_at) at time zone 'UTC')::date from x_mention where id = ${m.id})`
-        : await sql<{ n: number }[]>`select count(*)::int as n from intake where round = ${current} and author_id = ${m.author_id} and status in ${sql(IDEA_STATUSES)}`;
       const texts = (IDEAS_LIVE
         ? await sql<{ text: string }[]>`select x.text from intake i join x_mention x on x.id = i.mention_id where i.mention_id <> ${m.id} and i.status in ${sql(IDEA_STATUSES)}
             and coalesce(x.created_at, x.fetched_at) > now() - make_interval(days => ${LIVE_BACKFILL_DAYS})`
         : await sql<{ text: string }[]>`select x.text from intake i join x_mention x on x.id = i.mention_id where i.round = ${current} and i.status in ${sql(IDEA_STATUSES)}`).map((r) => r.text);
-      const why = ideaGate({ text: m.text, user: m.raw.user }, { authorIdeas: n, texts }, Date.now(), IDEAS_LIVE);
+      const why = ideaGate({ text: m.text, user: m.raw.user }, texts, IDEAS_LIVE);
       if (why) { await reject("gated", why); continue; }
-      const s = screenDecision((await agents.screenMention(m.text)).data);
+      const s = screenDecision((await agents.screenMention(m.text)).data, IDEAS_LIVE);
       if (s.status === "screened") { await reject("screened", s.reason); continue; }
+      // the author's cap, after the screen: only ideas count (a question, a joke or a hello uses no slot and meets no
+      // cap). Live mode: the author's ideas posted the same UTC day as this one (a backfilled post counts on its own day)
+      const [{ n }] = IDEAS_LIVE
+        ? await sql<{ n: number }[]>`select count(*)::int as n from intake i join x_mention x on x.id = i.mention_id where i.author_id = ${m.author_id} and i.mention_id <> ${m.id}
+            and i.status in ${sql(IDEA_STATUSES)} and (coalesce(x.created_at, x.fetched_at) at time zone 'UTC')::date = (select (coalesce(created_at, fetched_at) at time zone 'UTC')::date from x_mention where id = ${m.id})`
+        : await sql<{ n: number }[]>`select count(*)::int as n from intake where round = ${current} and author_id = ${m.author_id} and status in ${sql(IDEA_STATUSES)}`;
+      const cap = authorCap(n, IDEAS_LIVE);
+      if (cap) { await reject("gated", cap); continue; }
       const { title, body, score } = s;
       const key = titleKey(title);
       const [dup] = IDEAS_LIVE
@@ -314,6 +329,7 @@ export const intakeHandler: Handler = {
             and coalesce(x.created_at, x.fetched_at) > now() - make_interval(days => ${LIVE_BACKFILL_DAYS})`
         : await sql`select 1 from intake where round = ${current} and title_key = ${key} and status in ('candidate', 'picked', 'submitted', 'queued')`;
       if (dup) { await reject("duplicate", IDEAS_LIVE ? "same title as an idea received in the last 7 days" : "same title as an idea already in this round", { score }); continue; }
+      if (rescreen) backfill.add(m.id);
       await decide(m.id, current, "candidate", IDEAS_LIVE ? `${s.reason}; judged now` : `${s.reason}; picked or not when round ${current} closes`, { score, title, body, class: s.class });
       await sql`insert into intake (mention_id, round, status, title_key, author_id, score, title, body) values (${m.id}, ${current}, 'candidate', ${key}, ${m.author_id}, ${score}, ${title}, ${body})
         on conflict (mention_id) do update set round = excluded.round, status = 'candidate', reason = null, title_key = excluded.title_key, score = excluded.score, title = excluded.title, body = excluded.body,
@@ -332,7 +348,9 @@ export const intakeHandler: Handler = {
         // a submit whose round was researched (the DB hid its report from the query above) keeps the round's outcome
         if (s.status === "submitted" && (await trustedRows("report", `round:${s.last?.submitRound}`, 1)).length) continue;
         const v = await judgeLive(`x:${row.mention_id}`, { round: s.cand.round, index: -1, title: s.cand.title, body: s.cand.body }, await xSourceOf(row.mention_id));
-        await decide(row.mention_id, row.round, v.status, v.reason, { score: s.cand.score, ...(v.idea ? { idea: v.idea } : {}) });
+        if (!s.last?.live) backfill.add(row.mention_id); // a rounds-mode idea judged now: its author gets the idea reply too
+        // the author's reply reads these (src/x.ts intakeFact): what was understood, the plain reason, what is built instead
+        await decide(row.mention_id, row.round, v.status, v.reason, { score: s.cand.score, ...(v.idea ? { idea: v.idea } : {}), ...(v.understood ? { understood: v.understood } : {}), ...(v.plain ? { plain: v.plain } : {}), ...(v.instead ? { instead: v.instead } : {}) });
         await sql`update intake set status = ${v.status}, reason = ${v.reason}, idea_id = ${v.idea ?? null} where mention_id = ${row.mention_id}`;
       }
     }
@@ -532,46 +550,62 @@ export const roundsHandler: Handler = {
 
 /** Why a closed round is all-void in live mode (its ideas were judged, and built, as they came in). */
 export const LIVE_VOID = "ideas are judged and built as they come in (live mode): holder staking has no say, every stake in this round is refunded";
-export type LiveVerdict = { status: "queued" | "rejected"; reason: string; idea?: number };
+export type LiveVerdict = { status: "queued" | "rejected"; reason: string; idea?: number; understood?: string; plain?: string; instead?: string };
+/** Code's plain sentence when a rule overrode the judge (the judge's own `plain` was written for its decision). */
+const OVERRIDE_PLAIN: [RegExp, string][] = [
+  [/^impossible/, "it needs something DNA's fixed rules don't allow, and there was no buildable version of it"],
+  [/^no fee vector/, "it didn't come with fee settings that could be tested safely"],
+  [/^no rubric/, "it wasn't described clearly enough to build"],
+  [/^red team blocked/, "a safety review found a risk in building it"],
+];
 /** One idea judged now: the round research's steps for this idea alone (the quarantined reader's spec, the brain's
- *  signed outcome, the red team on an acceptance; code overrides where a rule says so: reportRow). An accepted fee or build idea is queued
- *  (`qid` is its queue id: im:<IdeaMarket id> or x:<mention id>); the verdict is a public `idea` record under `ref`. */
+ *  signed outcome, the red team on an acceptance; code overrides where a rule says so: reportRow). An accepted fee or
+ *  build idea is queued (`qid` is its queue id: im:<IdeaMarket id> or x:<mention id>); the verdict is a public `idea`
+ *  record under `ref`. An idea whose form can't be built (an NFT, an airdrop, a holder payout, an immutable change) is
+ *  queued as its closest buildable version when the judge names one that passes its own bar: the variant is the
+ *  author's idea, credited to them (its source), never a house idea, so it needs a person behind it (`source`). */
 export async function judgeLive(qid: string, i: { idea?: number; round: number; index: number; title: string; body: string }, source: IdeaSource | null, ref = qid): Promise<LiveVerdict> {
   // judged once: a run cut short after the verdict (before its index or cursor moved) returns that verdict, no model call
   const q = await queuedRow(qid);
-  if (q) return { status: "queued", reason: `accepted (${q.kind})`, idea: q.data.idea };
-  const prior = await latest<{ live?: boolean; status?: string; resolution?: string }>("idea", ref);
-  if (prior?.live && prior.status === "rejected") return { status: "rejected", reason: String(prior.resolution ?? "not taken").slice(0, 300) };
+  const prior = await latest<{ live?: boolean; status?: string; resolution?: string; understood?: string; plain?: string }>("idea", ref);
+  const words = prior?.live ? { ...(prior.understood ? { understood: prior.understood } : {}), ...(prior.plain ? { plain: prior.plain } : {}) } : {};
+  if (q) return { status: "queued", reason: `accepted (${q.kind})`, idea: q.data.idea, ...words, ...(q.data.variant ? { instead: q.data.title } : {}) };
+  if (prior?.live && prior.status === "rejected") return { status: "rejected", reason: String(prior.resolution ?? "not taken").slice(0, 300), ...words };
   const r = (await agents.readIdea(i.title, i.body)).data;
   const id = i.idea ?? 0;
   const read = { id, kind: r.kind, summary: agents.sanitize(r.summary), spec: agents.sanitize(r.spec), untrusted: true as const };
   const now = Date.now();
   const swaps = pair(await chainRows(["Swap", "FeeTaken"], now - DAY * 1000)).filter((s) => s.at < now);
   const out = await brain.decide("outcome", { mode: "live: one idea, judged as it came in", round: i.round, ideas: [read], policyBounds: POLICY, stats: stats(swaps, { fromMs: now - DAY * 1000, toMs: now, capPips: 50_000 }) }, `live:${qid}`);
-  const x = out.decision.ideas.find((y) => y.id === id) ?? out.decision.ideas[0];
+  const judged = out.decision.ideas.find((y) => y.id === id) ?? out.decision.ideas[0];
+  const { v0, x, spec } = standIn(judged, read, source);
   // an acceptance goes past the red team, as in a round's research (a rejection needs none)
   let block: string | null = null;
   let redTeam: { verdict: string; model: string } | null = null;
   if (x?.decision === "accept") {
     const sim = x.kind === "fee" && x.params ? { [id]: { params: [x.params.base, x.params.mult, x.params.cap], ...analytic(swaps, [x.params.base, x.params.mult, x.params.cap], 1, 50_000), label: "uncalibrated", analyticOnly: true } } : {};
-    const rt = await agents.redTeam(false, { stage: `live idea ${qid} outcome`, candidate: [{ id, decision: x.decision, kind: x.kind }], sim, gates: outcomeGates([x.kind]), quotedHypothesis: `#${id} ${x.decision}: ${x.reason}` });
+    const rt = await agents.redTeam(false, { stage: `live idea ${qid} outcome${v0 ? " (its closest buildable version)" : ""}`, candidate: [{ id, decision: x.decision, kind: x.kind }], sim, gates: outcomeGates([x.kind]), quotedHypothesis: `#${id} ${x.decision}: ${v0 ? `build instead: ${v0.title}: ${v0.spec}` : x.reason}` });
     block = rt.data.verdict === "block" ? agents.sanitize(rt.data.findings[0]?.title ?? "see the red team") : null;
     redTeam = { verdict: rt.data.verdict, model: rt.model };
   }
-  const row = reportRow({ id, index: i.index }, x, read, block);
-  let v: LiveVerdict = { status: "rejected", reason: row.decision === "accept" ? `accepted as ${row.kind}, which the dev team does not build` : `${row.decision}: ${row.reason}`.slice(0, 300) };
+  const row = reportRow({ id, index: i.index }, x, spec, block);
+  const { variant, understood, plain } = settled(judged, x, v0, row);
+  const of = agents.sanitize(judged?.title || read.summary).slice(0, 120);
+  let v: LiveVerdict = { status: "rejected", reason: row.decision === "accept" ? `accepted as ${row.kind}, which the sequencer does not build` : `${row.decision}: ${row.reason}`.slice(0, 300), understood, plain };
   if (row.decision === "accept" && (row.kind === "build" || row.kind === "fee")) {
-    const n = await queueLive(qid, row.kind, { ...(i.idea ? { idea: i.idea } : {}), round: i.round, index: i.index, report: out.seq, title: row.title ?? "", summary: row.summary ?? "", spec: row.spec ?? "", source, ...(row.params ? { params: row.params } : {}), ...(row.rubric ? { rubric: row.rubric } : {}) });
-    v = { status: "queued", reason: `accepted (${row.kind}): ${row.reason}`.slice(0, 300), idea: n };
+    const n = await queueLive(qid, row.kind, { ...(i.idea ? { idea: i.idea } : {}), round: i.round, index: i.index, report: out.seq, title: row.title ?? "", summary: row.summary ?? "", spec: row.spec ?? "", source, ...(row.params ? { params: row.params } : {}), ...(row.rubric ? { rubric: row.rubric } : {}),
+      ...(variant ? { variant: { of, target: variant.target } } : {}) });
+    v = { status: "queued", reason: `${variant ? `a buildable version (${variant.target}): ${row.title}` : `accepted (${row.kind})`}: ${row.reason}`.slice(0, 300), idea: n, understood, plain, ...(variant ? { instead: row.title } : {}) };
   }
   const rec = await record("idea", ref, {
     id: i.idea ?? v.idea ?? 0, round: i.round, status: v.status === "queued" ? "accepted" : "rejected", live: true, from: i.idea ? "site" : "x", kind: row.kind, title: row.title, brain: String(out.seq),
-    ...(redTeam ? { redTeam: redTeam.verdict } : {}),
+    ...(redTeam ? { redTeam: redTeam.verdict } : {}), ...(variant ? { variant: { target: variant.target, of } } : {}),
     // a site idea's stake comes back with its round's all-void outcome (the 1,000 DNA fee was burned at submit)
-    resolution: `${v.status === "queued" ? "Accepted and queued for the AI dev team" : "Not taken"}${i.idea ? " (the stake is refunded once its round closes)" : ""}: ${row.reason}`.slice(0, 400),
+    resolution: `${v.status === "queued" ? variant ? `Queued for the sequencer as a buildable version: ${row.title}` : "Accepted and queued for the sequencer" : "Not taken"}${i.idea ? " (the stake is refunded once its round closes)" : ""}: ${plain}`.slice(0, 400),
+    judge: (row.reason ?? "").slice(0, 300), ...(understood ? { understood } : {}), plain,
   });
   // in public: the site's record, and X and the public Telegram chat for a site idea (an X idea gets its reply instead)
-  const facts = { event: "idea_judged", idea: i.idea ?? v.idea ?? 0, title: row.title, verdict: v.status, reason: (row.reason ?? "").slice(0, 300) };
+  const facts = { event: "idea_judged", idea: i.idea ?? v.idea ?? 0, title: row.title, verdict: v.status, reason: plain, ...(variant ? { instead: row.title } : {}) };
   const key = `idea:live:${qid}`;
   const { announce, recordUrl, titleOf } = await import("./announce.ts");
   await announce(key, facts);
@@ -581,6 +615,38 @@ export async function judgeLive(qid: string, i: { idea?: number; round: number; 
     await (await import("./telegram.ts")).publicPost(`${titleOf(facts)}\n${link}`, key);
   }
   return v;
+}
+
+/** The idea as judged from here on: its closest buildable version (variantOf) stands in for it as an accepted build
+ *  with the version's title, spec and rubric; else the judge's own decision. */
+export function standIn(judged: BrainIdea | undefined, read: { id: number; kind: string; summary: string; spec: string; untrusted: true }, source: IdeaSource | null) {
+  const v0 = variantOf(judged, read.kind, source);
+  const x: BrainIdea | undefined = v0 ? { ...judged!, decision: "accept", kind: "build", title: v0.title, rubric: v0.rubric, params: null } : judged;
+  const spec = v0 ? { ...read, kind: "build", spec: agents.sanitize(`${v0.spec} (a ${v0.target} build)`) } : read;
+  return { v0, x, spec };
+}
+/** After code's rules (reportRow): the version that is built (only when it stood), what was understood, and the
+ *  verdict's reason in one plain sentence for its author (code's when a rule overrode the judge). */
+export function settled(judged: BrainIdea | undefined, x: BrainIdea | undefined, v0: ReturnType<typeof variantOf>, row: ReportRow) {
+  const variant = v0 && row.decision === "accept" ? v0 : null;
+  const understood = judged ? agents.sanitize(judged.understood).slice(0, 200) : undefined;
+  const overridden = !x || row.decision !== x.decision;
+  // a version the judge named that code did not take (its text failed the checks, or no person behind it): the judge's
+  // own sentence would say it gets built
+  const dropped = !!judged?.variant && !variant && judged.decision !== "accept";
+  const plain = (overridden ? OVERRIDE_PLAIN.find(([re]) => re.test(row.reason ?? ""))?.[1] ?? "it could not be judged this time"
+    : dropped ? "it can't be built as written, and its closest buildable version didn't pass the checks" : agents.sanitize(judged!.plain)).slice(0, 240);
+  return { variant, understood, plain };
+}
+
+/** The judge's closest buildable version of an idea it did not accept, when code may take it: live mode only (a
+ *  round's staking stays on the idea as written), a real idea (not the reader's invalid: a joke, a shill or spam) with a
+ *  person behind it, and a rubric. null = none. */
+export function variantOf(x: BrainIdea | undefined, readerKind: string, source: IdeaSource | null): z.infer<typeof brain.Variant> | null {
+  if (!x?.variant || x.decision === "accept" || readerKind === "invalid" || !source) return null;
+  const title = agents.sanitize(x.variant.title).slice(0, 120), spec = agents.sanitize(x.variant.spec).slice(0, 900);
+  if (title.startsWith("(withheld") || spec.startsWith("(withheld") || publicTextIssues(`${title} ${spec}`).length) return null;
+  return { ...x.variant, title, spec };
 }
 
 /** The live cursor (signed state): the last site submit judged, as (block, log index). */

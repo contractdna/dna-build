@@ -111,7 +111,7 @@ test("replies: approved = an automatic reply for every tier, important accounts 
 // ---------------------------------------------------------------- "which contract is the real one?"
 
 test("official contract: a reader label, one fixed code-written answer; the domain only in that text, never in a draft", () => {
-  assert.deepEqual(MentionOut.parse({ kind: "official_contract", topic: "other", question: "" }), { kind: "official_contract", topic: "other", question: "" });
+  assert.deepEqual(MentionOut.parse({ kind: "official_contract", topic: "other", question: "" }), { kind: "official_contract", topic: "other", question: "", lang: "en" });
   assert.equal(OFFICIAL_REPLY, "My only contract is the one listed on genomedna.xyz.");
   assert.ok(weightedLength(OFFICIAL_REPLY) < 280);
   assert.deepEqual(factSheet({ event: "official_reply", mention: "is 0xabc the real one?", tier: "important" }), { event: "official_reply" }, "the fact sheet carries nothing");

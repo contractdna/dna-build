@@ -131,10 +131,10 @@ test("live: a site submit is judged at once and an accepted build idea queues fo
   assert.equal(rec.status, "accepted");
   assert.equal(rec.live, true);
   assert.equal(rec.from, "site");
-  assert.match(rec.resolution, /^Accepted and queued for the AI dev team \(the stake is refunded once its round closes\)/);
+  assert.match(rec.resolution, /^Accepted and queued for the sequencer \(the stake is refunded once its round closes\)/);
   const ann = await doc("announce", `idea:live:im:${build}`);
   assert.equal(ann.type, "idea_judged");
-  assert.match(ann.title, /^Idea "Synthetic idea \d+" was accepted and is queued for the AI dev team/);
+  assert.match(ann.title, /^Idea "Synthetic idea \d+" was accepted and is queued for the sequencer/);
   assert.equal((await sql`select 1 from x_outbox where event_key = ${`idea:live:im:${build}`}`).length, 1, "a site idea's verdict goes to X");
   assert.deepEqual(await ideas.liveHandler.run(job()), {}, "the cursor moved past it");
   assert.equal(st.sent, 0, "nothing on-chain");
@@ -162,9 +162,47 @@ test("live: an X idea past the screen is judged in the same run, queued under it
   assert.equal((await doc("idea", `x:${m}`)).from, "x");
   assert.equal((await sql`select 1 from x_outbox where event_key = ${`idea:live:x:${m}`}`).length, 0, "an X idea gets its reply, not a post");
   const { intakeFact } = await import("../src/x.ts");
-  assert.match((await intakeFact(m)).intake!, /queued for the AI dev team/);
+  assert.match(String((await intakeFact(m)).intake), /queued for the sequencer/);
   assert.deepEqual(await ideas.intakeHandler.run(job()), {}, "judged once");
   assert.equal(st.sent, 0, "no on-chain submit in live mode");
+});
+
+test("live: an idea whose form can't be built is queued as its closest buildable version, credited to its author; the reply says what is built instead", { skip }, async () => {
+  const m = await mention("73", "@contractdna mint a holder NFT for wallets that hold a million DNA for a week, with art that evolves");
+  const out = await ideas.intakeHandler.run(job()) as Record<string, string>;
+  assert.equal(out[m], "queued", "screened impossible, judged anyway in live mode, and its variant queued");
+  const r = await queueRow(`x:${m}`);
+  assert.equal(r.kind, "build");
+  assert.match(r.data.title, /^Synthetic game version of idea/);
+  assert.deepEqual(r.data.source, { source: "x", authorId: "73", postId: m }, "credited (and paid) to the person whose idea it is");
+  assert.equal(r.data.variant?.target, "game", JSON.stringify(r.data));
+  assert.ok(r.data.variant.of, "it names the idea it stands in for");
+  assert.ok(r.data.rubric);
+  const rec = await doc("idea", `x:${m}`);
+  assert.match(rec.resolution, /^Queued for the sequencer as a buildable version: Synthetic game version/);
+  assert.equal(rec.variant.target, "game");
+  const { intakeFact } = await import("../src/x.ts");
+  const f = await intakeFact(m);
+  assert.equal(f.verdict, "a buildable version");
+  assert.equal(f.instead, undefined, "a title with a digit is never said (the writer may only use code's numbers)");
+  assert.match(String(f.why), /^Synthetic plain reason/);
+  assert.match(String(f.understood), /^Synthetic: idea/);
+  assert.match(String(f.next), /credit/);
+});
+
+test("live: one idea per author per UTC day, counting ideas only (a question uses no slot); a near repeat is turned away", { skip }, async () => {
+  const a = await mention("72", "@contractdna raise the buyback share of the fee when volume runs hot so that more DNA burns");
+  const q = await mention("72", "@contractdna how much DNA was burned so far?");
+  const b = await mention("72", "@contractdna cut the base fee on weekends so that small traders keep swapping through the pool");
+  const c = await mention("72", "@contractdna raise the buyback share of the fee when volume runs hot, so that more DNA burns");
+  await ideas.intakeHandler.run(job());
+  const st = async (id: string) => (await sql<{ status: string; reason: string | null }[]>`select status, reason from intake where mention_id = ${id}`)[0];
+  assert.ok(["candidate", "queued", "rejected"].includes((await st(a)).status), JSON.stringify(await st(a)));
+  assert.deepEqual(await st(q), { status: "screened", reason: "screened as question" }, "a question is never spam, and never meets the cap");
+  assert.deepEqual(await st(b), { status: "gated", reason: "already 1 idea from this author the same UTC day" });
+  assert.deepEqual(await st(c), { status: "gated", reason: "near-duplicate of an idea received in the last 7 days" });
+  const { intakeFact } = await import("../src/x.ts");
+  assert.match(String((await intakeFact(c)).intake), /repeats one someone already sent this week/);
 });
 
 test("live: switching from rounds mode, an X idea the rounds mode picked but never judged is judged now, once", { skip }, async () => {
@@ -180,7 +218,7 @@ test("live: switching from rounds mode, an X idea the rounds mode picked but nev
   assert.equal(st.sent, 0);
 });
 
-test("live: mentions an earlier gate turned away are screened again from their row, once each; one idea per author per UTC day", { skip }, async () => {
+test("live: mentions an earlier gate turned away are screened again from their row, once each, under one idea per author a day", { skip }, async () => {
   const young = { verified_type: "none", created_at: new Date().toISOString(), public_metrics: { followers_count: 3 } };
   const turnedAway = async (author: string, text: string, reason: string) => {
     const id = String(nextMention++);
@@ -194,11 +232,34 @@ test("live: mentions an earlier gate turned away are screened again from their r
   const out = await ideas.intakeHandler.run(job()) as Record<string, string>;
   assert.equal(out[a], "queued", "no badge, age or follower bar in live mode: screened and judged in the same run");
   assert.equal((await doc("intake", a)).live, true);
-  assert.equal(out[b], "gated");
-  assert.match((await doc("intake", b)).reason, /already 1 idea from this author today \(UTC\)/);
+  assert.equal(out[b], "gated", "a second idea of the same UTC day meets the author's cap");
+  assert.equal((await sql<{ reason: string }[]>`select reason from intake where mention_id = ${b}`)[0].reason, "already 1 idea from this author the same UTC day");
   assert.equal(out[bind], undefined, "a wallet binding is never taken again");
   assert.deepEqual(await ideas.intakeHandler.run(job()), {}, "each once");
   assert.equal(st.sent, 0);
+});
+
+test("live: a post an older live screen turned away is screened once more; only one that is an idea gets the backfill reply", { skip }, async () => {
+  const { record } = await import("../src/records.ts");
+  const old = async (author: string, text: string) => {
+    const id = String(nextMention++);
+    await sql`insert into x_mention (id, author_id, text, created_at, raw) values (${id}, ${author}, ${text}, now() - interval '2 days', ${sql.json({ id, text, user: { created_at: new Date().toISOString() } } as never)})`;
+    await sql`insert into intake (mention_id, round, status, reason, author_id) values (${id}, 0, 'screened', 'screened as spam', ${author})`;
+    await record("intake", id, { mention: id, round: 0, status: "screened", reason: "screened as spam", live: true, at: new Date().toISOString() });
+    return id;
+  };
+  const q = await old("401", "@contractdna how much DNA was burned so far?");
+  const idea = await old("402", "@contractdna build a weekly trivia game about onchain history with a small prize from the game pot");
+  const spam = await old("403", "@contractdna Can I get follow back?");
+  const out = await ideas.intakeHandler.run(job()) as Record<string, string>;
+  assert.equal((await doc("intake", q)).reason, "screened as question");
+  assert.equal((await doc("intake", q)).backfill, undefined, "an old question gets no late reply");
+  assert.equal((await doc("intake", q)).screen, ideas.SCREEN_VERSION);
+  assert.deepEqual([(await doc("intake", spam)).reason, (await doc("intake", spam)).screen, (await doc("intake", spam)).backfill], ["screened as spam", ideas.SCREEN_VERSION, undefined], "still spam: screened once, no reply");
+  assert.ok(["queued", "rejected"].includes(out[idea]), out[idea]);
+  assert.ok((await sql`select 1 from log where kind = 'intake' and ref = ${idea} and doc->>'backfill' = 'true'`).length, "an idea the old screen missed gets its reply");
+  const again = await ideas.intakeHandler.run(job()) as Record<string, string>;
+  assert.deepEqual([again[q], again[spam]], [undefined, undefined], "once");
 });
 
 test("live: a closed round's report is all-void (every stake refunded), never researched", { skip }, async () => {
@@ -210,4 +271,53 @@ test("live: a closed round's report is all-void (every stake refunded), never re
   assert.equal(rep.allVoid, true);
   assert.equal(rep.reason, ideas.LIVE_VOID);
   assert.equal((await sql`select 1 from log where kind = 'brain' and ref = 'outcome:round:0' and at >= ${new Date(before)}`).length, 0, "no round research");
+});
+
+test("live: backfilled ideas get one reply each under the reply ceilings (overflow waits for the next run); an idea answered before gets none; no second reply", { skip }, async () => {
+  const { X } = await import("../src/config.ts");
+  const xM = await import("../src/x.ts");
+  const saved = { ...X };
+  try {
+    // everything earlier in this file is already answered: only the backfill is in play here
+    await sql`insert into x_outbox (type, event_key, event, reply_to, status, error) select 'reply', 'reply:' || id, '{}', id, 'skipped', 'earlier test' from x_mention on conflict do nothing`;
+    const young = { verified_type: "none", created_at: new Date().toISOString(), public_metrics: { followers_count: 3 } };
+    const SUMMONS = { entities: { mentions: [{ start: 0, end: 13, username: "contractdna", id: "42" }] } };
+    // posted 3 days ago, turned away by the old author gate (some with the old skipped reply row)
+    const old = async (author: string, text: string, replied?: "skipped" | "posted") => {
+      const id = String(nextMention++);
+      await sql`insert into x_mention (id, author_id, text, created_at, raw) values (${id}, ${author}, ${text}, now() - interval '3 days', ${sql.json({ id, text, user: young, ...SUMMONS } as never)})`;
+      await sql`insert into intake (mention_id, round, status, reason, author_id) values (${id}, 0, 'gated', 'account younger than 30 days', ${author})`;
+      if (replied === "skipped") await sql`insert into x_outbox (type, event_key, event, reply_to, status, error) values ('reply', ${`reply:${id}`}, '{}', ${id}, 'skipped', 'author: account younger than 30 days')`;
+      if (replied === "posted") await sql`insert into x_outbox (type, event_key, event, reply_to, status, tweet_id, created_at) values ('reply', ${`reply:${id}`}, '{}', ${id}, 'posted', ${`7${id}`}, now() - interval '2 days')`;
+      return id;
+    };
+    const five = [
+      await old("301", "@contractdna build a treasure map game where each swap reveals one tile of the map", "skipped"),
+      await old("306", "@contractdna let holders vote on a weekly theme for the arcade games page", "skipped"),
+      await old("302", "@contractdna send part of the fee to a prize pool for the longest holder each month"),
+      await old("303", "@contractdna show a live chart of every burn on the home page with a running total", "skipped"),
+      await old("304", "@contractdna make a daily riddle game whose first solver wins a small credit"),
+    ];
+    const answered = await old("305", "@contractdna add a leaderboard of the biggest buyers of the week to the site", "posted");
+    for (let k = 0; k < 3; k++) await ideas.intakeHandler.run(job());
+    for (const id of [...five, answered]) assert.ok((await sql`select 1 from log where kind = 'intake' and ref = ${id} and doc->>'backfill' = 'true'`).length, `${id}: a backfill record`);
+    Object.assign(X, { aiRepliesApproved: true, dailyReplies: 1000, hourlyReplies: 3 });
+    const replies = async () => (await sql<{ reply_to: string; status: string; category: string }[]>`select reply_to, status, event->>'category' as category from x_outbox
+      where type = 'reply' and reply_to = any(${[...five, answered]}) and status <> 'skipped'`);
+    await xM.repliesHandler.run(job());
+    assert.equal((await replies()).filter((r) => r.status === "queued").length, 3, "the hourly ceiling: 3 now, the rest wait");
+    X.hourlyReplies = 1000;
+    await xM.repliesHandler.run(job());
+    await xM.repliesHandler.run(job());
+    const rs = await replies();
+    assert.deepEqual(rs.filter((r) => r.status === "queued").map((r) => r.reply_to).sort(), [...five].sort(), "exactly 5: one under each idea");
+    assert.ok(rs.filter((r) => r.status === "queued").every((r) => r.category === "idea"), "the idea reply (the intake's read), whatever the reader called it");
+    assert.deepEqual(rs.filter((r) => r.reply_to === answered).map((r) => r.status), ["posted"], "answered before: never a second reply");
+    // taken once: the intake and the replies job add nothing more
+    await ideas.intakeHandler.run(job());
+    await xM.repliesHandler.run(job());
+    assert.equal((await replies()).length, 6);
+  } finally {
+    Object.assign(X, saved);
+  }
 });

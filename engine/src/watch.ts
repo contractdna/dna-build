@@ -12,6 +12,7 @@ import { alert } from "./telegram.ts";
 import { addressOf, balances, pub } from "./tx.ts";
 import { onChainEvent } from "./x.ts";
 import { announceAddresses, failClosedChecks, gameEventAbi } from "./games.ts";
+import { onTimelockLogs, timelockAddresses } from "./upgrades.ts";
 
 const events = [...abi.registryAbi, ...abi.hookAbi, ...gameEventAbi];
 const swapEvent = abi.poolManagerAbi.find((x) => x.type === "event" && x.name === "Swap")!;
@@ -91,11 +92,14 @@ export async function watchTick() {
   if (head <= last) return;
   const from = last + 1n > head - 100n ? last + 1n : head - 100n; // ≤ 100 blocks after a stall
   const [core, swaps] = await Promise.all([
-    pub.getLogs({ address: [d.registry, d.hook, ...announceAddresses()], fromBlock: from, toBlock: head }),
+    pub.getLogs({ address: [d.registry, d.hook, ...announceAddresses(), ...timelockAddresses()], fromBlock: from, toBlock: head }),
     pub.getLogs({ address: d.poolManager, event: swapEvent, args: { id: d.poolId }, fromBlock: from, toBlock: head }),
   ]);
+  // the code timelock's logs apart (its Cancelled(bytes32) is not the registry's Cancelled(uint256)): src/upgrades.ts
+  const tl = new Set(timelockAddresses().map((a) => a.toLowerCase()));
+  await onTimelockLogs(core.filter((l) => tl.has(l.address.toLowerCase())));
   // an event with no arguments (GamePot's DrawIntervalCancelled()) decodes to args undefined
-  const evs = parseEventLogs({ abi: events, logs: core }).map((e) => ({ ...e, args: e.args ?? {} })) as unknown as Ev[];
+  const evs = parseEventLogs({ abi: events, logs: core.filter((l) => !tl.has(l.address.toLowerCase())) }).map((e) => ({ ...e, args: e.args ?? {} })) as unknown as Ev[];
   for (const e of evs) {
     const by = ["Executed", "Anchored", "RolledBack"].includes(e.eventName) ? await sender(e.transactionHash) : undefined;
     let anchoredOk: boolean | undefined;

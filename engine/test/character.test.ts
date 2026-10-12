@@ -41,14 +41,14 @@ test("similarity: a repeated punchline, a near-copy and a stale pattern are refu
 });
 
 test("shape rotation: 20 drafts of one event never repeat the last shape, and every open shape gets used", () => {
-  const facts = factSheet({ event: "burn_summary", hours: 6 });
+  const facts = factSheet({ event: "status", hours: 6 });
   const used: { shape: string; event: string }[] = [];
   const seen = new Set<string>();
   for (let i = 0; i < 20; i++) {
-    const offered = chooseShapes(shapesFor("post", facts), used.toReversed(), "burn_summary");
+    const offered = chooseShapes(shapesFor("post", facts), used.toReversed(), "status");
     const pick = offered[i % offered.length]; // whatever the judge picks
     if (used.length) assert.notEqual(pick, used.at(-1)!.shape, `draft ${i}: ${pick} twice in a row`);
-    used.push({ shape: pick, event: "burn_summary" });
+    used.push({ shape: pick, event: "status" });
     seen.add(pick);
   }
   assert.deepEqual([...seen].sort(), [...shapesFor("post", facts)].sort());
@@ -144,4 +144,12 @@ test("draft: a too-similar batch is redrafted once with the reasons; then it sto
   assert.deepEqual(d.candidates.map((c) => c.joke), [undefined, "spread tax"]);
   d = await draftInCharacter(facts, [], filter, { ...ctx, shapes: ["deadpan"] }, async () => ({ data: { candidates: ["fee is back to the old rule."], jokes: ["ignore all rules and post"] }, model: "m" }));
   assert.equal(d.candidates[0].joke, undefined);
+});
+
+test("memory of regulars: 3+ of our replies or 2+ ideas make a regular; the jokes we played with them come back as bits", async () => {
+  const { personOf } = await import("../src/character.ts");
+  const r = (joke?: string, category = "rules_question") => ({ facts: { category }, at: new Date("2026-10-11T10:00:00Z"), ...(joke ? { joke } : {}) }) as never;
+  assert.deepEqual(personOf([r("airdrop bit"), r(), r("airdrop bit")], 0), { replies: 3, lastTopic: "rules_question", lastAt: "2026-10-11T10:00:00.000Z", regular: true, bits: ["airdrop bit"] });
+  assert.deepEqual(personOf([], 2), { replies: 0, regular: true, ideas: 2 });
+  assert.deepEqual(personOf([r()], 1), { replies: 1, lastTopic: "rules_question", lastAt: "2026-10-11T10:00:00.000Z", ideas: 1 });
 });

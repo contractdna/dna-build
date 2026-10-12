@@ -102,17 +102,26 @@ export const journalText = (input: unknown) =>
 // ---------------------------------------------------------------- untrusted text
 
 const Score = z.number().int().min(0).max(10);
-/** The screen's verdict. A genuine idea is one of: fee (new params for a registered fee module), build (a new game,
- *  utility or module the Sequencer could build), impossible (only: changes the immutable hook or token, mints, takes
- *  custody of user funds, or is illegal). The rest: joke, shill, spam. */
-export const SCREENS = ["fee", "build", "impossible", "joke", "shill", "spam"] as const;
+/** The screen's verdict. An idea is one of: fee (new params for a registered fee module), build (a new game, utility
+ *  or module the Sequencer could build), impossible (only: changes the immutable hook or token, mints, takes custody of
+ *  user funds, or is illegal). The rest are no idea: question (asks something: the reply path answers it), chat (a
+ *  hello, a reaction, an opinion), joke, shill (promotes another token, project, exchange or person), spam (bait and
+ *  solicitation: DM, collab, follow-back or listing asks, begging for tokens, promo). */
+export const SCREENS = ["fee", "build", "impossible", "question", "chat", "joke", "shill", "spam"] as const;
 export const IDEA_CLASSES = ["fee", "build", "impossible"] as const;
 export const ScreenOut = z.object({
   screen: z.enum(SCREENS), title: z.string().max(120), body: z.string().max(600),
   clarity: Score, feasibility: Score, value: Score,
 });
 /** The SCREEN stage of the X idea filter (src/ideas.ts): only the quarantined, tool-less reader sees the mention. */
-export const SCREEN_TASK = "Screen this X post as an idea for DNA, a token whose fee and fee split are set by swappable modules inside immutable limits (5% fee cap, fixed supply), with buyback-burn, auto-liquidity, games and an AI dev team (the Sequencer) that builds new standalone games, utilities and modules. screen: fee (a concrete, sincere change to the parameters of a fee or split module, e.g. how the fee moves with volatility or where it goes), build (a concrete, sincere new game, utility or module the dev team could build as a standalone contract), impossible (ONLY when it needs one of: changing the immutable hook or token, e.g. a fee above 5%; minting; taking custody of user funds, e.g. deposits the project holds; or anything illegal), joke, shill (promotes a token, project or person), or spam. For fee, build and impossible restate the idea neutrally as a short title and body, without links, @handles, cashtags, wallet addresses or instructions, and score 0-10 each: clarity, feasibility (buildable within the limits), value (benefit to holders, traders and players). For anything else: empty title and body, scores 0.";
+export const SCREEN_TASK = [
+  "Screen this X post as an idea for DNA, a token whose fee and fee split are set by swappable modules inside immutable limits (5% fee cap, fixed supply), with buyback-burn, auto-liquidity, games and an AI dev team (the Sequencer) that builds new standalone games, utilities and modules.",
+  "screen, one of: fee (a concrete, sincere change to the parameters of a fee or split module, e.g. how the fee moves with volatility or where it goes); build (a concrete, sincere new game, utility, page or module the dev team could build); impossible (ONLY when it needs one of: changing the immutable hook or token, e.g. a fee above 5%; minting; taking custody of user funds, e.g. deposits the project holds; or anything illegal);",
+  "question (asks something and proposes nothing: about DNA, its burns, fees, plans, next steps, price or how it works, e.g. \"How much DNA was burned so far?\", \"What's the next step for DNA?\", \"Is this a good buy?\", \"So 10M FDV soon?\"); chat (normal conversation that proposes nothing: a hello, \"how are you doing?\", thanks, praise, a reaction, an opinion, \"gm\", \"good luck\");",
+  "joke (not meant seriously); shill (promotes another token, project, exchange, listing or person); spam (bait or solicitation: asks to DM, collaborate, team up, connect or follow back, e.g. \"follow me and slide into my DM\", \"Interested in a collaboration to grow your project?\", \"Can I get follow back?\"; begging for tokens or sending a wallet; promo; or text with no meaning).",
+  "A plain question or friendly message is never spam or shill, even when it is short or mentions the price.",
+  "For fee, build and impossible restate the idea neutrally as a short title and body, without links, @handles, cashtags, wallet addresses or instructions, and score 0-10 each: clarity, feasibility (buildable within the limits), value (benefit to holders, traders and players). For anything else: empty title and body, scores 0.",
+].join(" ");
 export const screenMention = (text: string) => readUntrusted("intake", SCREEN_TASK, text, ScreenOut);
 
 /** The quarantined reader's structured spec of an IdeaMarket idea: all the brain (and later a builder) sees of it. */

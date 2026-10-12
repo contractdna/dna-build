@@ -95,7 +95,12 @@ test("tryouts: a brain case runs with the fixed fixture self-file, shaped like p
 });
 
 test("idea kinds: the round outcome (fee params, build rubric) and the reward; the true path, the rubric and the reward caps in the context", () => {
-  const idea = { id: 7, decision: "accept", kind: "build", reason: "a clear, testable game", title: "Daily guess", params: null, rubric: { value: 4, fit: 5, clarity: 3, originality: 2 } };
+  const idea = { id: 7, decision: "accept", kind: "build", reason: "a clear, testable game", title: "Daily guess", params: null, rubric: { value: 4, fit: 5, clarity: 3, originality: 2 }, understood: "A daily guessing game.", plain: "It is a small, safe game we can build.", variant: null };
+  // a form that can't be built: its closest buildable version, with a target and a rubric
+  const nft = { ...idea, id: 9, decision: "reject", kind: "impossible", rubric: null, variant: { target: "game", title: "Holder Hunt", spec: "A standalone game: holders of 1M DNA play a weekly hunt; no NFT, no mint, no approvals.", rubric: { value: 3, fit: 4, clarity: 4, originality: 3 } } };
+  assert.equal(BrainOut.outcome.safeParse({ ideas: [nft] }).success, true);
+  assert.equal(BrainOut.outcome.safeParse({ ideas: [{ ...nft, variant: { ...nft.variant, target: "hook" } }] }).success, false, "a variant targets a game, the site or a module only");
+  assert.equal(BrainOut.outcome.safeParse({ ideas: [{ ...idea, plain: undefined }] }).success, false, "the plain reason is required");
   assert.equal(BrainOut.outcome.safeParse({ ideas: [idea, { ...idea, id: 8, kind: "fee", params: { base: 20_000, mult: 0, cap: 25_000 }, rubric: null }] }).success, true);
   assert.equal(BrainOut.outcome.safeParse({ ideas: [{ ...idea, rubric: { ...idea.rubric, value: 6 } }] }).success, false, "rubric criteria are 0-5");
   assert.equal(BrainOut.outcome.safeParse({ ideas: [{ ...idea, decision: "maybe" }] }).success, false);

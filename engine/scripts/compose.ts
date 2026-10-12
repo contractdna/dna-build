@@ -10,18 +10,23 @@
 // and the one the CVM measures (the same on every KMS: no key_provider_id).
 // It deploys nothing: the compose hash still has to reach the DstackApp allow-list (the first one when the DstackApp is
 // created, later ones through its 1 h timelock).
-import { readFileSync, writeFileSync } from "node:fs";
+// `notes` (optional): 3-6 plain one-liners of what this version changes, for the public, no internals. They go in the
+// release record and in deploy/releases/<compose hash>.json; the engine reads that file from the public repository when
+// the Safe schedules the hash and says them (src/upgrades.ts), so publish it before the Safe schedules.
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { getComposeHash } from "@phala/dstack-sdk/get-compose-hash";
 import { assertAnonymous } from "../src/anonymity.ts";
 import { ALLOWED_ENVS, isoWithZone, LITERAL_ENVS } from "../src/enclave.ts";
 import { checkCompose, PRE_LAUNCH_SCRIPT } from "../src/proof.ts";
 import { canonical } from "../src/log.ts";
+import { instructionLike, screenLine } from "../src/voice.ts";
 
 export type Params = {
   commit: string; image: string; imageDigest: string; xClientId: string; xUserId: string;
   githubRepo: string; seqBot: string; pagecheckImage: string; pagecheckDigest: string;
   policyThresholdsSha256?: string; studioUrl: string; xAiRepliesApproved?: boolean; ideaMode?: "rounds" | "live"; telegramPublicChat?: string; llmLaunchAt?: string; dstackApp?: string | null; attestationUrl?: string | null; logSigner?: string | null; funder?: string | null;
   measurements?: { mrtd: string; rtmr0: string; rtmr1: string; rtmr2: string; osImageHash: string } | null;
+  notes?: string[];
 };
 const root = new URL("../../", import.meta.url);
 const read = (p: string) => readFileSync(new URL(p, root), "utf8");
@@ -77,10 +82,21 @@ export function registryOf(dep: { registry: string; startBlock: number } = JSON.
   return /^0x0+$/.test(dep.registry) ? null : { address: dep.registry, startBlock: dep.startBlock };
 }
 
+/** Why release notes can't be published (null = ok): 3-6 lines, each 1-80 printable ASCII characters, no link, handle,
+ *  hashtag, cashtag or TODO (the engine screens them again when it reads them). */
+export function notesIssue(notes: unknown): string | null {
+  if (!Array.isArray(notes) || notes.length < 3 || notes.length > 6) return "3 to 6 lines";
+  // the engine's own screen too (src/upgrades.ts notesOf): a line it would drop must never be published
+  const bad = notes.find((n) => typeof n !== "string" || !/^[\x20-\x7e]{1,80}$/.test(n) || /https?:|www\.|[@#$]|TODO/i.test(n) || instructionLike(n) || !screenLine(n.replace(/\d+(?:\.\d+)?/g, "N"), 80));
+  return bad === undefined ? null : `not a plain public line (≤ 80 chars, no link, handle, number word, banned term, order to the reader or TODO): ${JSON.stringify(bad)}`;
+}
+
 export function release(p: Params, composeHash: string, registry = registryOf()) {
+  const why = p.notes === undefined ? null : notesIssue(p.notes);
+  if (why) throw new Error(`notes: ${why}`);
   return {
     registry,
-    commit: p.commit, image: p.image, imageDigest: p.imageDigest, pagecheckImage: p.pagecheckImage, pagecheckDigest: p.pagecheckDigest, composeHash, allowedEnvs: [...ALLOWED_ENVS],
+    commit: p.commit, ...(p.notes ? { notes: p.notes } : {}), image: p.image, imageDigest: p.imageDigest, pagecheckImage: p.pagecheckImage, pagecheckDigest: p.pagecheckDigest, composeHash, allowedEnvs: [...ALLOWED_ENVS],
     dstackApp: p.dstackApp ?? null, attestationUrl: p.attestationUrl ?? null, measurements: p.measurements ?? null,
     logSigner: p.logSigner ?? null, // the enclave log key's address (getKey dna/log: stable per app id), read from /attestation at launch
     funder: p.funder ?? null, // the Sequencer's funder (getKey dna/funder): the Roles member FundingSetup names; read from /attestation
@@ -94,6 +110,7 @@ if (import.meta.filename === process.argv[1]) {
   const { appCompose, composeHash } = render(p);
   writeFileSync(new URL("deploy/app-compose.json", root), appCompose);
   const rel = `${JSON.stringify(release(p, composeHash), null, 2)}\n`;
-  for (const f of ["deploy/release.json", "web/app/proof/release.json"]) writeFileSync(new URL(f, root), rel);
-  console.log(`compose hash ${composeHash}\nwrote deploy/app-compose.json, deploy/release.json, web/app/proof/release.json`);
+  mkdirSync(new URL("deploy/releases/", root), { recursive: true });
+  for (const f of ["deploy/release.json", "web/app/proof/release.json", `deploy/releases/${composeHash}.json`]) writeFileSync(new URL(f, root), rel);
+  console.log(`compose hash ${composeHash}\nwrote deploy/app-compose.json, deploy/release.json, web/app/proof/release.json, deploy/releases/${composeHash}.json`);
 }

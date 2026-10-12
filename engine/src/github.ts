@@ -21,8 +21,8 @@ export class GitHubError extends Error {
   status: number;
   constructor(status: number, message: string) { super(message); this.status = status; }
 }
-/** An outage (network, 5xx, rate limit): the build is skipped, not killed. */
-export const outage = (e: unknown) => e instanceof GitHubError && (e.status === 0 || e.status === 429 || e.status >= 500);
+/** An outage (network, 5xx, rate limit, a 403 that is GitHub's secondary rate limit): the build is skipped, not killed. */
+export const outage = (e: unknown) => e instanceof GitHubError && (e.status === 0 || e.status === 429 || e.status >= 500 || (e.status === 403 && /rate limit/i.test(e.message)));
 
 /** The most a download (an artifact zip) may be: a build's artifacts are a few hundred KB. */
 export const MAX_DOWNLOAD = 50 * 1024 ** 2;

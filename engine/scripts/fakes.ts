@@ -27,7 +27,9 @@ export async function startFakes(port = 0) {
   // processing: the STATUS answers a video gets after finalize, in order
   // posted tweets, as GET /2/tweets/:id reads them back (deleteStatus ≠ 200 fails deletes)
   const tweets = new Map<string, Json>();
-  const x = { tweetStatus: 201, tokenStatus: 200, mediaStatus: 200, deleteStatus: 200, deleteDelayMs: 0, listStatus: 200, acceptThenFail: false, mediaLink: "", processing: ["in_progress", "succeeded"] as string[], onUpload: async () => {} };
+  const x = { tweetStatus: 201, tokenStatus: 200, mediaStatus: 200, deleteStatus: 200, deleteDelayMs: 0, listStatus: 200, acceptThenFail: false, mediaLink: "", processing: ["in_progress", "succeeded"] as string[], onUpload: async () => {},
+    // recent search (X: by conversation_id): the posts a test puts here, each with its `user`, oldest last as X lists them
+    search: [] as Json[] };
   const status = new Map<string, number>();
   // the studio's OpenAI: images are distinct deterministic PNGs of the requested size (a pattern from the prompt), all
   // clean; tests override moderation / rubric
@@ -125,6 +127,12 @@ export async function startFakes(port = 0) {
       const data = mentions.splice(0);
       const users = data.map(({ author_id, user }) => ({ id: author_id, username: `user${author_id}`, name: "x", created_at: "2020-01-01T00:00:00.000Z", public_metrics: { followers_count: 1000 }, verified: true, verified_type: "blue", ...(user ?? {}) }));
       return send(200, data.length ? { data: data.map(({ user: _, ...m }) => ({ entities: { mentions: [{ start: 0, end: 13, username: "fake_account", id: "42" }] }, ...m })), includes: { users }, meta: { newest_id: data[0].id, result_count: data.length } } : { meta: { result_count: 0 } });
+    }
+    if (path.startsWith("/2/tweets/search/recent")) {
+      const q = new URL(path, "http://x").searchParams;
+      const conv = q.get("query")?.match(/^conversation_id:(\d+)$/)?.[1], since = BigInt(q.get("since_id") ?? 0);
+      const data = x.search.filter((p) => p.conversation_id === conv && BigInt(p.id) > since);
+      return send(200, { data: data.map(({ user: _, ...p }) => p), includes: { users: data.map((p) => ({ id: p.author_id, ...p.user })) }, meta: { result_count: data.length, ...(data.length ? { newest_id: data[0].id } : {}) } });
     }
     if (path === "/2/tweets" && req.method === "POST" && x.tweetStatus !== 201) return send(x.tweetStatus, { title: "fake failure" });
     if (path === "/2/tweets" && req.method === "POST") {

@@ -2,40 +2,39 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { test } from "node:test";
-import { accountIssue, authorIssue, GATE, ideaGate, instructionMarkers, overlap, pick, researchWindow, UNJUDGED_VOID_DAYS } from "../src/ideas.ts";
+import { authorCap, authorIssue, GATE, ideaGate, instructionMarkers, overlap, pick, researchWindow, UNJUDGED_VOID_DAYS } from "../src/ideas.ts";
 
 const NOW = Date.parse("2026-10-07T12:00:00Z");
 const DAY = 86_400_000;
 const ok = { verified_type: "blue", created_at: new Date(NOW - 31 * DAY).toISOString(), public_metrics: { followers_count: 50 } };
 
-test("author gate: the blue badge (business and government pass too), a 30-day account, 50 followers", () => {
+test("binding gate: a 7-day account; no badge or follower count needed (ideas and replies have no author bar)", () => {
   assert.equal(authorIssue(ok, NOW), null);
-  for (const t of ["business", "government"]) assert.equal(authorIssue({ ...ok, verified_type: t }, NOW), null, t);
-  assert.match(authorIssue({ ...ok, verified_type: "none" }, NOW)!, /no verified badge/);
-  assert.match(authorIssue({ ...ok, verified_type: undefined, verified: true }, NOW)!, /no verified badge/, "legacy `verified` alone is not the badge");
-  assert.match(authorIssue({ ...ok, created_at: new Date(NOW - 29 * DAY).toISOString() }, NOW)!, /younger than 30 days/);
-  assert.equal(authorIssue({ ...ok, created_at: new Date(NOW - 30 * DAY).toISOString() }, NOW), null, "exactly 30 days");
-  assert.match(authorIssue({ ...ok, created_at: undefined }, NOW)!, /younger than 30 days/, "unknown age fails");
-  assert.match(authorIssue({ ...ok, public_metrics: { followers_count: 49 } }, NOW)!, /fewer than 50 followers/);
+  assert.equal(authorIssue({ ...ok, verified_type: "none", public_metrics: { followers_count: 0 } }, NOW), null, "no badge, no followers");
+  assert.equal(authorIssue({ created_at: new Date(NOW - 7 * DAY).toISOString() }, NOW), null, "exactly 7 days");
+  assert.match(authorIssue({ ...ok, created_at: new Date(NOW - 6 * DAY).toISOString() }, NOW)!, /younger than 7 days/);
+  assert.match(authorIssue({ ...ok, created_at: undefined }, NOW)!, /younger than 7 days/, "unknown age fails");
   assert.match(authorIssue(null, NOW)!, /no author profile/);
-  assert.deepEqual([GATE.minAccountDays, GATE.minFollowers, GATE.ideasPerAuthor], [30, 50, 1]);
+  assert.deepEqual([GATE.minAccountDays, GATE.ideasPerAuthor], [7, 1]);
 });
 
-test("round gate: one idea per author per round, no links, no near-duplicates", () => {
+test("idea gate: a profile, no links, no near-duplicates; the author's cap (one idea a round, or a UTC day live) is separate", () => {
   const idea = "@contractdna lower the base fee during quiet night hours so small traders keep swaping";
-  const empty = { authorIdeas: 0, texts: [] };
-  assert.equal(ideaGate({ text: idea, user: ok }, empty, NOW), null, "a handle is not a link");
-  assert.match(ideaGate({ text: idea, user: ok }, { ...empty, authorIdeas: 1 }, NOW)!, /already 1 idea from this author/);
-  for (const t of [`${idea} https://t.co/x`, `${idea} http://x`, `${idea} www.example`]) assert.match(ideaGate({ text: t, user: ok }, empty, NOW)!, /links are not allowed/, t);
+  assert.equal(ideaGate({ text: idea, user: ok }, []), null, "a handle is not a link");
+  assert.match(ideaGate({ text: idea, user: null }, [])!, /no author profile/);
+  assert.equal(authorCap(0), null);
+  assert.equal(authorCap(1), "already 1 idea from this author this round");
+  assert.equal(authorCap(1, true), "already 1 idea from this author the same UTC day");
+  for (const t of [`${idea} https://t.co/x`, `${idea} http://x`, `${idea} www.example`]) assert.match(ideaGate({ text: t, user: ok }, [])!, /links are not allowed/, t);
   // X rewrites real links to t.co: a dotted word or a decimal is not one
-  assert.equal(ideaGate({ text: "move 2.5 points of the fee to the dna.vault split for swaps under 0.05 ETH", user: ok }, empty, NOW), null);
+  assert.equal(ideaGate({ text: "move 2.5 points of the fee to the dna.vault split for swaps under 0.05 ETH", user: ok }, []), null);
   const near = "lower the base fee during the quiet night hours so that small traders keep swaping";
   assert.ok(overlap(idea, near) >= GATE.overlap);
-  assert.match(ideaGate({ text: near, user: ok }, { authorIdeas: 0, texts: [idea] }, NOW)!, /near-duplicate/);
+  assert.match(ideaGate({ text: near, user: ok }, [idea])!, /near-duplicate of an idea already in this round/);
+  assert.match(ideaGate({ text: near, user: ok }, [idea], true)!, /near-duplicate of an idea received in the last 7 days/);
   const other = "send a bigger share of fees to the auto-liquidity vault when volume spikes";
   assert.ok(overlap(idea, other) < GATE.overlap);
-  assert.equal(ideaGate({ text: other, user: ok }, { authorIdeas: 0, texts: [idea] }, NOW), null);
-  assert.match(ideaGate({ text: other, user: { ...ok, verified_type: "none" } }, empty, NOW)!, /no verified badge/, "the author gate first");
+  assert.equal(ideaGate({ text: other, user: ok }, [idea]), null);
 });
 
 test("pick: the top 16 by score (ties: the earlier mention), the rest are not picked", () => {
@@ -58,9 +57,9 @@ test("the public /rules page states the engine's own values (gate, pick, X limit
   const { LIMITS } = await import("../src/policy.ts");
   const page = readFileSync(new URL("../../web/app/rules/page.tsx", import.meta.url), "utf8");
   for (const s of [
-    `at least ${GATE.minAccountDays} days old`, `at least ${GATE.minFollowers} followers`, `At most ${GATE.ideasPerAuthor} idea per person per round`,
-    "Business (gold) and government (grey) badges count too", `its ${LIMITS.intakePerRound} highest-scoring`, `At most ${X.dailyPosts} posts`,
-    `at least ${X.spacingMs / 60_000} minutes apart`, "Money results go first", "posts not out by 23:00 UTC roll into one daily digest post", 'href="/announcements"', `At most ${X.repliesPerAuthor} replies to the same person`, `${X.dailyReplies} replies a day and ${X.hourlyReplies} an hour`,
+    `at least ${GATE.minAccountDays} days old (no badge or follower count needed)`, "Any X account can post an idea. No badge, account age or follower count needed.", `At most ${GATE.ideasPerAuthor} idea per person per round (a round is 24 hours), or per UTC day in live mode`,
+    "a question or a hello never uses it up", "Not an idea, and never spam", "Anyone can get a reply: no badge, account age or follower count needed", "No daily limit per person", `its ${LIMITS.intakePerRound} highest-scoring`, `At most ${X.dailyPosts} posts`,
+    `at least ${X.spacingMs / 60_000} minutes apart`, "Money results go first", "posts not out by 23:00 UTC roll into one daily digest post", 'href="/announcements"', `at most ${X.repliesPerAuthorHour} replies an hour to the same account`, `${X.dailyReplies} replies a day and ${X.hourlyReplies} an hour`,
   ]) assert.ok(page.includes(s), s);
   assert.deepEqual(GATE.badges, ["blue", "business", "government"]);
   // IdeaMarket.ROUND_LENGTH (24 h), as /proposals and the demo data show it
@@ -68,12 +67,16 @@ test("the public /rules page states the engine's own values (gate, pick, X limit
   const proposals = readFileSync(new URL("../../web/app/proposals/page.tsx", import.meta.url), "utf8");
   for (const s of ['["Round", "24 hours"', '"up to ~5 days", "24 h round + ≤ 3 d to resolve + 24 h"', "within 2 days", 'href="/rules"']) assert.ok(proposals.includes(s), s);
   assert.match(readFileSync(new URL("../../web/app/_data/mock.ts", import.meta.url), "utf8"), /export const ideaRoundMs = 86_400_000;/);
+  // /docs says the same gate and screen
+  const docs = readFileSync(new URL("../../web/app/docs/content.ts", import.meta.url), "utf8");
+  for (const s of ["Gate: any account, no links, no duplicates", "Screen: fee / build / impossible / question / chat / joke / shill / spam", "no badge, account age or follower count"]) assert.ok(docs.includes(s), s);
+  for (const stale of ["account ≥ 7 d", "at least 7 days old. one idea"]) assert.ok(!docs.includes(stale), stale);
 });
 
 test("report rows: the reader's impossible or invalid stands over the brain; acceptance needs a vector or a rubric; a red-team block voids it", async () => {
   const { reportRow } = await import("../src/ideas.ts");
   const i = { id: 7, index: 0 };
-  const fee = { id: 7, decision: "accept" as const, kind: "fee" as const, reason: "testable", title: "Calmer fee", params: { base: 20_000, mult: 0, cap: 25_000 }, rubric: null };
+  const fee = { id: 7, decision: "accept" as const, kind: "fee" as const, reason: "testable", title: "Calmer fee", params: { base: 20_000, mult: 0, cap: 25_000 }, rubric: null, understood: "A calmer fee.", plain: "It can be tested safely.", variant: null };
   const read = (kind: string) => ({ kind, summary: "A calmer fee.", spec: "Base 2%." });
   assert.deepEqual([reportRow(i, fee, read("fee"), null).decision, reportRow(i, fee, read("fee"), null).params], ["accept", fee.params]);
   for (const k of ["impossible", "invalid"]) {
@@ -91,8 +94,22 @@ test("screen: genuine ideas are fee, build or impossible; impossible and the res
   const { screenDecision } = await import("../src/ideas.ts");
   const base = { title: "Calmer fee at night", body: "Lower the base fee when volatility is low.", clarity: 7, feasibility: 8, value: 6 };
   assert.equal(ScreenOut.safeParse({ ...base, screen: "genuine" }).success, false, "genuine is no longer a verdict: it is fee, build or impossible");
-  for (const s of ["fee", "build", "impossible", "joke", "shill", "spam"]) assert.equal(ScreenOut.safeParse({ ...base, screen: s }).success, true, s);
+  for (const s of ["fee", "build", "impossible", "question", "chat", "joke", "shill", "spam"]) assert.equal(ScreenOut.safeParse({ ...base, screen: s }).success, true, s);
   for (const w of ["immutable hook or token", "minting", "custody of user funds", "illegal"]) assert.ok(SCREEN_TASK.includes(w), w);
+  // plain questions and normal conversation are their own kinds, never spam or shill; spam is bait and solicitation
+  // (the real posts: engine/tryout/intake/known.json and trial/inputs/ideas.json carry them as model fixtures)
+  for (const w of ["question (asks something", "chat (normal conversation", "How much DNA was burned so far?", "What's the next step for DNA?", "Is this a good buy?", "how are you doing?",
+    "follow me and slide into my DM", "Interested in a collaboration to grow your project?", "Can I get follow back?", "A plain question or friendly message is never spam or shill"]) assert.ok(SCREEN_TASK.includes(w), w);
+  for (const s of ["question", "chat"]) assert.deepEqual(screenDecision({ ...base, screen: s as "question", title: "", body: "" }), { status: "screened", reason: `screened as ${s}` });
+  const known = JSON.parse(readFileSync(new URL("../tryout/intake/known.json", import.meta.url), "utf8")) as { input: string; expect: { screen: string | string[] } }[];
+  const want = (t: string) => [known.find((c) => c.input === t)?.expect.screen].flat();
+  for (const t of ["How much dna burning so far?", "What's the next step for DNA?", "Is this a good buy? Prove it if you can"]) assert.deepEqual(want(t), ["question"], t);
+  assert.ok(!want("How are you doing?").some((x) => x === "spam" || x === "shill"));
+  for (const t of ["follow me and slide into my DM", "Can I get follow back?"]) assert.deepEqual(want(t), ["spam"], t);
+  // the reply reader: a plain question is never bait (the persona bundle's prompt and the public default)
+  const { DEFAULT_PROMPTS } = await import("../src/persona.ts");
+  assert.ok(DEFAULT_PROMPTS["x-reader"].includes("A plain question or a friendly message is never bait"));
+  assert.ok(/friendly messages are never bait/.test(readFileSync(new URL("../../persona/bundle.md", import.meta.url), "utf8")));
   assert.deepEqual(screenDecision({ ...base, screen: "fee" }), { status: "candidate", class: "fee", score: 21, title: base.title, body: base.body, reason: "genuine fee idea, score 21 of 30 (clarity 7, feasibility 8, value 6)" });
   assert.equal((screenDecision({ ...base, screen: "build" }) as { class: string }).class, "build");
   assert.deepEqual(screenDecision({ ...base, screen: "impossible" }), { status: "screened", reason: "impossible: it needs a change to the immutable hook or token, minting, custody of user funds, or something illegal" });
@@ -147,12 +164,41 @@ test("quarantine: the screen's restatement of inject-downstream-brain keeps the 
   for (const idea of [/trivia/i, /onchain history/i, /free/i]) assert.match(restated, idea);
 });
 
-test("replies need no badge: the account's age and followers only; ideas still need the badge", () => {
-  const year = { verified_type: "none", created_at: new Date(NOW - 365 * DAY).toISOString(), public_metrics: { followers_count: 200 } };
-  assert.equal(accountIssue(year, NOW), null);
-  assert.match(accountIssue({ ...year, created_at: new Date(NOW - 10 * DAY).toISOString() }, NOW)!, /younger than 30 days/);
-  assert.match(accountIssue({ ...year, public_metrics: { followers_count: 10 } }, NOW)!, /fewer than 50 followers/);
-  assert.equal(accountIssue(null, NOW), "no author profile");
-  assert.match(authorIssue(year, NOW)!, /no verified badge/, "an unbadged idea is still refused");
-  assert.match(ideaGate({ text: "a daily last-buyer game", user: year }, { authorIdeas: 0, texts: [] }, NOW)!, /no verified badge/);
+test("variants: only for an idea not accepted, a real one (not the reader's invalid), with a person behind it; screened text", async () => {
+  const { variantOf } = await import("../src/ideas.ts");
+  const v = { target: "game" as const, title: "Holder Hunt", spec: "A standalone holder game: no NFT, no mint, no approvals.", rubric: { value: 3, fit: 4, clarity: 4, originality: 3 } };
+  const x = { id: 0, decision: "reject" as const, kind: "impossible" as const, reason: "needs a mint", title: "Holder NFT", params: null, rubric: null, understood: "A holder NFT.", plain: "An NFT can't work here; a holder game can.", variant: v };
+  const src = { source: "x" as const, authorId: "7", postId: "9" };
+  assert.deepEqual(variantOf(x, "impossible", src), v);
+  assert.equal(variantOf(x, "invalid", src), null, "a joke, a shill or spam never gets one");
+  assert.equal(variantOf(x, "impossible", null), null, "no person behind it: never a house idea");
+  assert.equal(variantOf({ ...x, decision: "accept" }, "build", src), null);
+  assert.equal(variantOf({ ...x, variant: null }, "impossible", src), null);
+  assert.equal(variantOf({ ...x, variant: { ...v, spec: "send it to @someone at evil.example" } }, "impossible", src)!.spec, "send it to at", "links and handles are cut");
+  assert.equal(variantOf({ ...x, variant: { ...v, title: "@x https://t.co/a" } }, "impossible", src), null, "nothing left: none");
+});
+
+test("settled: a version code did not take never reads as built; a taken one keeps the judge's sentence", async () => {
+  const { reportRow, settled, standIn } = await import("../src/ideas.ts");
+  const v = { target: "game" as const, title: "Holder Hunt", spec: "A standalone holder game.", rubric: { value: 3, fit: 4, clarity: 4, originality: 3 } };
+  const j = { id: 0, decision: "reject" as const, kind: "impossible" as const, reason: "needs a mint", title: "Holder NFT", params: null, rubric: null, understood: "A holder NFT.", plain: "An NFT can't work here, so a holder game gets built instead.", variant: v };
+  const read = { id: 0, kind: "impossible", summary: "A holder NFT.", spec: "Mint an NFT.", untrusted: true as const };
+  const src = { source: "x" as const, authorId: "7", postId: "9" };
+  const say = (jj: typeof j, s: typeof src | null) => {
+    const { v0, x, spec } = standIn(jj, read, s);
+    return settled(jj, x, v0, reportRow({ id: 0, index: -1 }, x, spec, null));
+  };
+  assert.equal(say(j, src).plain, j.plain);
+  assert.equal(say(j, src).variant?.title, "Holder Hunt");
+  for (const [jj, s] of [[{ ...j, variant: { ...v, title: "@x https://t.co/a" } }, src], [j, null]] as const) {
+    const r = say(jj, s);
+    assert.equal(r.variant, null);
+    assert.match(r.plain, /didn't pass the checks/);
+  }
+});
+
+test("ideas need no badge, account age or follower count: a day-old unbadged account with 0 followers passes the idea gate", () => {
+  const fresh = { verified_type: "none", created_at: new Date(NOW - DAY).toISOString(), public_metrics: { followers_count: 0 } };
+  for (const live of [false, true]) assert.equal(ideaGate({ text: "a daily last-buyer game", user: fresh }, [], live), null);
+  assert.equal(ideaGate({ text: "a daily last-buyer game", user: {} }, []), null, "a profile without a date passes too");
 });

@@ -434,7 +434,7 @@ export const CHAPTERS: Chapter[] = [
     id: "ideas",
     title: NAMES.ideas,
     dumb: [
-      "got an idea? post it on X and tag @contractdna. you need a blue badge, a 30+ day account and 50+ followers. one idea a day, no links.",
+      "got an idea? post it on X and tag @contractdna. any account works: no badge, account age or follower count. one idea a day, no links.",
       "the AI screens them and the best 16 each day go to the idea market. game and tool ideas count too; the Sequencer builds them.",
       "you can stake $DNA on ideas. backers of picked ideas split the stakes of the ones that lost. if nobody judges a round in time, everyone gets refunded.",
     ],
@@ -445,7 +445,7 @@ export const CHAPTERS: Chapter[] = [
         "accepted position s → s + floor(s × R / A);  rejected → 0;  void → s;  A = 0 → everyone gets s back",
       ],
       flow: {
-        steps: ["Post on X tagging @contractdna", "Gate: badge, account ≥ 30 d, ≥ 50 followers, 1 per round, no links, no duplicates", "Screen: fee idea / build idea / impossible / joke / shill / spam, scored out of 30", "Top 16 of the round submitted at the start of the next"],
+        steps: ["Post on X tagging @contractdna", "Gate: any account, no links, no duplicates", "Screen: fee / build / impossible / question / chat / joke / shill / spam, scored out of 30; then 1 idea per person per round (live: per UTC day)", "Top 16 of the round submitted at the start of the next"],
         branches: [
           { when: "outcome proposed in time", then: "final 24 h later unless the Safe cancels; accepted backers split the rejected stakes" },
           { when: "no outcome within 3 d", then: "anyone finalizes the round as void: every stake refunded" },

@@ -18,7 +18,7 @@
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { type Address, type Hex } from "viem";
-import { d, IDEAS_LIVE, LOG_BASE_URL, MEDIA, X } from "./config.ts";
+import { d, IDEAS_LIVE, LLM, LOG_BASE_URL, MEDIA, X } from "./config.ts";
 import { edb as sql } from "./db.ts";
 import { Defer, type Handler } from "./jobs.ts";
 import { decodeOp, OPS } from "./lib.ts";
@@ -33,12 +33,12 @@ import { seal, unseal } from "./sealed.ts";
 import { alert, type ReplyButton, say } from "./telegram.ts";
 import { addressOf, pub } from "./tx.ts";
 import { hookAbi } from "./abi.ts";
-import { allyIssues, appendWeight, type Category, claimFacts, claimIssues, classifyMention, factNumbers, factSheet, feeFacts, linkIssues, OFFICIAL_REPLY, optOutRequest, postFilter, SCOUT, scoutTone, toneBrief, TX_URL, weightedLength, WRITER, type CharacterContext, chooseShapes, draftInCharacter, type Drafted, judgeCall, type JudgeOut, parrotIssue, pickBest, shapesFor, voiceIssues } from "./voice.ts";
-import { llm } from "./llm.ts";
+import { allyIssues, appendWeight, type Category, claimFacts, claimIssues, classifyMention, factNumbers, factSheet, feeFacts, linkIssues, OFFICIAL_REPLY, optOutRequest, postFilter, promiseIssue, SCOUT, screenLine, SCRIPTS, TRANSLATE, Translated, nonAscii, scoutTone, toneBrief, TX_URL, weightedLength, WRITER, type CharacterContext, chooseShapes, draftInCharacter, type Drafted, judgeCall, type JudgeOut, parrotIssue, pickBest, shapesFor, voiceIssues } from "./voice.ts";
+import { llm, untrustedCall } from "./llm.ts";
 import { ballotsOpen, GAME_X_EVENTS, gameFacts, reasonOf, VOTES_CLOSED } from "./games.ts";
 import { announce, ANNOUNCEMENTS_URL, bucketOf, eventPosts, postCaps, priorityOf, proofOf, typeOf } from "./announce.ts";
-import { accountIssue, GATE, overlap, type XUser } from "./ideas.ts";
-import { COMPETITOR_NAMES, impersonator, isAlly, type Post, replyPath, stopRule, summoned, type Tier, tierOf, TIERS } from "./tiers.ts";
+import { GATE, IDEA_STATUSES, overlap, type XUser } from "./ideas.ts";
+import { COMPETITOR_NAMES, impersonator, isAlly, phishing, type Post, replyPath, stopRule, summoned, type Tier, tierOf, TIERS } from "./tiers.ts";
 import { BINDING_REPLY, parseBinding } from "./rewards.ts";
 import { type Card, cardFor, mediaRecord, requestArtFor } from "./card.ts";
 import { jsonSafe } from "./lib.ts";
@@ -201,8 +201,8 @@ export function draftMedia(name: unknown): Card | null {
 // ---------------------------------------------------------------- mentions (stored, untrusted)
 
 type Ref = { type: string; id: string };
-type Mention = { id: string; text: string; author_id?: string; created_at?: string; referenced_tweets?: Ref[]; conversation_id?: string; user?: XUser | null;
-  entities?: { mentions?: { id?: string | null; username?: string | null }[] } };
+export type Mention = { id: string; text: string; author_id?: string; created_at?: string; referenced_tweets?: Ref[]; conversation_id?: string; user?: XUser | null;
+  entities?: { mentions?: { id?: string | null; username?: string | null }[]; urls?: { expanded_url?: string }[] } };
 type Mentions = { data?: Mention[]; includes?: { users?: (XUser & { id: string; username: string })[] }; meta?: { newest_id?: string } };
 
 /** Mentions (or quotes) as X returned them, each stored once. Signed in the enclave: a mention row the DB made up (to
@@ -218,7 +218,7 @@ async function storeMentions(b: Mentions) {
       on conflict (id) do nothing`;
   }
 }
-const MENTION_FIELDS = { expansions: "author_id", "user.fields": "username,created_at,public_metrics,verified,verified_type", "tweet.fields": "created_at,referenced_tweets,conversation_id,entities" };
+export const MENTION_FIELDS = { expansions: "author_id", "user.fields": "username,created_at,public_metrics,verified,verified_type", "tweet.fields": "created_at,referenced_tweets,conversation_id,entities" };
 /** Quotes of our own posts of the last 2 days that do not @mention us (X's mentions list misses them): stored like
  *  mentions, so an idea posted as a quote goes through the same gate and screen (and the same reply rules: a quote of
  *  our post summons us, isSummoned). One call per post, hourly, in live idea mode. */
@@ -244,7 +244,7 @@ export const mentionsHandler: Handler = {
   run: async () => {
     if (!X.userId) return "X_USER_ID unset";
     const [s] = await sql<{ value: { sinceId?: string } }[]>`select value from state where key = 'engine_x'`;
-    // the author's profile feeds the idea gate (src/ideas.ts authorIssue) and the reply gate (accountIssue)
+    // the author's profile feeds the idea and binding gates (src/ideas.ts ideaGate, authorIssue) and the reply tiers (src/tiers.ts tierOf)
     const q = new URLSearchParams({ max_results: "100", ...MENTION_FIELDS });
     if (s?.value.sinceId) q.set("since_id", s.value.sinceId);
     // simplification: one page per poll (≤ 100 mentions a minute); follow meta.next_token if the bot gets busier
@@ -363,16 +363,54 @@ export async function deletePost(id: string | undefined, by: string) {
   return `deleted post ${id}`;
 }
 
-/** What a reply to an idea may say about it (code's words): logged for the round, or in live idea mode its verdict. */
-export async function intakeFact(mention: string): Promise<{ intake?: string }> {
-  const [r] = await sql<{ status: string }[]>`select status from intake where mention_id = ${mention}`;
-  if (!IDEAS_LIVE) return r && ["candidate", "picked"].includes(r.status) ? { intake: "their idea is logged for the open round; when it closes the top ideas go on-chain to be staked on" } : {};
-  const say: Record<string, string> = {
-    candidate: "their idea passed the screen and is being judged now; the verdict goes on the site within minutes",
-    queued: "their idea was judged and accepted: it is queued for the AI dev team, which builds the best queued idea whenever it is free",
-    rejected: "their idea was judged and not taken this time; the reason is on the site",
+/** Why the idea gate held an idea back, and what the person can do, in plain words (code's, by the gate's reason). */
+const GATE_SAYS: [RegExp, string, string][] = [
+  [/^links are not allowed/, "ideas can't include links", "post it again with the idea written out and no link"],
+  [/^already \d+ idea from this author the same UTC day/, "it's one idea per person per day (UTC), and they had already sent one that day", "post it again on another day (UTC)"],
+  [/^already \d+ idea from this author this round/, "it's one idea per person per round, and they already sent one this round", "post it again in the next round"],
+  [/^no author profile/, "X didn't send their profile with the post", "post it again"],
+];
+/** What a reply to an idea may say about it, in plain parts (code's words, the judge's plain sentences screened):
+ *  `understood` (what we took the idea to be), `verdict` (in, a buildable version, out, held back, being judged, logged),
+ *  `why` (the reason in one plain sentence), `next` (what happens now) and `instead` (the version that is built). */
+export async function intakeFact(mention: string): Promise<Record<string, unknown>> {
+  const [r] = await sql<IntakeIndex[]>`select status, score, reason, title from intake where mention_id = ${mention}`;
+  if (!r) return {};
+  // the quick first read (the screen's class and score) and the judge's plain words, from the newest intake record
+  // simplification: read unsigned, like the class always was; every model-written line is screened (screenLine)
+  const [c] = await sql<IntakeWords[]>`select
+    (select doc->>'class' from log where kind = 'intake' and ref = ${mention} and doc ? 'class' order by seq desc limit 1) as cls,
+    doc->>'understood' as understood, doc->>'plain' as plain, doc->>'instead' as instead from log where kind = 'intake' and ref = ${mention} order by seq desc limit 1`;
+  return intakeFactOf(r, c, IDEAS_LIVE);
+}
+type IntakeIndex = { status: string; score: number | null; reason: string | null; title: string | null };
+type IntakeWords = { cls: string | null; understood: string | null; plain: string | null; instead: string | null };
+/** intakeFact's facts from the intake index row `r` and the newest intake record's words `c` (no DB: the replay uses it). */
+export function intakeFactOf(r: IntakeIndex, c: IntakeWords | undefined, live: boolean): Record<string, unknown> {
+  const read = { ...(r.score !== null ? { ideaScore: r.score, ideaScoreOf: 30 } : {}), ...(c?.cls === "fee" || c?.cls === "build" ? { ideaClass: c.cls } : {}) };
+  const understood = screenLine(c?.understood ?? r.title ?? undefined, 200);
+  const base = { ...(understood ? { understood } : {}), ...read };
+  const repeat = r.status === "duplicate" || /near-duplicate/.test(r.reason ?? "");
+  if (repeat) return { intake: "their idea repeats one someone already sent this week, which is judged on its own", verdict: "a repeat", why: "the same idea was already sent this week", next: "nothing to do: the earlier one is judged on its own", ...base };
+  if (r.status === "gated") {
+    const g = GATE_SAYS.find(([re]) => re.test(r.reason ?? ""));
+    return { intake: `the idea gate held it back: ${r.reason ?? "see the site"}`, verdict: "held back", why: g?.[1] ?? screenLine(r.reason ?? undefined, 120) ?? "the idea gate held it back", next: g?.[2] ?? "the reason is on the site", ...base };
+  }
+  if (r.status === "screened") return { intake: `the screen did not read it as an idea (${(r.reason ?? "").slice(0, 120)})`, verdict: "not read as an idea", why: "it didn't read as an idea to build", next: "to send an idea, say what should change or be built, in plain words" };
+  if (!live) return ["candidate", "picked"].includes(r.status) ? { intake: "their idea is logged for the open round; when it closes the top ideas go on-chain to be staked on", verdict: "logged", next: "when the round closes, the top ideas go on-chain to be staked on", ...base } : base;
+  // the judge's plain reason (model-written: screened, left out when it does not pass)
+  const why = screenLine(c?.plain ?? undefined, 200);
+  // a variant was queued (its record names it); its title is said only when it passes the screen (no digits)
+  const variant = r.status === "queued" && !!c?.instead;
+  const instead = variant ? screenLine(c?.instead ?? undefined, 120) : undefined;
+  const say: Record<string, Record<string, string>> = {
+    candidate: { intake: "their idea passed the screen and is being judged now; the verdict goes on the site within minutes", verdict: "being judged", next: "the verdict goes on the site within minutes" },
+    queued: variant
+      ? { intake: "their idea can't be built as written; its closest buildable version is queued for the sequencer, credited to them", verdict: "a buildable version", ...(instead ? { instead } : {}), next: "the sequencer builds the best queued idea when it's free; they get the credit and are tagged as it moves" }
+      : { intake: "their idea was judged and accepted: it is queued for the sequencer", verdict: "in", next: "the sequencer builds the best queued idea when it's free; they are tagged as it moves" },
+    rejected: { intake: "their idea was judged and not taken", verdict: "out", next: "the full reason is on the site; a new idea is welcome tomorrow (UTC)" },
   };
-  return r && say[r.status] ? { intake: say[r.status] } : {};
+  return say[r.status] ? { ...say[r.status], ...(why ? { why } : {}), ...base } : base;
 }
 
 // ---------------------------------------------------------------- the outbox
@@ -389,7 +427,7 @@ export async function enqueueX(eventKey: string, type: Kind, event: Record<strin
 /** What an outbox row's signature covers (enclave): a row the DB made up never reaches the writer. */
 const outboxValue = (type: string, event: unknown, replyTo: string | null, link: string | null) => ({ type, event, replyTo, link });
 
-type RunRow = { id: string; data: { id: string; label: string; vector: Vector }; sig: string | null };
+type RunRow = { id: string; data: { id: string; label: string; vector: Vector; active?: string }; sig: string | null };
 const runOfOp = async (id: string) => {
   const [r] = await sql<RunRow[]>`select id, data, sig from thread where kind = 'fee' and (data->'allOps' ? ${id} or data->'ops' ? ${id}) order by created_at desc limit 1`;
   return r && (await trusted("thread", r.id, r.data, r.sig)) ? r.data : undefined;
@@ -401,6 +439,8 @@ export async function onChainEvent(e: ChainEv) {
   const key = `${e.eventName}:${e.transactionHash}:${e.logIndex ?? 0}`;
   const link = `${TX_URL}${e.transactionHash}`;
   const a = e.args;
+  // the Safe's changes, its cancels of game steps, a draw interval proposal, a pause (src/upgrades.ts)
+  if (await (await import("./upgrades.ts")).onOwnerChange(e)) return;
   switch (e.eventName) {
     case "Queued":
       if (String(a.proposer).toLowerCase() !== addressOf("agent")?.toLowerCase()) return;
@@ -473,8 +513,13 @@ export async function resolve(ev: Record<string, unknown>): Promise<Record<strin
   switch (ev.event) {
     case "queued": {
       const op = decodeOp(Number(ev.op), ev.data as Hex);
-      const fee = op.name === "SetParams" ? feeFacts((op.args[1] as Hex[]).slice(0, 3).map((w) => Number(BigInt(w))) as Vector) : undefined;
-      return { event: "queued", op: op.name, opId: Number(ev.opId), plate: run?.label, fee, activatesAt: utc(BigInt(String(ev.eta))) };
+      // a test's own op (SetShadow, SetCanary) states the fee it tests: its experiment's vector
+      const fee = op.name === "SetParams" ? feeFacts((op.args[1] as Hex[]).slice(0, 3).map((w) => Number(BigInt(w))) as Vector) : run ? feeFacts(run.vector) : undefined;
+      // SetParams on the experiment's active module tunes the live fee; on any other plate it sets a test's fee (unknown
+      // without the run: then the post says nothing about who pays)
+      const target = op.name === "SetParams" && run ? (run.active && String(op.args[0]).toLowerCase() === run.active.toLowerCase() ? "live" : "test") : undefined;
+      // a live tune sets the active module, not the experiment's plate: no plate label then
+      return { event: "queued", op: op.name, opId: Number(ev.opId), plate: target === "live" ? undefined : run?.label, fee, activatesAt: utc(BigInt(String(ev.eta))), ...(target ? { target } : {}) };
     }
     case "test_live":
       if (!run) return null;
@@ -490,12 +535,20 @@ export async function resolve(ev: Record<string, unknown>): Promise<Record<strin
       // the asked topic's mechanics (code's lines; the launch guard's only on a hook that has it)
       const topic = typeof ev.topic === "string" ? (ev.topic as Topic) : undefined;
       const mechanics = topic ? mechanicsFor(topic, await hasLaunchGuard(HOOK_READ.launchGuard)) : [];
-      return { event: "reply", category: ev.category, topic, question: ev.question, state: await stateFacts(), relationship: ev.relationship, ...(mechanics.length ? { mechanics } : {}), ...(typeof ev.rival === "string" ? { rival: ev.rival } : {}) };
+      // lang: the reader's (SCRIPTS); lead: code's "@handle" before a reply in our own thread (a thread presence turn)
+      return { event: "reply", category: ev.category, topic, question: ev.question, state: await stateFacts(), relationship: ev.relationship, ...(mechanics.length ? { mechanics } : {}), ...(typeof ev.rival === "string" ? { rival: ev.rival } : {}),
+        ...(typeof ev.lang === "string" && ev.lang in SCRIPTS ? { lang: ev.lang } : {}), ...(typeof ev.lead === "string" ? { lead: ev.lead } : {}) };
     }
     case "game": {
       const g = await gameFacts(ev);
       return g && { ...g.facts, append: g.append };
     }
+    // a code update, an owner change (src/upgrades.ts)
+    case "update_queued": case "update_allowed": case "update_running": case "update_cancelled": case "change_queued": case "change_cancelled": case "change_done":
+      return (await import("./upgrades.ts")).resolveChange(ev);
+    // never an empty day about ourselves: the day's changelog (src/upgrades.ts) replaced it, a stray row is skipped
+    case "seq_nothing_today":
+      return null;
     default:
       return ev;
   }
@@ -567,7 +620,9 @@ export const sendHandler: Handler = {
     // DB's clock
     const stale = sql`created_at < now() - make_interval(secs => ${X.staleMs / 1000})`;
     await sql`update x_outbox set status = 'digest', error = 'rolled into the digest: stale', updated_at = now() where status = 'queued' and type = 'post' and ${stale} and event->>'event' not in ('digest', 'ct')`;
-    await sql`update x_outbox set status = 'skipped', error = 'stale', updated_at = now() where status in ('queued', 'held') and type = 'reply' and ${stale}`;
+    // an idea author's reply never goes stale (it still goes out once, under the ceilings)
+    await sql`update x_outbox set status = 'skipped', error = 'stale', updated_at = now() where status in ('queued', 'held') and type = 'reply' and ${stale}
+      and event->>'category' is distinct from 'idea'`;
     // a digest not out within the stale window never takes a slot the next day (the next digest counts anew)
     await sql`update x_outbox set status = 'skipped', error = 'stale digest', updated_at = now() where status = 'queued' and type = 'post' and event->>'event' = 'digest' and ${stale}`;
     // a held reply whose Send / Skip message never reached Telegram: shown again
@@ -604,6 +659,8 @@ export const sendHandler: Handler = {
   },
 };
 const WAIT = Symbol("wait");
+/** How long an idea reply waits for the intake's first read before it goes without one. */
+export const IDEA_READ_WAIT_MS = 5 * 60_000;
 
 /** True while the launch has begun (the registry's Initialized is indexed) and the "online" post is not out yet: not
  *  queued by x:launch, queued, mid-attempt, or skipped by a /mute (x:launch queues it again). Once it is posted, rolled
@@ -632,14 +689,26 @@ async function sendOne(item: Outbox, m: string): Promise<unknown> {
   }
   const block = item.type === "reply" ? await replyBlock(item) : null;
   if (block) { await setStatus(item.id, "skipped", { error: block }); return "skipped"; }
-  const raw = await resolve(item.event);
+  let raw: Record<string, unknown> | null;
+  try {
+    raw = await resolve(item.event);
+  } catch (e) {
+    if (!(e instanceof Defer)) throw e;
+    // a fact this post needs can't be read yet (an update's release record): it stays queued for the next run, the
+    // rest go now; a signers' note once it has waited 2 h
+    if (Date.now() - new Date(item.created_at).getTime() > 2 * 3600_000) await alert(`X post ${item.event_key} still waits after 2 h: ${e.message}`, `alert:x:deferred:${item.event_key}`);
+    return WAIT;
+  }
   if (!raw) { await setStatus(item.id, "skipped", { error: "not an agent op" }); return "skipped"; }
   if (item.type === "post" && raw.event !== "digest" && raw.event !== "ct") await announce(item.event_key, raw, { raw: item.event, tx: item.link, proof: proofOf(raw.append) }); // if not yet
   // the run's day on every post; the mind (src/life.ts; screened by factSheet) on the posts about its work; what it
   // waits on where someone may ask; the first of a kind marked
   const ev = String(raw.event);
+  // an idea reply waits (≤ 5 min) for the intake's first read (src/ideas.ts runs every minute): its class and score
+  if (item.type === "reply" && raw.category === "idea" && item.reply_to && Date.now() - new Date(item.created_at).getTime() < IDEA_READ_WAIT_MS
+    && !(await sql`select 1 from intake where mention_id = ${item.reply_to}`).length) return WAIT;
   const facts = factSheet({
-    ...raw, day: await dayOfLife(), ...(await storyNow(item.event_key, ev)), ...(MIND_EVENTS.has(ev) ? { mind: await mindNow() } : {}), ...(PENDING_EVENTS.has(ev) ? { pending: await pendingNow() } : {}),
+    ...raw, day: await dayOfLife(), ...(await storyNow(item.event_key, ev)), ...(MIND_EVENTS.has(ev) ? { mind: await mindNow() } : {}), ...(PENDING_EVENTS.has(ev) ? { pending: await pendingNow(Date.now(), ev) } : {}),
     ...(FIRST_EVENTS.has(ev) && !(await sql`select 1 from log where kind = 'announce' and doc->>'type' = ${ev} and ref <> ${item.event_key} limit 1`).length ? { first: true } : {}),
     // an idea the intake took in: the reply says it is logged (live idea mode: where its verdict stands)
     ...(item.type === "reply" && raw.category === "idea" && item.reply_to ? await intakeFact(item.reply_to) : {}),
@@ -657,33 +726,32 @@ async function sendOne(item: Outbox, m: string): Promise<unknown> {
   const tone = await currentTone();
   // code appends: game text (a winner's short address, a commitment), then the tx link
   const suffix = [raw.append, item.link].filter(Boolean).join("\n");
+  // code's "@handle" before the writer's text: a reply in our own thread that tags the person it is for (an idea's
+  // progress, a thread presence turn); the writer never writes a handle
+  const lead = typeof raw.lead === "string" && /^@\w{1,15}$/.test(raw.lead) ? raw.lead : "";
+  const extra = appendWeight(suffix) + (lead ? weightedLength(lead) + 1 : 0);
   // a binding and the official-contract answer get one fixed text each (code, never the writer)
-  const fixed = raw.event === "binding_reply" ? BINDING_REPLY : raw.event === "official_reply" ? OFFICIAL_REPLY : null;
+  const fixed = raw.event === "binding_reply" ? BINDING_REPLY : raw.event === "official_reply" ? OFFICIAL_REPLY : String(raw.event).startsWith("update_") && typeof raw.fixed === "string" ? raw.fixed : null;
   const author = item.type === "reply" && typeof item.event.author === "string" ? item.event.author : undefined;
   const memory = fixed ? null : await CHARACTER_MEMORY.context({ authorId: author, type: item.type });
   // a first or a milestone is an event: the mood says so; 4 shapes, never the one this event used last time
   const mood = memory && (facts.first === true || MILESTONE_MOOD.has(ev)) ? "milestone" as const : memory?.mood;
   const shapes = chooseShapes(shapesFor(item.type, facts, mood), memory?.recent ?? [], ev);
   // in a thread, a draft that repeats one of our earlier replies there adds no new fact: it is not sent
-  const before = item.type === "reply" ? (await ourThread(item.reply_to)).map((p) => p.text) : [];
+  const before = item.type === "reply" ? (await ourThread(item.event.self === true ? String(item.event.mention ?? "") : item.reply_to)).map((p) => p.text) : [];
   // a fixed text already sent in this thread adds nothing: never repeated there
-  if (fixed && before.includes(fixed)) { await setStatus(item.id, "skipped", { error: "no new fact" }); return "skipped"; }
+  if (fixed && before.includes(fixed)) { await setStatus(item.id, "skipped", { error: "the same fixed text is already in this thread" }); return "skipped"; }
   // an event that shipped nothing never reads as shipped, live, fixed, merged or approved (src/voice.ts claimIssues)
   // a draft that only restates code's stage text is refused (parrotIssue); an echo of the private bundle too (bundleIssues)
-  const filter = (text: string) => [...postFilter(text, allowed, appendWeight(suffix), { intent: intentOf(facts), priceJoke: facts.category === "price_fud", claim: claimFacts(facts) }), ...(before.some((b) => overlap(b, text) >= GATE.overlap) ? ["no new fact"] : []), ...claimIssues(facts, text), ...allyIssues(facts, text), ...voiceIssues(facts, text, { linked: !!item.link, mention }), ...[parrotIssue(facts, text)].filter((x): x is string => !!x), ...bundleIssues(text)];
+  // a reply in the reader's language (facts.lang) may use that language's letters (SCRIPTS)
+  const script = typeof facts.lang === "string" ? SCRIPTS[facts.lang] : undefined;
+  const filter = (text: string) => [...postFilter(text, allowed, extra, { intent: intentOf(facts), priceJoke: facts.category === "price_fud", claim: claimFacts(facts), script }), ...(before.some((b) => overlap(b, text) >= GATE.overlap) ? ["no new fact"] : []), ...claimIssues(facts, text), ...allyIssues(facts, text), ...promiseIssue(text), ...voiceIssues(facts, text, { linked: !!item.link, mention }), ...[parrotIssue(facts, text)].filter((x): x is string => !!x), ...bundleIssues(text)];
   let w: Drafted;
   try {
     w = fixed ? { model: "code", candidates: [{ text: fixed, issues: [] }], redraft: false }
       : await draftInCharacter(facts, tone, filter, memory ? { ...memory, mood: mood ?? memory.mood, shapes, card: card?.kind === "image", ...(before.length ? { thread: before.slice(-5) } : {}) } : null, undefined, shapes);
   } catch (e) {
-    if (e instanceof Defer) throw e; // the LLM cap: the item stays queued until tomorrow
-    const n = item.errors + 1;
-    await sql`update x_outbox set errors = ${n}, error = ${(e as Error).message.slice(0, 300)}, updated_at = now() where id = ${item.id}`;
-    if (n >= MAX_WRITER_ERRORS) {
-      await giveUp(item, "failed", `writer failed ${n} times: ${(e as Error).message.slice(0, 200)}`);
-      await alert(`X writer failed ${n} times on ${item.event_key} (${item.type}); ${item.type === "post" ? "it rolled into the digest" : "no reply"}. Last error: ${(e as Error).message.slice(0, 200)}`, `alert:xwriter:${item.event_key}`);
-    }
-    return `writer failed (${n}/${MAX_WRITER_ERRORS})`;
+    return writerFailed(item, e);
   }
   const candidates = w.candidates;
   // the judge orders what passed every filter (2 or more); it never decides what is safe: on any failure, the first
@@ -710,7 +778,19 @@ async function sendOne(item: Outbox, m: string): Promise<unknown> {
     return "miss";
   }
   const draft = pick.text.normalize("NFKC").trim();
-  const text = `${draft}${suffix ? `\n${suffix}` : ""}`;
+  // code's lexicon is English: a reply in another language (even one that happens to be plain ASCII) is read back in
+  // English by a call that never saw the facts or the mention, and that reading must pass the same checks (its length
+  // aside), or the writer tries again later
+  if (script) {
+    try {
+      const english = (await llm(untrustedCall("x-translate", TRANSLATE, draft, Translated))).data.english;
+      const issues = filter(english).filter((i) => i !== "over 280 weighted chars");
+      if (issues.length) throw new Error(`the English reading of the draft: ${issues.join(", ")}`);
+    } catch (e) {
+      return writerFailed(item, e);
+    }
+  }
+  const text = `${lead ? `${lead} ` : ""}${draft}${suffix ? `\n${suffix}` : ""}`;
   // the writer's own text and joke ride in the record, so a held reply sent by a tap carries them too
   const sent = { ...rec, draft, ...(pick.joke ? { joke: pick.joke } : {}) };
   if (m !== "live") {
@@ -718,9 +798,25 @@ async function sendOne(item: Outbox, m: string): Promise<unknown> {
     await setStatus(item.id, "dry_run");
     return { dryRun: text };
   }
+  // an important or competitor mention: the signers' alert carries the exact reply (its Plan)
+  const held = item.type === "reply" && HELD_EVENTS.has(String(item.event.event)) && replyPath(tierOfItem(item)) === "hold";
+  if (item.type === "reply" && tierOfItem(item) !== "normal") await replyAlert(item, held ? `this reply, held for a Send tap:\n${text}` : `this reply, going out now:\n${text}`).catch(() => {});
   // the official-contract answer to an important account waits for the tap like any reply to one (X_HOLD_IMPORTANT)
-  if (item.type === "reply" && HELD_EVENTS.has(String(item.event.event)) && replyPath(tierOfItem(item)) === "hold") return hold(item, { ...sent, text });
+  if (held) return hold(item, { ...sent, text });
   return deliver(item, text, card, sent);
+}
+
+/** A writer failure (an invalid answer, or a draft whose English reading fails): tried again after a backoff, up to
+ *  MAX_WRITER_ERRORS; the LLM cap (Defer) leaves the item queued. */
+async function writerFailed(item: Outbox, e: unknown) {
+  if (e instanceof Defer) throw e; // the LLM cap: the item stays queued until tomorrow
+  const n = item.errors + 1;
+  await sql`update x_outbox set errors = ${n}, error = ${(e as Error).message.slice(0, 300)}, updated_at = now() where id = ${item.id}`;
+  if (n >= MAX_WRITER_ERRORS) {
+    await giveUp(item, "failed", `writer failed ${n} times: ${(e as Error).message.slice(0, 200)}`);
+    await alert(`X writer failed ${n} times on ${item.event_key} (${item.type}); ${item.type === "post" ? "it rolled into the digest" : "no reply"}. Last error: ${(e as Error).message.slice(0, 200)}`, `alert:xwriter:${item.event_key}`);
+  }
+  return `writer failed (${n}/${MAX_WRITER_ERRORS})`;
 }
 
 /** The POST, at most once: the signed `attempt` record (text, media sha256 + provenance) precedes the upload and the
@@ -786,8 +882,14 @@ async function attempted(item: Outbox, why: string) {
 export const skipReply = (mentionId: string, why: string) =>
   sql`insert into x_outbox (type, event_key, event, reply_to, status, error) values ('reply', ${`reply:${mentionId}`}, '{}', ${mentionId}, 'skipped', ${why}) on conflict do nothing`;
 
+/** A mention the intake takes again (live idea mode's backfill) gets its one reply after all: a skip from before (an
+ *  old gate) is cleared, so the replies job weighs it anew under today's rules and hard lines. A reply that went out,
+ *  or one in flight, stays the only one; a skip while muted, or a signer's Skip tap, stays. */
+export const reopenReply = (mentionId: string) =>
+  sql`delete from x_outbox where event_key = ${`reply:${mentionId}`} and status = 'skipped' and error is distinct from 'muted' and coalesce(error, '') not like 'skipped by %'`;
+
 type MentionRow = { id: string; author_id: string | null; text: string; raw: Mention; sig: string | null };
-const statusUrl = (id: string) => `https://x.com/i/status/${id}`;
+export const statusUrl = (id: string) => `https://x.com/i/status/${id}`;
 /** The owners' Telegram note for a post that went out: what it was (a reply names the post it answered), where, the text. */
 export const postedNote = (item: Pick<Outbox, "type" | "event_key" | "reply_to">, tweetId: string, text: string) =>
   `Posted: ${item.type === "reply" && item.reply_to ? `reply to ${statusUrl(item.reply_to)}` : item.event_key}\n${statusUrl(tweetId)}\n${text.slice(0, 280)}`;
@@ -815,8 +917,14 @@ const theirThread = async (m: MentionRow, conv: string): Promise<Post[]> =>
   (await sql<MentionRow[]>`select id, author_id, text, raw, sig from x_mention where raw->>'conversation_id' = ${conv} and author_id = ${m.author_id}
     and (length(id), id) < (length(${m.id}::text), ${m.id}::text) order by length(id) desc, id desc limit 50`).map((r) => ({ id: r.id, text: r.text, parent: parentOf(r.raw) }));
 
+/** The anti-loop brake: X.repliesPerAuthorHour of our replies (any kind) to one account in the last hour. */
+export const braked = async (author: string) => (await sql<{ mine: number }[]>`select count(*)::int as mine from x_outbox o where o.type = 'reply'
+  and o.status <> 'skipped' and o.event->>'author' = ${author} and o.created_at > now() - interval '1 hour'`)[0].mine >= X.repliesPerAuthorHour;
+/** An address in a post's text: outside a binding or a contract question, it gets nothing (a scam's "send to 0x…"). */
+export const LOOSE_ADDRESS = /0x[0-9a-f]{40}/i;
+
 /** Reply events that follow the tier's reply path (auto, held for the Send tap, off); the binding notice always goes. */
-const HELD_EVENTS = new Set(["reply", "official_reply"]);
+const HELD_EVENTS = new Set(["reply", "official_reply", "idea_update"]);
 const tierOfItem = (item: Outbox): Tier => (["important", "competitor"].includes(String(item.event.tier)) ? item.event.tier as Tier : "normal");
 
 /** X refused a reply (403) in the last hour: replies wait (they stay queued or held), none is sent. */
@@ -824,7 +932,7 @@ const repliesPaused = async () => (await sql`select 1 from x_outbox where type =
 
 /** The reply ceilings: X.dailyReplies a UTC day and X.hourlyReplies in the last 60 minutes (across midnight too), over
  *  every reply that holds a slot. `except`: the reply asking (a held one already holds its own). */
-async function overCeiling(except?: string) {
+export async function overCeiling(except?: string) {
   const now = Date.now();
   const [{ n, hour }] = await sql<{ n: number; hour: number }[]>`select count(*) filter (where created_at >= ${new Date(now - (now % 86_400_000))})::int as n,
     count(*) filter (where created_at > ${new Date(now - 3600_000)})::int as hour from x_outbox where type = 'reply' and status <> 'skipped'
@@ -835,12 +943,27 @@ async function overCeiling(except?: string) {
 /** Why a queued or held reply may not go out (null = it may): checked before the writer runs and again at a Send tap,
  *  so the reply API is never called for a post that did not summon us. */
 async function replyBlock(item: Outbox): Promise<string | null> {
-  const [m] = await sql<MentionRow[]>`select id, author_id, text, raw, sig from x_mention where id = ${item.reply_to}`;
+  // a reply in our own thread (`self`: an idea's progress, a thread presence turn) answers our own posted reply; the
+  // signed mention that summoned us there is `event.mention`, and the person it tags (`event.author`) may have opted out
+  const self = item.event.self === true;
+  if (self && !(await ourPostedReply(item.reply_to))) return "not a reply to our own posted reply";
+  const [m] = await sql<MentionRow[]>`select id, author_id, text, raw, sig from x_mention where id = ${self ? String(item.event.mention ?? "") : item.reply_to}`;
   if (!(await signedMention(m))) return "no signed mention";
   if (!(await isSummoned(m.raw))) return "not summoned (no @mention or quote of us)";
-  if (m.author_id && (await sql`select 1 from x_optout where author_id = ${m.author_id}`).length) return "opted out";
+  for (const a of new Set([m.author_id, self && typeof item.event.author === "string" ? item.event.author : null])) {
+    if (a && (await sql`select 1 from x_optout where author_id = ${a}`).length) return "opted out";
+  }
   if (HELD_EVENTS.has(String(item.event.event)) && replyPath(tierOfItem(item)) === "off") return "AI replies are off until X approves them";
   return null;
+}
+
+/** A tweet of ours: a reply whose signed `posted` record names it (the outbox row's tweet_id alone is not signed). */
+async function ourPostedReply(tweetId: string | null) {
+  if (!tweetId) return false;
+  const rs = await sql<EnclaveRow[]>`select seq::text, kind, ref, body, eprev, ehash, esig from log where kind = 'x_post' and doc->>'status' = 'posted'
+    and doc->>'type' = 'reply' and doc->>'tweetId' = ${tweetId} order by seq desc limit 3`;
+  for (const r of rs) if (await trustedRecord(r, "x_post record")) return true;
+  return false;
 }
 
 /** An important account's reply before X approves AI replies: the exact text is signed as `held` and shown to the
@@ -855,9 +978,11 @@ async function hold(item: Outbox, rec: Record<string, unknown> & { text: string 
 const KEYBOARD_MISSING = "Send / Skip not shown yet";
 /** The Send / Skip message. When Telegram fails, the row is marked (x:send retries) and a queued alert names the reply. */
 async function showHeld(item: Outbox, text: string) {
-  const [m] = await sql<{ author_username: string | null }[]>`select author_username from x_mention where id = ${item.reply_to}`;
+  // a reply in our own thread tags its person (`lead`) under our own tweet
+  const self = item.event.self === true && typeof item.event.lead === "string";
+  const [m] = self ? [{ author_username: String(item.event.lead).slice(1) }] : await sql<{ author_username: string | null }[]>`select author_username from x_mention where id = ${item.reply_to}`;
   try {
-    await say(`Reply draft #${item.id} for @${m?.author_username ?? "?"} (important account). Send posts exactly this as a reply to ${statusUrl(item.reply_to ?? "")}\n\n${text}`,
+    await say(`Reply draft #${item.id} for @${m?.author_username ?? "?"} (important account). Send posts exactly this as a reply to ${statusUrl(item.reply_to ?? "")}${self ? " (our own reply in their thread)" : ""}\n\n${text}`,
       { reply_markup: { inline_keyboard: [[{ text: "Send", callback_data: `x:${item.id}:s` }, { text: "Skip", callback_data: `x:${item.id}:k` }]] } });
     await sql`update x_outbox set error = null where id = ${item.id} and status = 'held'`;
   } catch (e) {
@@ -903,7 +1028,7 @@ export const sameAsk = (a: string, b: string) => {
   const n = (t: string) => t.normalize("NFKC").toLowerCase().replace(/https?:\/\/\S+|@\w+/g, " ").replace(/[^\p{L}\p{N}]+/gu, " ").trim();
   return n(a) === n(b) && n(a) !== "";
 };
-type Decision = { skip: string } | { wait: string } | { later: string } | { kind: Category; topic: Topic; question?: string };
+type Decision = { skip: string } | { wait: string } | { later: string } | { kind: Category; topic: Topic; question?: string; lang?: string };
 /** Reader failures per mention (an invalid answer): tried again on later runs, skipped after READER_TRIES.
  *  simplification: in memory; a restart gives a mention its tries again (it is still left alone after a day). */
 const READER_FAILS = new Map<string, number>();
@@ -911,43 +1036,45 @@ export const READER_TRIES = 3;
 /** One mention → skip (with the reason), wait (a ceiling or the reader's budget: the next run tries again) or reply. */
 async function decide(m: MentionRow, tier: Tier): Promise<Decision> {
   if (!(await isSummoned(m.raw))) return { skip: "not summoned (no @mention or quote of us)" };
-  // replies need no badge: the account's age and followers (accountIssue), then every cap below
-  const gate = accountIssue(m.raw.user, Date.now());
-  if (gate) return { skip: `author gate: ${gate}` };
+  // no author gate (age, followers, badge): every person who summons us is answered, under the caps below
   if (replyPath(tier) === "off") return { skip: "AI replies are off until X approves them" };
   const lim = TIERS[tier];
-  const [{ mine }] = await sql<{ mine: number }[]>`select count(*)::int as mine from x_outbox o join x_mention x on x.id = o.reply_to where o.type = 'reply' and o.status <> 'skipped'
-    and x.author_id = ${m.author_id} and o.created_at >= date_trunc('day', now() at time zone 'UTC') at time zone 'UTC'`;
-  if (mine >= lim.perAuthorDay) return { skip: `${lim.perAuthorDay} replies to this author today` };
-  // the same question from the same person: answered twice (a week), then left alone
-  const asked = await sql<{ text: string }[]>`select x.text from x_outbox o join x_mention x on x.id = o.reply_to where o.type = 'reply' and o.status <> 'skipped'
-    and x.author_id = ${m.author_id} and o.created_at > now() - interval '7 days'`;
-  if (asked.filter((a) => sameAsk(a.text, m.text)).length >= SAME_ASK) return { skip: `the same question answered ${SAME_ASK} times` };
+  // the same post from the same person: once within the hour (duplicate spam), twice a week, then left alone
+  const asked = await sql<{ text: string; hour: boolean }[]>`select x.text, o.created_at > now() - interval '1 hour' as hour from x_outbox o join x_mention x on x.id = o.reply_to
+    where o.type = 'reply' and o.status <> 'skipped' and x.author_id = ${m.author_id} and o.created_at > now() - interval '7 days'`;
+  const same = asked.filter((a) => sameAsk(a.text, m.text));
+  if (same.some((a) => a.hour)) return { skip: "duplicate: the same post answered within the hour" };
+  if (same.length >= SAME_ASK) return { skip: `the same question answered ${SAME_ASK} times` };
   const conv = m.raw.conversation_id;
   const parent = parentOf(m.raw);
-  if (tier === "normal") {
-    // one answer per author per conversation: everyone under a busy post is answered once
-    if (conv && (await sql`select 1 from x_outbox o join x_mention x on x.id = o.reply_to where o.type = 'reply' and o.status <> 'skipped' and x.raw->>'conversation_id' = ${conv} and x.author_id = ${m.author_id}`).length) return { skip: "already replied to this author in this conversation" };
-    if (parent && (await sql`select 1 from x_outbox where type = 'reply' and tweet_id = ${parent}`).length) return { skip: "reply to our reply" };
-  } else if (conv) {
-    // a thread: one turn per new post of theirs, while it runs
+  if (conv) {
+    // a thread (every tier, replies to our replies too): one turn per new post of theirs, while it runs
     const [t] = await sql<{ turns: number; open: number; stopped: number }[]>`select count(*) filter (where o.status <> 'skipped')::int as turns,
       count(*) filter (where o.status in ('queued', 'held', 'attempt'))::int as open, count(*) filter (where o.error like 'stop:%' or o.error = 'X 403')::int as stopped
       from x_outbox o join x_mention x on x.id = o.reply_to where o.type = 'reply' and x.raw->>'conversation_id' = ${conv} and x.author_id = ${m.author_id}`;
     if (t.stopped) return { skip: "thread stopped" };
     if (t.turns >= lim.perConversation) return { skip: `${lim.perConversation} turns in this conversation` };
-    if (t.open) return { skip: "our previous reply in this thread is not out yet" };
+    if (t.open) return { later: "our previous reply in this thread is not out yet" }; // their next turn waits for ours
   }
   const stop = stopRule({ id: m.id, text: m.text, parent }, conv ? await theirThread(m, conv) : [], conv ? await ourThread(null, conv) : [], Date.now());
   if (stop) return { skip: `stop: ${stop}` };
+  // the anti-loop brake: X.repliesPerAuthorHour replies to one account an hour (no daily cap per person); a post past it
+  // waits for the hour to roll (tried again next run, for up to a day)
+  if (await braked(m.author_id ?? "")) return { later: `${X.repliesPerAuthorHour} replies to this account in the last hour` };
   if (await overCeiling()) return { wait: "the reply ceilings" }; // later mentions wait (≤ 1 day)
   // a relaunch, an old or other token, a migration: code reads it and only the official line answers (no model)
   if (oldTokenTalk(m.text)) return { kind: "official_contract", topic: "other" };
   try {
     const r = (await classifyMention(m.text)).data;
-    // an ally's hello or a competitor's jab often reads as bait: they are answered (as a greeting), everyone else's is not
-    if (r.kind === "bait") return isAlly(m.author_id) || tier === "competitor" ? { kind: "greeting", topic: r.topic } : { skip: "bait" };
-    return oldTokenTalk(r.question) ? { kind: "official_contract", topic: r.topic } : { kind: r.kind, topic: r.topic, question: questionOf(r.question) };
+    // hard lines: phishing and abuse get nothing
+    if (r.kind === "scam") return { skip: "scam or phishing" };
+    if (r.kind === "abuse") return { skip: "slurs or harassment" };
+    // bait never ends a reply, whatever the tier: an ally's hello and a competitor's jab are answered as greetings;
+    // anyone else's bait (hype, lfg, collab asks, shilling) gets a short in-voice line (the writer never sees their
+    // links, tickers or handles)
+    const lang = r.lang in SCRIPTS ? r.lang : undefined;
+    if (r.kind === "bait" && (isAlly(m.author_id) || tier === "competitor")) return { kind: "greeting", topic: r.topic, lang };
+    return oldTokenTalk(r.question) ? { kind: "official_contract", topic: r.topic } : { kind: r.kind, topic: r.topic, question: questionOf(r.question), lang };
   } catch (e) {
     if (e instanceof Defer) return { wait: `the reader: ${e.message.slice(0, 120)}` }; // the LLM cap or provider trouble: next run
     const n = (READER_FAILS.get(m.id) ?? 0) + 1;
@@ -958,32 +1085,54 @@ async function decide(m: MentionRow, tier: Tier): Promise<Decision> {
   }
 }
 
+/** The mention alert for a reply that is written: its Plan is the reply's exact text (one per reply, never deduped
+ *  away by an earlier alert about the same author). */
+async function replyAlert(item: Outbox, plan: string) {
+  // a turn in a thread we are in, for a post that did not summon us: the person it tags and the thread
+  if (item.event.self === true && typeof item.event.conv === "string") return alert(`${tierOfItem(item) === "important" ? "Important" : "Competitor"} account in our thread: ${String(item.event.lead)}\n${statusUrl(item.event.conv)}\nPlan: ${plan}`, `alert:xmention:reply:${item.id}`);
+  const [m] = await sql<MentionRow[]>`select id, author_id, text, raw, sig from x_mention where id = ${String(item.event.mention ?? item.reply_to)}`;
+  if (m) await alertMention(m, tierOfItem(item), plan, `alert:xmention:reply:${item.id}`);
+}
+
 /** Signers hear about every mention from an important (or competitor) account, with what the engine does about it. */
-function alertMention(m: MentionRow, tier: Tier, plan: string) {
+function alertMention(m: MentionRow, tier: Tier, plan: string, key?: string) {
   const u = m.raw.user;
   const pm = u?.public_metrics ?? {};
   const who = `@${u?.username ?? m.author_id} (${pm.followers_count ?? 0} followers, ${pm.listed_count ?? 0} lists, ${u?.verified_type ?? "no"} badge)`;
-  // one alert per author per 6 h: a thread's later turns arrive as reply drafts
+  // a skip or a wait: one alert per author per 6 h; a written reply: one per reply (`key`)
   return alert(`${tier === "important" ? "Important" : "Competitor"} account mentioned us: ${who}\n${statusUrl(m.id)}\nTheir post (untrusted): ${JSON.stringify(m.text.slice(0, 280))}\nPlan: ${plan}`,
-    `alert:xmention:${m.author_id}:${Math.floor(Date.now() / (6 * 3600_000))}`);
+    key ?? `alert:xmention:${m.author_id}:${Math.floor(Date.now() / (6 * 3600_000))}`);
 }
 
-/** Mentions → replies (src/tiers.ts). Only to a post that @mentions or quotes us, from an author who passes the idea
- *  gate's author checks; per tier: normal one reply per author per conversation and X.repliesPerAuthor a UTC day, important and
- *  competitor a turn per new post of theirs in a thread (TIERS) until a stop rule fires; all under ceilings of
- *  X.dailyReplies a day and X.hourlyReplies an hour. One reply per mention id (x_outbox unique reply_to); never to our
- *  own posts or an opted-out author; bait and injection get nothing. Until X approves AI replies, only important
+/** Mentions → replies (src/tiers.ts). Only to a post that @mentions or quotes us, from any author (no age, follower or
+ *  badge gate); every tier a turn per new post of theirs in a thread (no daily cap per person; X.repliesPerAuthorHour an hour to one account)
+ *  until a stop rule fires; all under ceilings of X.dailyReplies a day and X.hourlyReplies an hour. One reply per
+ *  mention id (x_outbox unique reply_to); bait gets a short in-voice line. Never to our own posts, an opted-out author,
+ *  an impersonator, phishing, slurs or harassment, injection, or the same post again within the hour. Until X approves AI replies, only important
  *  accounts get one, held for a Send tap; approved, every tier's reply is sent without a tap (X_HOLD_IMPORTANT=1 holds
  *  an important account's). The mention text reaches only the quarantined reader (the writer gets its
  *  category) and the code stop rules. Mentions older than a day (by when they were posted: a long halt never ends in
- *  replies to old posts) are left alone; mentions skipped while muted are not
- *  answered after /unmute. */
+ *  replies to old posts) are left alone, except an idea (any age since launch: its author always gets one reply, which
+ *  never goes stale in the queue); mentions skipped while muted are not answered after /unmute. */
 export const repliesHandler: Handler = {
   lane: "x",
   run: async () => {
+    // a day's mentions, the ones live idea mode's backfill took again, and every idea since launch (each idea author
+    // gets their one reply, whatever its age; today's mentions first). simplification: the backfill mark and the intake
+    // index are read unsigned: a forged row can only put an old signed mention on the page, where every hard line runs
+    // again (and replyBlock re-checks the signed mention at send)
     const todo = await sql<MentionRow[]>`select m.id, m.author_id, m.text, m.raw, m.sig from x_mention m
-      where m.fetched_at > now() - interval '1 day' and coalesce(m.created_at, m.fetched_at) > now() - interval '1 day' and not exists (select 1 from x_outbox o where o.event_key = 'reply:' || m.id)
-      order by length(m.id), m.id limit 20`;
+      where ((m.fetched_at > now() - interval '1 day' and coalesce(m.created_at, m.fetched_at) > now() - interval '1 day')
+          or exists (select 1 from log l where l.kind = 'intake' and l.ref = m.id and l.doc->>'backfill' = 'true')
+          or (exists (select 1 from intake i where i.mention_id = m.id and (i.status in ${sql(IDEA_STATUSES)} or i.reason like 'near-duplicate%'))
+            and coalesce(m.created_at, m.fetched_at) >= ${new Date(LLM.launchAt ?? 0)}))
+        and not exists (select 1 from x_outbox o where o.event_key = 'reply:' || m.id)
+        -- what would only come back "later" stays off the page (a busy author never starves everyone else): a turn
+        -- whose previous reply in its thread is pending, and an author at the anti-loop brake
+        and not exists (select 1 from x_outbox o join x_mention x on x.id = o.reply_to where o.type = 'reply' and o.status in ('queued', 'held', 'attempt')
+          and x.author_id = m.author_id and x.raw->>'conversation_id' = m.raw->>'conversation_id')
+        and (select count(*) from x_outbox o where o.type = 'reply' and o.status <> 'skipped' and o.event->>'author' = m.author_id and o.created_at > now() - interval '1 hour') < ${X.repliesPerAuthorHour}
+      order by coalesce(m.created_at, m.fetched_at) > now() - interval '1 day' desc, length(m.id), m.id limit 20`;
     const out: Record<string, string> = {};
     const skip = async (m: MentionRow, why: string) => {
       await skipReply(m.id, why);
@@ -998,8 +1147,9 @@ export const repliesHandler: Handler = {
       if (fake) { await skip(m, fake); continue; }
       // an address in a contract question ("is 0x… the real contract?") gets the official line (once a day); any other
       // loose address gets nothing
-      const loose = /0x[0-9a-f]{40}/i.test(m.text);
+      const loose = LOOSE_ADDRESS.test(m.text);
       if (loose && !CONTRACT_ASK.test(m.text)) { await skip(m, "an address outside the binding format"); continue; }
+      if (phishing(m.text, m.raw.entities ? (m.raw.entities.urls ?? []).map((u) => u.expanded_url) : undefined)) { await skip(m, "scam or phishing"); continue; }
       if (m.author_id && (await sql`select 1 from x_optout where author_id = ${m.author_id}`).length) { await skip(m, "opted out"); continue; }
       if (optOutRequest(m.text)) {
         if (m.author_id) await sql`insert into x_optout (author_id) values (${m.author_id}) on conflict do nothing`;
@@ -1008,7 +1158,8 @@ export const repliesHandler: Handler = {
       const tier = tierOf(m.raw.user ? { id: m.author_id ?? undefined, ...m.raw.user } : null);
       const d = await decide(m, tier);
       // a reader retry ("later") alerts nothing yet: the final verdict does
-      if (tier !== "normal" && !("later" in d)) await alertMention(m, tier, "skip" in d ? `no reply (${d.skip})` : "wait" in d ? `waiting on ${d.wait}` : replyPath(tier) === "hold" ? "a reply draft follows: tap Send to post it" : "replying");
+      // a reply's alert goes out with its text, once it is written (sendOne)
+      if (tier !== "normal" && ("skip" in d || "wait" in d)) await alertMention(m, tier, "skip" in d ? `no reply (${d.skip})` : `waiting on ${d.wait}`);
       if ("wait" in d) break;
       if ("later" in d) { out[m.id] = d.later; continue; }
       if ("skip" in d) { await skip(m, d.skip); continue; }
@@ -1025,8 +1176,10 @@ export const repliesHandler: Handler = {
       const relationship = isAlly(m.author_id) ? "ally" : tier === "competitor" ? "competitor" : undefined;
       // a competitor that came at us first may be answered by name (code's name for it, never its handle)
       const rival = relationship === "competitor" && m.author_id ? COMPETITOR_NAMES[m.author_id] : undefined;
-      await enqueueX(`reply:${m.id}`, "reply", { event: "reply", category: d.kind, topic: d.topic, ...(d.question ? { question: d.question } : {}), ...(rival ? { rival } : {}), tier, ...(relationship ? { relationship } : {}), ...(m.author_id ? { author: m.author_id } : {}) }, { replyTo: m.id });
-      out[m.id] = d.kind;
+      // the intake took it as an idea (the screen's or the judge's result): the idea reply, whatever the reader called it
+      const kind = (await sql`select 1 from intake where mention_id = ${m.id} and (status in ${sql(IDEA_STATUSES)} or reason like 'near-duplicate%')`).length ? "idea" : d.kind;
+      await enqueueX(`reply:${m.id}`, "reply", { event: "reply", category: kind, topic: d.topic, ...(d.question ? { question: d.question } : {}), ...(rival ? { rival } : {}), tier, ...(relationship ? { relationship } : {}), ...(d.lang ? { lang: d.lang } : {}), ...(m.author_id ? { author: m.author_id } : {}) }, { replyTo: m.id });
+      out[m.id] = kind;
     }
     return out;
   },

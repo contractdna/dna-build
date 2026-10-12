@@ -39,6 +39,7 @@ export type QueueData = {
   idea: number; round: number; index: number; report: string; title: string; summary: string; spec: string;
   source: IdeaSource | null; // null: an agent-submitted idea with no X author on record (nobody to pay)
   params?: { base: number; mult: number; cap: number }; rubric?: Rubric;
+  variant?: { of: string; target: "game" | "site" | "module" }; // a buildable version of the author's idea (`of`: its title), credited to them
   thread?: string; opId?: string; why?: string; // fee: its experiment, or why it waits / was skipped
   basis?: Basis; since?: string; // reward: what it rests on, and since when it waits
   reward?: { brain: string; amountWei: string; reason: string; record?: { seq: string; root: Hex; to: Address; amount: string; block?: number }; anchored?: boolean; tx?: string };

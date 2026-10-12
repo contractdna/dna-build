@@ -7,6 +7,7 @@ import { type Core, type FeedEvent, initialCore, reduce } from "../_live/feed";
 import { activeModules, compact, eth, FEED_EVENTS, fmtParam, OPS, SEQ_STAGES, short, STATUS, toFeed, toSeqEvent, ZERO } from "./chain";
 import { FEE, PROJECT_FEE_CAP } from "./launchFee";
 import * as m from "./mock";
+import { abiOf, type Ship } from "../play/gameSource";
 
 export { FEED_EVENTS, toFeed };
 import type { Announcement, SeqEvent, AutonomyLevel, Clone, Leakage, Epoch, Experiment, Flow, Hex, Idea, Intervention, JournalEntry, MemoryEntry, Module, Pipeline, QueuedOp, SecurityItem, SplitShare, Thread, ThreadStep, Vault } from "./types";
@@ -59,7 +60,7 @@ function strip<T>(r: Rec<T>): T {
 // ---------------------------------------------------------------- shapes written by the indexer
 
 type Deployment = { chainId: number; startBlock: number; safe: Hex; agent: Hex; token: Hex; hook: Hex; registry: Hex; feeVault: Hex; buybackBurn: Hex; liquidityVault: Hex; platformRevenue: Hex;
-  bountyBoard?: Hex; ideaMarket?: Hex; convictionVault?: Hex; gamePot?: Hex };
+  bountyBoard?: Hex; ideaMarket?: Hex; convictionVault?: Hex; gamePot?: Hex; gameFactory?: Hex };
 type Manifest = { name: string; version: string; kind: Module["kind"]; author: string; review: Module["review"]; risk: Module["risk"]; summary: string; killConditions: string[]; params: { key: string; unit?: "pips" | "x1e4" }[] };
 type Snapshot = {
   level: number; agentPaused: boolean; lastRollbackBlock: string;
@@ -316,8 +317,10 @@ export const getTreasury = memo(async () => {
 // ---------------------------------------------------------------- security
 
 export const getSecurity = memo(async (): Promise<SecurityItem[]> => {
-  const [rbs, mods, dep, interventions] = await Promise.all([rows(["RolledBack"]), modulesRaw(), state<Deployment>("deployment"), interventionsRaw()]);
-  const who = (by: string) => by.toLowerCase() === dep?.safe.toLowerCase() ? "the Safe" : by.toLowerCase() === dep?.agent.toLowerCase() ? "the agent" : `${short(by)} (permissionless: breaker tripped)`;
+  const [rbs, mods, dep, interventions, agentSets] = await Promise.all([rows(["RolledBack"]), modulesRaw(), state<Deployment>("deployment"), interventionsRaw(), rows(["AgentSet"])]);
+  // the deploy-time agent and every key the Safe set since (AgentSet): a rollback by any of them is the agent's
+  const agents = new Set([dep?.agent, ...agentSets.map((r) => r.args.agent)].filter(Boolean).map((a) => String(a).toLowerCase()));
+  const who = (by: string) => by.toLowerCase() === dep?.safe.toLowerCase() ? "the Safe" : agents.has(by.toLowerCase()) ? "the agent" : `${short(by)} (permissionless: breaker tripped)`;
   const rollbacks: SecurityItem[] = rbs.map((r, i) => {
     const gone = [r.args.active, r.args.canary].filter((a: string) => !ZERO.test(a)).map((a: string) => label(mods, a));
     return {
@@ -577,6 +580,30 @@ export type ProofBrain = { seq: string; day: string; sha256: string; personaSha2
 export const getProofBrain = memo(async (): Promise<ProofBrain | null> => {
   const [r] = await db()<{ seq: string; doc: Omit<ProofBrain, "seq"> }[]>`select seq::text, doc from log where kind = 'self' order by log.seq desc limit 1`;
   return r ? { seq: r.seq, day: r.doc.day, sha256: r.doc.sha256, personaSha256: r.doc.personaSha256 ?? null, contextSha256: r.doc.contextSha256 } : null;
+});
+
+// ---------------------------------------------------------------- the Sequencer's games
+
+export type GameLive = { address: Hex; slug: string; title: string; codehash: Hex; pr: number | null; retired: boolean; abi: unknown[] | null };
+/** Every game the GameFactory deployed (the indexer's GameDeployed rows), newest first, with its signed ship record's
+ *  title and the ABI that record pins (null while it can't be fetched). Retired: the factory took it off the live list
+ *  (claims stay open). A game with no ship record (not the Sequencer's) is left out. */
+export const getGames = memo(async (): Promise<GameLive[]> => {
+  const f = (await state<Deployment>("deployment"))?.gameFactory;
+  if (!f) return [];
+  const evs = await db()<{ game: string; event: string }[]>`
+    select lower(args->>'game') as game, event from chain_log where address = ${f.toLowerCase()} and event = any(${["GameDeployed", "GameRetired"]})
+    order by block desc, log_index desc`;
+  const games = [...new Set(evs.filter((e) => e.event === "GameDeployed").map((e) => e.game))];
+  if (!games.length) return [];
+  const retired = new Set(evs.filter((e) => e.event === "GameRetired").map((e) => e.game));
+  const ships = new Map((await db()<{ doc: Ship }[]>`select doc from log where kind = 'ship' and lower(doc->>'predicted') = any(${games}) order by seq`)
+    .map((r) => [r.doc.predicted.toLowerCase(), r.doc] as const));
+  const out = await Promise.all(games.map(async (a): Promise<GameLive | null> => {
+    const s = ships.get(a);
+    return s ? { address: s.predicted as Hex, slug: s.slug, title: s.title, codehash: s.codehash as Hex, pr: typeof s.pr === "number" ? s.pr : null, retired: retired.has(a), abi: await abiOf(s) } : null;
+  }));
+  return out.filter((g): g is GameLive => !!g);
 });
 
 // ---------------------------------------------------------------- health

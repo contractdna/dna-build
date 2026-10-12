@@ -131,6 +131,7 @@ beforeEach(async () => {
   await sql`delete from seq_build`;
   await sql`delete from llm_call`;
   s.SEQ.ownIdeas = false;
+  s.SEQ.siteLive = true; // the site paths below; the test "site: while the website does not deploy release" turns it off
   await sql`delete from idea_queue`; // an idea a test sent back to the queue would be picked first (and reuse its build id)
   // noon today: an hour's wait never crosses midnight (the midnight test sets its own clock)
   Object.assign(st, { now: Date.parse(`${new Date().toISOString().slice(0, 10)}T12:00:00Z`), alerts: [], verdicts: [], build: "build", live: new Set(), code: new Map(), deploys: 0, vetoed: new Set(), fundRoom: true, gateCalls: [], gatesOk: true, lag: 0, deployFail: null, players: { players48h: 0, sinceFund: 0 }, fundCalls: [], fundSt: null, approved: new Set(), landed: true, finalLag: 0, pageCalls: [], page: PAGE_OK, deep: PAGE_OK, deepCalls: 0, kind: "game", siteCalls: [], moduleKit: true, risks: [], improve: null, inputs: {}, amend: true });
@@ -440,6 +441,34 @@ test("a run may start until the order expires (+5 min); none by then: skipped, t
   assert.deepEqual((await spend()).map((x) => x.cost_usd), [48, -48, 48], "the new try reserves its own budget");
 });
 
+test("a dispatch GitHub refuses (403): an alert at once, skipped, the idea back in the queue; the next try dispatches", { skip }, async () => {
+  await step();
+  const r = (await active())!;
+  const sent = gh.dispatches.length, posts = (await sql`select 1 from x_outbox`).length;
+  gh.knobs.fail = { status: 403, path: /\/dispatches$/ };
+  try {
+    assert.match(await step(), /^skipped: dispatch refused: .*403/);
+  } finally { gh.knobs.fail = null; }
+  assert.equal(gh.dispatches.length, sent);
+  assert.equal(st.alerts.length, 1);
+  assert.match(st.alerts[0], /refused the dispatch .*HTTP 403/);
+  assert.equal((await sql`select status from seq_build where id = ${r.id}`)[0].status, "skipped");
+  assert.equal((await sql`select status from idea_queue where id = ${r.data.idea}`)[0].status, "queued");
+  assert.deepEqual((await spend()).map((x) => x.cost_usd), [48, -48]);
+  assert.equal((await sql`select 1 from x_outbox`).length, posts, "nothing announced");
+  st.now += 31 * 60_000; // past the outage cooldown, inside the refused one
+  assert.equal(await step(), "waiting: GitHub refused a dispatch in the last 120 min");
+  st.now += 90 * 60_000;
+  assert.match(await step(), new RegExp(`^decided: ${r.id}-2 `));
+  assert.match(await step(), /^dispatched: /);
+});
+
+test("a 403 that is GitHub's secondary rate limit is an outage, not a refusal", { skip }, async () => {
+  const { GitHubError, outage } = await import("../src/github.ts");
+  assert.equal(outage(new GitHubError(403, "GitHub POST /repos/{repo}/dispatches: 403 You have exceeded a secondary rate limit")), true);
+  assert.equal(outage(new GitHubError(403, "GitHub POST /repos/{repo}/dispatches: 403 Resource not accessible by personal access token")), false);
+});
+
 test("an order model with no price in models.json: not dispatched, an alert; dispatched once every model is priced", { skip }, async () => {
   const models = s.SEQ_DEPS.models;
   const before = gh.dispatches.length;
@@ -505,19 +534,20 @@ test("the database refuses a second active build of the same idea, never one of 
   await sql`insert into seq_build (id, status, round, data) values ('own1', 'dispatched', 1, ${sql.json({ idea: "" })}), ('own2', 'decided', 1, ${sql.json({ idea: "" })})`;
 });
 
-test("the day's post: never while a build runs, once after the day with no ship", { skip }, async () => {
+test("the day's changelog: waits for the indexer, then one post listing the day's changes (the games shipped), once", { skip }, async () => {
   const today = Date.parse(`${new Date().toISOString().slice(0, 10)}T00:00:00Z`);
-  await append("build", "order:x", { note: "a record for the day to rest on" });
-  await step(); // a build is active
-  st.now = today + 86_400_000 + 30 * 60_000; // 00:30 tomorrow
-  const out = await s.seqHourly();
-  assert.equal(out.daily, "no post");
   await sql`delete from seq_build`;
-  const again = await s.seqHourly();
-  assert.match(String(again.daily), /^nothing good enough on/);
-  assert.equal((await sql`select 1 from x_outbox where event_key like 'seq:nothing:%'`).length, 1);
+  st.now = today + 86_400_000 + 30 * 60_000; // 00:30 tomorrow
+  await sql`delete from cursor`;
+  assert.equal((await s.seqHourly()).daily, "waiting: the indexer has not reached the day's end");
+  await sql`insert into cursor (id, block, hash, at) values (1, 1, 'h', now() + interval '2 days')`;
+  assert.match(String((await s.seqHourly()).daily), /^changelog for \d{4}-\d\d-\d\d: \d+ changes$/);
+  const rows = await sql<{ event: { changes: string[] } }[]>`select event from x_outbox where event_key like 'changes:%'`;
+  assert.equal(rows.length, 1);
+  assert.ok(rows[0].event.changes.some((c) => c.startsWith("a new game shipped")), "the earlier tests' ships");
   await s.seqHourly();
-  assert.equal((await sql`select 1 from log where kind = 'announce' and ref like 'seq:nothing:%'`).length, 1, "once");
+  assert.equal((await sql`select 1 from log where kind = 'announce' and ref like 'changes:%'`).length, 1, "once");
+  assert.equal((await sql`select 1 from x_outbox where event_key like 'seq:nothing:%'`).length, 0, "never a 'nothing shipped' post");
 });
 
 test("a merge on main by anyone else: its own release record, released after its own hour", { skip }, async () => {
@@ -1104,6 +1134,44 @@ test("site: the brain picks a site change → a site order → the real gates an
   assert.equal((await sql`select 1 from x_outbox where event_key = ${`seq:${r0.id}:seq_released`}`).length, 1, "a shipped site change goes to X too");
   assert.deepEqual((await spend()).map((x) => x.cost_usd), [48, 3.5, -48]);
 }));
+
+test("site: while the website does not deploy release, the brain's pick of a site change is a no-build (nothing can say it is live)", { skip }, async () => {
+  st.kind = "site";
+  s.SEQ.siteLive = false;
+  const before = (await sql`select 1 from log where kind = 'announce'`).length;
+  assert.match(await step(), /^no-build: .* \(the website does not take site changes yet\)$/);
+  assert.equal(await active(), null);
+  assert.ok(st.alerts.some((a) => /does not deploy from the build repository's release branch/.test(a)));
+  assert.equal((await sql`select 1 from log where kind = 'announce'`).length, before, "nothing announced");
+});
+
+test("site: a site build from before the switch-off: its verdict is not announced, and its release is not announced as live", { skip }, () => realGates(async () => {
+  st.kind = "site";
+  await step(); await step();
+  const id = (await active())!.id;
+  await devTeam({ files: { "web/app/faq/page.tsx": FAQ } });
+  assert.match(await step(), /gated: .* all green/);
+  s.SEQ.siteLive = false;
+  assert.match(await step(), /ship decided/);
+  assert.match(await step(), /ship record \d+/);
+  await step();
+  st.now += HOUR + 1000;
+  assert.match(await step(), /^shipped: .* \(site, released at [0-9a-f]{40}; the website does not deploy it\)$/);
+  assert.ok(st.alerts.some((a) => /is not live and was not announced/.test(a)));
+  const said = (await sql<{ t: string }[]>`select doc->>'type' as t from log where kind = 'announce' and ref like ${`seq:${id}:%`}`).map((x) => x.t);
+  assert.ok(!said.includes("seq_released") && !said.includes("seq_verdict"), said.join());
+}));
+
+test("site: the brain's own open risk can't be a site change while the website does not take them", { skip }, async () => {
+  s.SEQ.ownIdeas = true;
+  s.SEQ.siteLive = false;
+  st.now += 30 * 24 * HOUR; // a day of its own: the open risks are weighed once a day, and the engine test below weighs today's
+  await sql`delete from idea_queue`;
+  st.risks = ["a page says too little"];
+  st.improve = { ...IMPROVE, target: "site", title: "More words" };
+  assert.match(await step(), /^not buildable: .*the website does not take site changes yet/);
+  assert.equal(await active(), null);
+});
 
 test("site: a PR that reaches the wallet guard fails G1 (never reachable): no page check, the brain's ship turns into a rework", { skip }, () => realGates(async () => {
   st.kind = "site";

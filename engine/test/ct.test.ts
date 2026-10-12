@@ -123,7 +123,7 @@ test("guards: the writer gets the take task and the take shapes; other posts kee
   assert.ok(call.system.startsWith("agent: x-writer\n") && call.system.includes(prompt("x-ct")), "the x-ct task, under code's tag");
   assert.ok(call.system.indexOf(prompt("x-ct")) > call.system.indexOf(prompt("x-writer")), "after the writer's own task");
   assert.equal(writerSystem({ event: "status" }), WRITER);
-  assert.deepEqual(shapesFor("post", facts), ["deadpan", "two-panel", "roast", "complaint"]);
+  assert.deepEqual(shapesFor("post", facts), ["deadpan", "two-panel", "complaint"]);
 });
 
 test("filler: a take goes out only when the judge scores it alive, witty and fresh", () => {

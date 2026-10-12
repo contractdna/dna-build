@@ -27,11 +27,13 @@ if (listIssue) throw new Error(`tiers: ${listIssue}`);
 export const isAlly = (id: string | null | undefined, allies: readonly string[] = ALLIES) => !!id && allies.includes(id);
 /** Important: a badge (GATE.badges) and real reach, by followers or by how many lists carry the account. */
 export const IMPORTANT = { followers: 25_000, listed: 250 };
-/** Replies we send per conversation (to this author) and per author a UTC day. Normal's day cap is X_REPLIES_PER_AUTHOR. */
-export const TIERS: Record<Tier, { perConversation: number; perAuthorDay: number }> = {
-  normal: { perConversation: 1, get perAuthorDay() { return X.repliesPerAuthor; } },
-  important: { perConversation: Infinity, perAuthorDay: 40 }, // as long as they keep replying; the stop rules end it
-  competitor: { perConversation: 3, perAuthorDay: 6 },
+/** Replies we send per conversation (to this author). There is no daily cap per author: every tier runs a turn per new
+ *  post of theirs until a stop rule ends it, under the anti-loop brake (X.repliesPerAuthorHour to one account an hour)
+ *  and the global ceilings. A competitor (often an agent itself) gets 3 turns a conversation: two bots never loop. */
+export const TIERS: Record<Tier, { perConversation: number }> = {
+  normal: { perConversation: Infinity },
+  important: { perConversation: Infinity },
+  competitor: { perConversation: 3 },
 };
 
 export function tierOf(u: XUser | null | undefined, competitors: readonly string[] = COMPETITORS, allies: readonly string[] = ALLIES): Tier {
@@ -91,6 +93,21 @@ export function injection(text: string) {
   return instructionMarkers(t).length > 0 || base64 || morse;
 }
 
+/** Phishing in a mention (code, not a model): asks for a seed phrase or a private key, or a link that leaves X beside a
+ *  lure (claim, airdrop, giveaway, a free mint, connect / sync / verify / migrate a wallet). `urls`: the mention's
+ *  entities' expanded links, when X sent them: X puts a t.co link on every quote and every image, so only links off
+ *  x.com count (without them, any link in the text does). Our own site is no link here. */
+const SECRET_ASK = /\b(send|share|give|dm|enter|paste|type|input|provide|need|verify|import|drop|your|ur)\b[^.!?\n]{0,30}\b((seed|recovery|secret|mnemonic) ?phrase|private ?keys?)\b/i;
+const LURE = /\b(claim\w*|airdrop\w*|giveaway|free (mint|tokens?|eth|nft)|(connect|sync|link|verify|validate|migrate|rectify|revoke) (your |ur )?wallets?|wallet ?connect)\b/i;
+const LINK = /https?:\/\/|www\.|\b[a-z0-9-]+\.(xyz|io|app|com|net|org|finance|site|online|live|claims?|pro|fun|gg|me|top|vip|cc)\b/i;
+const OURS_OR_X = /^https?:\/\/((www|mobile)\.)?(x\.com|twitter\.com|genomedna\.xyz)(\/|$)/i;
+export function phishing(text: string, urls?: (string | undefined)[]) {
+  const t = text.normalize("NFKC").replace(/[\u200b-\u200d]/g, "").replace(/genomedna\.xyz/gi, " ");
+  // X's url entities name where each link goes; with none, any link in the text counts (fail closed)
+  const linked = urls?.length ? urls.some((u) => !!u && !OURS_OR_X.test(u)) : LINK.test(t);
+  return SECRET_ASK.test(t) || (linked && LURE.test(t));
+}
+
 /** `at`: when our reply went out (ms); otherwise its snowflake id says. */
 export type Post = { id: string; text: string; parent?: string; at?: number };
 /** Faster than this after our reply, twice in a row, is not a person typing. */
@@ -100,7 +117,8 @@ export const THREAD_MAX_AGE_MS = 24 * 3600_000;
 
 /** Why this post ends the thread (null = it may get a reply). `theirs`: the author's earlier posts in this conversation,
  *  newest first; `ours`: our replies in it (none = first contact: never "audience gone", however old the post it sits
- *  under). Opt-out is checked before (it is permanent, not per thread). */
+ *  under). Opt-out is checked before (it is permanent, not per thread). A post that repeats their earlier one still gets
+ *  an answer (the writer answers with personality); an exact repeat within the hour is caught before (src/x.ts). */
 export function stopRule(post: Post, theirs: Post[], ours: Post[], nowMs: number): string | null {
   if (injection(post.text)) return "injection attempt";
   const ourIds = new Set(ours.map((o) => o.id));
@@ -110,7 +128,6 @@ export function stopRule(post: Post, theirs: Post[], ours: Post[], nowMs: number
   };
   if (fast(post) && fast(theirs[0])) return "automated peer";
   if (ours.some((o) => overlap(o.text, post.text) >= GATE.overlap)) return "loop";
-  if (theirs.some((p) => overlap(p.text, post.text) >= GATE.overlap)) return "no new fact";
   const started = Math.min(...ours.map((o) => o.at ?? snowflakeMs(o.id) ?? Infinity));
   if (Number.isFinite(started) && nowMs - started > THREAD_MAX_AGE_MS) return "audience gone";
   return null;

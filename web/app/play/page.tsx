@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import Link from "next/link";
+import { Suspense } from "react";
 import { LIVE } from "../_data/flags";
 import { FEE } from "../_data/launchFee";
 import type { PlayLive } from "../_data/live";
@@ -206,7 +207,7 @@ export default async function PlayPage() {
             : <p className={s.cta}><button className={ui.button} type="button" disabled>Staking opens at launch</button></p>}
         </Section>
 
-        <NewGames />
+        <Suspense fallback={null}><NewGames /></Suspense>
 
         <Section title="The rules" note={<Link className={ui.link} href="/constitution">Hard limits →</Link>}>
           <dl className={s.rules}>

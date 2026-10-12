@@ -13,7 +13,7 @@ const H = 3600, D = 86_400;
 const T = 1_800_000_000;
 const noDraw = { window: 0, eta: 0, reqId: 0n, requestedAt: 0, fulfilledAt: 0 };
 const pot = (over: Partial<PotView> = {}): PotView => ({
-  now: T, draw: noDraw, windowEnd: T + H, stalledSince: 0, arrived: 0n, overCap: false,
+  now: T, draw: noDraw, windowEnd: T + H, stalledSince: 0, arrived: 0n, overCap: false, lastSync: T - H,
   pending: { eta: 0 }, ...over,
 });
 const req = (over: Partial<PotView["draw"]>) => ({ ...noDraw, window: 3, eta: T - 2 * D, ...over });
@@ -25,12 +25,20 @@ test("GamePot windows: roll once the open window ended; a due roll goes before t
   assert.deepEqual(potActions(pot({ windowEnd: 0 })), [], "not initialized");
 });
 
-test("GamePot: unsynced arrivals are synced (the jackpot and the idea reserve count them), unless a request syncs anyway", () => {
+test("GamePot: unsynced arrivals are synced (the jackpot and the idea reserve count them)", () => {
   assert.deepEqual(potActions(pot({ arrived: C.MIN_PRIZE })), ["sync"]);
-  assert.deepEqual(potActions(pot({ arrived: C.MIN_PRIZE - 1n })), [], "dust: not worth a tx");
+  assert.deepEqual(potActions(pot({ arrived: GAME_POLICY.syncMin })), ["sync"], "a small arrival, the last sync a distribute period ago");
+  assert.deepEqual(potActions(pot({ arrived: GAME_POLICY.syncMin, lastSync: 0 })), ["sync"], "never synced");
+  assert.deepEqual(potActions(pot({ arrived: C.MIN_PRIZE - 1n, lastSync: T - GAME_POLICY.syncEveryS + 1 })), [], "small arrivals: at most once a distribute period");
+  assert.deepEqual(potActions(pot({ arrived: C.MIN_PRIZE, lastSync: T })), ["sync"], "a minimum prize waiting: right away");
+  assert.deepEqual(potActions(pot({ arrived: 1n, overCap: true, lastSync: T })), ["sync"], "over POT_CAP: right away");
+  assert.deepEqual(potActions(pot({ arrived: GAME_POLICY.syncMin - 1n })), [], "dust: not worth a tx");
+  assert.equal(GAME_POLICY.syncEveryS, H, "the distribute cadence (KEEPER_INTERVAL_MS default)");
   assert.deepEqual(potActions(pot({ arrived: 1n, overCap: true })), ["sync"], "the jackpot would cross POT_CAP");
   assert.deepEqual(potActions(pot({ arrived: 0n })), []);
-  assert.deepEqual(potActions(pot({ arrived: C.MIN_PRIZE, draw: req({ eta: T }) })), ["requestDraw"]);
+  // a due requestDraw goes first; keeper:games drops the sync when the request goes out (games-db.test.ts)
+  assert.deepEqual(potActions(pot({ arrived: C.MIN_PRIZE, draw: req({ eta: T }) })), ["requestDraw", "sync"]);
+  assert.deepEqual(potActions(pot({ arrived: GAME_POLICY.syncMin, draw: req({ eta: T }) })), ["requestDraw", "sync"]);
   assert.equal(C.MIN_PRIZE, J.MIN_PRIZE);
 });
 

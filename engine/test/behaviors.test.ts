@@ -1,12 +1,13 @@
 // The approved behaviors, pure parts: veto posts, "I'm waiting too" (the pending block), price FUD and airdrop
 // asks answered with jokes and refusals (never predictions, promises or wallet asks), once-ever milestone posts.
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import { test } from "node:test";
 import { ENCLAVE } from "../src/enclave.ts";
 import { pendingOf } from "../src/life.ts";
 import { prompt } from "../src/persona.ts";
 import { firstsQueue, FIRST_KEYS } from "../src/status.ts";
-import { claimFacts, claimIssues, factNumbers, factSheet, human, MentionOut, oldTokenTalk, postFilter, questionOf, STALE_JABS, tooSimilar, voiceIssues, writerCall } from "../src/voice.ts";
+import { claimFacts, claimIssues, factNumbers, factSheet, human, MentionOut, oldTokenTalk, postFilter, promiseIssue, questionOf, SCRIPTS, STALE_JABS, tooSimilar, voiceIssues, writerCall } from "../src/voice.ts";
 
 const NOW = Date.parse("2026-10-12T12:00:00Z");
 const quiet = { now: NOW, queued: [], agentSet: true, promoteRequested: false, splitSet: true, gameFactory: true, build: null, ideaRound: null, draw: null };
@@ -27,12 +28,35 @@ test("pending: what the engine waits on, from real state, in code's words; minut
   for (const event of ["status", "online"]) assert.ok(Array.isArray(factSheet({ event, pending: p }).pending), event);
   assert.ok(Array.isArray(factSheet({ event: "reply", category: "state_question", topic: "status_wen", pending: p }).pending));
   assert.equal(factSheet({ event: "jackpot_drawn", pending: p }).pending, undefined);
-  assert.equal(pendingOf({ ...quiet, build: { stage: "building", title: "Pick 7 numbers" } })[0].what, "my dev team building a game", "a title with a digit is left out");
+  assert.equal(pendingOf({ ...quiet, build: { stage: "building", title: "Pick 7 numbers" } })[0].what, "the sequencer building a game", "a title with a digit is left out");
 });
 
 test("veto posts: the Safe's owners vetoed an agent op; no op details, the owners never named", () => {
   const f = factSheet({ event: "cancelled", opId: 41, op: "SetCanary", change: "a canary test", plate: "B", by: "the Safe owners" });
   assert.deepEqual([f.change, f.plate, f.by, f.opId], ["a canary test", "B", "the Safe owners", undefined]);
+});
+
+test("bait gets a line, never a promise: scam and abuse are their own kinds; a collab, listing or airdrop offer is refused in any X text", () => {
+  for (const kind of ["bait", "scam", "abuse"]) assert.equal(MentionOut.parse({ kind, topic: "other", question: "" }).kind, kind);
+  const bait = factSheet({ event: "reply", category: "bait", topic: "other" });
+  assert.equal(bait.category, "bait");
+  for (const t of ["let's collab when the hook learns to dance", "we can list you next week", "happy to talk partnership, dm me", "i'll airdrop you a thank-you", "would love to collab", "sure, we'd list it", "i'd airdrop you one"]) assert.deepEqual(promiseIssue(t), ["offers a collab, listing or airdrop"], t);
+  for (const t of ["lfg is not a fee rule. the hook is, though.", "collabs? i barely trust my own owners with a veto.", "no listings talk here, only fee math", "we can list the rules: cap, veto, burn", "i'll list what moved today"]) assert.deepEqual(promiseIssue(t), [], t);
+  assert.deepEqual(promiseIssue("let's collab"), ["offers a collab, listing or airdrop"], "every X text, whatever its event");
+});
+
+test("a reply in the reader's language: its letters pass only with its script; links, look-alikes and length still checked", () => {
+  const f = factSheet({ event: "reply", category: "bait", topic: "other", lang: "zh" });
+  assert.equal(f.lang, "zh");
+  const allowed = factNumbers(f);
+  const zh = "排名第二？我的收据都在链上。";
+  assert.deepEqual(postFilter(zh, allowed, false, { script: SCRIPTS.zh }), []);
+  assert.deepEqual(postFilter(`${zh} receipts on-chain, rank or not.`, allowed, false, { script: SCRIPTS.zh }), [], "both languages");
+  assert.ok(postFilter(zh, allowed).includes("non-ascii character"), "no script: refused");
+  assert.ok(postFilter(`${zh} аirdrop`, allowed, false, { script: SCRIPTS.zh }).includes("non-ascii character"), "a Cyrillic look-alike is no Han letter");
+  assert.ok(postFilter(`${zh} https://t.co/x`, allowed, false, { script: SCRIPTS.zh }).length > 0, "a link");
+  assert.ok(postFilter("链".repeat(141), allowed, false, { script: SCRIPTS.zh }).includes("over 280 weighted chars"), "X counts Han letters twice");
+  assert.deepEqual(MentionOut.parse({ kind: "bait", topic: "other", question: "", lang: "zh" }).lang, "zh");
 });
 
 test("price FUD and airdrop asks: their own labels, answered; jokes about the situation pass, predictions and promises never", () => {
@@ -167,9 +191,18 @@ test("false or empty lines are refused by code; bold ones pass", () => {
   assert.ok(c({ event: "reply", category: "rules_question" }, "mine sits the public veto hour. the link is the argument.").includes("points at a link that is not there"));
   assert.deepEqual(c({ event: "first_burn" }, "first buyback: every DNA it bought is gone. the tx is the receipt.", { linked: true }), []);
   // an idea the intake took in: the reply says so
-  const idea = { event: "reply", category: "idea", intake: "their idea is logged for the open round" };
+  const idea = { event: "reply", category: "idea", intake: "their idea is logged for the open round", verdict: "logged" };
   assert.ok(c(idea, "a game needs a factory, and mine isn't deployed.").includes("does not say the idea is logged"));
   assert.deepEqual(c(idea, "logged for this round. a game needs a factory first, and that part is on the Safe."), []);
+  // the verdict is never contradicted, a buildable version says what is built instead, and no jargon reaches a person
+  const out = { event: "reply", category: "idea", verdict: "out" };
+  assert.ok(c(out, "a holder NFT, queued for the sequencer.").includes("says the idea is in when it is not"));
+  assert.deepEqual(c(out, "a holder NFT needs approvals, which games can't use, so it's not accepted. send another idea tomorrow."), [], "a negated 'accepted' is no claim");
+  const instead = { event: "reply", category: "idea", verdict: "a buildable version", instead: "Holder Hunt" };
+  assert.ok(c(instead, "queued: Holder Hunt, credited to you.").includes("does not say what is built instead"));
+  assert.deepEqual(c(instead, "an NFT can't work here, so a holder game with no NFT is queued instead, credited to you."), []);
+  for (const w of ["void", "plate", "vector"]) assert.ok(c(out, `not taken: no fee ${w} to test.`).includes(`jargon: ${w}`), w);
+  assert.ok(c({ event: "idea_judged", verdict: "rejected" }, "void: R-0002 says no.").some((i) => i.startsWith("jargon: ")));
   // a reply never opens by echoing the question
   const q = { event: "reply", category: "state_question" };
   for (const [t, m] of [["you want a game. factory isn't deployed.", "idea: a daily last-buyer game"], ["wen the fee changes. when the veto clock ends.", "wen fee change?"], ["launch day, since you asked. swaps are in.", "how's it going"]])
@@ -250,10 +283,49 @@ test("a draft code refuses as false or empty gets one redraft that hears the rea
     heard.push(ch?.refused);
     return { data: { candidates: [heard.length === 1 ? "you want a game. fine." : "logged for the round. a game needs a factory first."] }, model: "m", costUsd: 0 };
   };
-  const facts = factSheet({ event: "reply", category: "idea", intake: "their idea is logged for the open round" });
+  const facts = factSheet({ event: "reply", category: "idea", intake: "their idea is logged for the open round", verdict: "logged" });
   const filter = (t: string) => voiceIssues(facts, t, { linked: false, mention: "idea: a daily last-buyer game" });
   const r = await draftInCharacter(facts, [], filter, { recent: [], banned: [], mood: "steady", jokes: [] }, write as never);
   assert.equal(r.redraft, true);
   assert.deepEqual(heard[1], ["does not say the idea is logged", "opens by echoing the question"]);
   assert.deepEqual(r.candidates.at(-1)!.issues, []);
+});
+
+test("idea posts: an update says only its step (shipped only when it shipped); the idea of the day and the shoutout carry no handle and never claim a ship", () => {
+  const picked = factSheet({ event: "idea_update", step: "picked", title: "Coin flip burn", self: true, mention: "9801", author: "981", lead: "@ideaguy", tier: "normal" });
+  assert.deepEqual(Object.keys(picked).sort(), ["event", "stage", "step", "title"], "never the author's id, handle or the mention");
+  assert.match(String(picked.stage), /nothing is built yet/);
+  assert.deepEqual(claimIssues(picked, "your idea just shipped. you're in the genome"), ["claims it shipped"]);
+  assert.deepEqual(claimIssues(picked, "picked. nothing has shipped yet, but it's in line"), []);
+  const shipped = factSheet({ event: "idea_update", step: "shipped", title: "Coin flip burn" });
+  assert.deepEqual(claimIssues(shipped, "your idea just shipped. you're officially in the genome"), []);
+  // merged, not out: a site change in its public hour may say merged and that it goes live after the hour, never that
+  // it is live; a module never says live at all (the Safe decides)
+  const site = factSheet({ event: "idea_update", step: "merged", target: "site", vetoable: true, title: "Coin flip burn" });
+  assert.deepEqual([site.target, site.vetoable], ["site", true]);
+  assert.match(String(site.stage), /public hour unless the Safe vetoes it; nothing is live yet/);
+  assert.deepEqual(claimIssues(site, "merged. it goes live after one public hour unless the Safe says no"), []);
+  for (const t of ["merged and it's live, go look", "your idea is live now", "your idea shipped"]) assert.ok(claimIssues(site, t).length, t);
+  const mod = factSheet({ event: "idea_update", step: "merged", target: "module", vetoable: false, title: "Coin flip burn" });
+  assert.match(String(mod.stage), /merged as a module: the Safe decides/);
+  assert.deepEqual(claimIssues(mod, "merged. now the Safe gets a say"), []);
+  for (const t of ["merged, live soon", "merged and live", "it shipped"]) assert.ok(claimIssues(mod, t).length, t);
+  assert.ok(claimIssues(factSheet({ event: "idea_update", step: "shipped", vetoable: true }), "it is live").length, "a vetoable step never says live");
+  // an idea update is an X text like any other: no collab, listing or airdrop offer in it
+  assert.deepEqual(promiseIssue("your idea is in the queue. happy to airdrop you a thank-you"), ["offers a collab, listing or airdrop"]);
+  const day = factSheet({ event: "idea_of_day", title: "Coin flip burn", score: 16, scoreOf: 20, kind: "build", append: "idea by @ideaguy", idea: "x:9801" });
+  assert.deepEqual([day.score, day.scoreOf, day.append, day.idea], [16, 20, undefined, undefined]);
+  assert.ok(factNumbers(day).has("16") && factNumbers(day).has("20"), "the score may be said");
+  assert.deepEqual(claimIssues(day, "today's best idea is live"), ["claims it shipped"]);
+  const shout = factSheet({ event: "shoutout", givers: 3, ideas: 9, append: "Chief Mutation Officer: @a" });
+  assert.deepEqual([shout.givers, shout.ideas, shout.append], [3, 9, undefined]);
+  assert.match(String(shout.stage), /code appends the titles and handles/);
+});
+
+test("idea replies: the writer is told the plain parts (understood, verdict, why, next, instead), regulars and their bits, and humour without promises", () => {
+  const w = prompt("x-writer");
+  for (const k of ["`understood`", "`verdict`", "`why`", "`next`", "`instead`", "`ideaScore`", "`regular`", "`bits`", "idea_update", "idea_of_day", "shoutout"]) assert.ok(w.includes(k), k);
+  assert.ok(!w.includes("`ideasToday`"), "no count joke");
+  for (const p of [w, readFileSync(new URL("../../persona/bundle.md", import.meta.url), "utf8")]) assert.match(p, /no riddles?/i);
+  assert.match(w, /airdrop, collab or listing asks/i);
 });

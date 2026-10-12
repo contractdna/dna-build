@@ -127,30 +127,27 @@ test("intake: gate → screen → candidates; at the next round the top 16 by sc
   const many: string[] = [];
   const FILL = ["alpha", "bravo charlie", "delta echo foxtrot", "golf hotel india juliet", "kilo lima", "mike november oscar", "papa quebec", "romeo sierra tango",
     "uniform victor", "whiskey xray yankee", "zulu amber", "basalt cobalt dune", "ember fjord", "garnet harbor islet", "jasper kelp", "lagoon mesa nectar", "onyx prairie"];
-  for (const [i, t] of TOPICS.slice(0, 17).entries()) many.push(await mention(String(800 + i), `@contractdna ${t} ${FILL[i]}`));
+  for (const [i, t] of TOPICS.slice(0, 14).entries()) many.push(await mention(String(800 + i), `@contractdna ${t} ${FILL[i]}`));
   const out = { ...(await ideas.intakeHandler.run(job())) as Record<string, string>, ...(await ideas.intakeHandler.run(job())) as Record<string, string> }; // ≤ 20 mentions a run
   assert.equal(st.sent.length, 0, "nothing is submitted while its round is open");
   assert.deepEqual(
     [good, noBadge, young, few, second, link, dup, joke, shill, own].map((id) => out[id]),
-    ["candidate", "gated", "gated", "gated", "gated", "gated", "gated", "screened", "screened", "skipped"],
+    ["candidate", "candidate", "candidate", "candidate", "gated", "gated", "gated", "screened", "screened", "skipped"], // no badge, account age or follower count needed
     JSON.stringify(await sql`select mention_id, status, reason from intake order by mention_id`),
   );
-  assert.match((await intake(noBadge)).reason!, /no verified badge/);
-  assert.match((await intake(young)).reason!, /younger than 30 days/);
-  assert.match((await intake(few)).reason!, /fewer than 50 followers/);
   assert.match((await intake(second)).reason!, /already 1 idea from this author this round/);
   assert.match((await intake(link)).reason!, /links are not allowed/);
   assert.match((await intake(dup)).reason!, /near-duplicate/);
   assert.equal((await intake(joke)).reason, "screened as joke");
   assert.equal((await intake(shill)).reason, "screened as shill");
-  assert.match((await rec(noBadge)).reason, /no verified badge/, "the reason is public, in the log");
+  assert.match((await rec(link)).reason, /links are not allowed/, "the reason is public, in the log");
   assert.equal((await sql`select 1 from x_outbox where type = 'reply'`).length, 0, "and never a reply");
   for (const id of many) assert.equal(out[id], "candidate");
   assert.match((await rec(good)).reason, /genuine fee idea, score \d+ of 30/);
 
   st.round = 1; // round 0 closed: its 18 candidates are picked, the top 16 go into round 1
   const out2 = await ideas.intakeHandler.run(job()) as Record<string, string>;
-  const cands = [good, ...many];
+  const cands = [good, noBadge, young, few, ...many];
   const rows = await Promise.all(cands.map(async (id) => ({ id, ...(await intake(id)) })));
   const submitted = rows.filter((r) => r.status === "submitted");
   const dropped = rows.filter((r) => r.status === "not_picked");
@@ -242,12 +239,12 @@ test("intake: an address mention binds a payout wallet by X user id (no model), 
   const before = await llmCalls();
   const first = await mention("98", `@contractdna ${A}`); // the binding format: @handles and one address, nothing else
   const bad = await mention("98", `@contractdna ${A.replace("a", "A")}`);
-  const ungated = await mention("99", `@contractdna ${B}`, { ...GATED_IN, verified_type: "none" });
+  const ungated = await mention("99", `@contractdna ${B}`, { ...GATED_IN, created_at: new Date().toISOString() });
   const out = await ideas.intakeHandler.run(job()) as Record<string, string>;
   assert.deepEqual([out[first], out[bad], out[ungated]], ["binding", "skipped", "gated"]);
   assert.equal(await llmCalls(), before, "no model read any of them");
   assert.match((await intake(bad)).reason!, /binding refused: the address fails its checksum/);
-  assert.match((await intake(ungated)).reason!, /^binding: no verified badge/);
+  assert.match((await intake(ungated)).reason!, /^binding: account younger than 7 days/);
   // no reply for a refused or gated binding, and its outbox row is skipped so the replies job never waits on it
   const outbox = async (id: string) => (await sql<{ status: string; type: string }[]>`select status, type from x_outbox where reply_to = ${id}`).map((r) => `${r.type}:${r.status}`);
   for (const id of [bad, ungated]) assert.deepEqual(await outbox(id), ["reply:skipped"], id);
@@ -295,7 +292,7 @@ test("intake: a question screened out uses no idea slot: the same author's real 
   const idea = await mention("95", "@contractdna route part of the platform share into deeper liquidity on quiet days");
   const out = await ideas.intakeHandler.run(job()) as Record<string, string>;
   assert.deepEqual([out[q], out[idea]], ["screened", "candidate"]);
-  assert.equal((await intake(q)).reason, "screened as spam");
+  assert.equal((await intake(q)).reason, "screened as question", "a question is never spam");
 });
 
 /** A mention whose text (handles stripped) is exactly `len` characters: the synthetic reader scores it

@@ -8,7 +8,7 @@ import { PERSONA } from "../src/persona.ts";
 import { type CharacterContext, factNumbers, factSheet, intentOf, MentionOut, mindOf, postFilter, questionOf, WRITER, writerCall } from "../src/voice.ts";
 
 test("reader: a closed topic and a neutral question, the question checked by code", () => {
-  assert.deepEqual(MentionOut.parse({ kind: "rules_question", topic: "veto_safe", question: "can the owners stop a fee change" }), { kind: "rules_question", topic: "veto_safe", question: "can the owners stop a fee change" });
+  assert.deepEqual(MentionOut.parse({ kind: "rules_question", topic: "veto_safe", question: "can the owners stop a fee change" }), { kind: "rules_question", topic: "veto_safe", question: "can the owners stop a fee change", lang: "en" }, "an answer without a language reads as English");
   assert.equal(MentionOut.safeParse({ kind: "rules_question", topic: "price", question: "x" }).success, false, "closed topics");
   assert.equal(MentionOut.safeParse({ kind: "rules_question", topic: "other", question: "x".repeat(141) }).success, false, "at most 140");
   assert.equal(questionOf("  How does the burn work? "), "How does the burn work?");

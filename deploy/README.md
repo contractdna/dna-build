@@ -32,7 +32,8 @@ The engine's enclave deployment on a Phala CVM (Intel TDX) and the release recor
      six values, which emits `ComposeHashAdded` and `DeviceAdded`; no other account ever owns the app. (The older
      five-argument overload, `0x8618169d`, is the same call with `requireTcbUpToDate = false`.)
    - Every later change: the Safe proposes `addComposeHash(new)` + `removeComposeHash(old)` as one timelock batch; it
-     takes effect after 1 h, in public. Exactly one hash is allowed at a time.
+     takes effect after 1 h, in public. Exactly one hash is allowed at a time. Publish `releases/<compose hash>.json`
+     (with its `notes`) in the public repository first: the engine posts them when the batch is scheduled.
    - Machines: `addDevice` / `removeDevice` go through the same 1 h timelock (a device cannot change the code).
 4. Deploy the CVM with that compose; the operator sets the allowed envs encrypted to the CVM, including the signers'
    Telegram group and user ids (`TELEGRAM_GROUP_ID`, `TELEGRAM_ALLOWED_USER_IDS`): they are private, so they are never
