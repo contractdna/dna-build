@@ -1,0 +1,37 @@
+{
+  "spec": "Standalone GuildArena contract: no ETH, deposits, payable, receive, tokens or approvals; only the Safe can pause. Anyone creates a guild with a bytes32 name; every guild has the same seat cap (8); an address is in at most one guild and may join or leave outside a reveal phase. Epochs are 7 days from deployment; each is a mission: first half, a member commits keccak256(secret, sender, epoch); second half, they reveal it. One valid reveal per member per epoch earns 1 point for the member and 1 for the guild. Guild points are stored per epoch for a leaderboard; member reputation is lifetime points, never decreasing. Views: members, guild points per epoch, reputation, top guild per epoch. Events for create, join, leave, commit, reveal. Invariants: seat cap held, one guild per address, no point without a matching commit, reputation monotone, no reveal outside its phase. (a game build)",
+  "specSha256": "3891329a5181641b99ddc73a27c49e50af79919a3a80674a490f010c62d27887",
+  "interface": [
+    "EPOCH()",
+    "HALF()",
+    "SEATS()",
+    "commit(bytes32)",
+    "commitGuild(uint256,address)",
+    "commitHash(bytes32,address,uint256)",
+    "commitOf(uint256,address)",
+    "createGuild(bytes32)",
+    "currentEpoch()",
+    "epochStart(uint256)",
+    "guildCount()",
+    "guildName(uint256)",
+    "guildOf(address)",
+    "guildPoints(uint256,uint256)",
+    "inRevealPhase()",
+    "joinGuild(uint256)",
+    "leaveGuild()",
+    "memberCount(uint256)",
+    "membersOf(uint256)",
+    "reputation(address)",
+    "reveal(bytes32)",
+    "revealed(uint256,address)",
+    "start()",
+    "topGuild(uint256)"
+  ],
+  "files": [
+    "contracts/src/games/guild-arena-on-chain-2/GuildArena.sol",
+    "contracts/test/games/guild-arena-on-chain-2/GuildArena.t.sol",
+    "web/app/g/guild-arena-on-chain-2/game.json",
+    "web/app/g/guild-arena-on-chain-2/page.module.css",
+    "web/app/g/guild-arena-on-chain-2/page.tsx"
+  ]
+}
