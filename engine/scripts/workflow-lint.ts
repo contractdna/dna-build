@@ -13,6 +13,7 @@ import { fileURLToPath } from "node:url";
 export const SECRETS: Record<string, string[]> = {
   "export-check.yml": ["PERSONAL_IDS"],
   "sequencer.yml": ["OPENROUTER_API_KEY_SEQUENCER", "SEQ_PROMPTS", "SEQ_APP_ID", "SEQ_APP_KEY"],
+  "site-deploy.yml": ["RAILWAY_SITE_TOKEN", "RAILWAY_SITE_SERVICE", "RAILWAY_PLAY_SERVICE", "RAILWAY_SITE_ENV"],
 };
 const NO_CACHE = new Set(["sequencer.yml", "sequencer-gates.yml"]);
 /** Triggers that run with the base repository's rights on events outsiders cause: none is allowed. */

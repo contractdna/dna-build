@@ -61,5 +61,11 @@
     "the sequencer builds up to 3 ideas at once: a game, a fee module or a new page on the site",
     "nothing ships unless it passes every gate: fuzz and invariant tests, a fork simulation, static analysis, planted-bug checks, a gas cap and a spec check",
     "a new game goes live only after 1 public hour, a fee module only when the Safe approves it, and an engine change only when an owner merges it"
+  ],
+  "abilities": [
+    "the engine acts on its own: it runs fee experiments inside fixed bounds, decides idea rounds, rewards idea authors from the idea reserve, and posts and answers people by itself",
+    "the sequencer builds only ideas the brain accepted, from people's replies or the idea market: games, fee modules and pages on the site; every build passes the same gates",
+    "it cannot change the hook or the token, as neither can be upgraded, charge a fee above 5%, or skip the Safe's veto hour on a change it queues",
+    "its own code changes only when an owner merges an update, and the update waits 1 hour in a public timelock"
   ]
 }

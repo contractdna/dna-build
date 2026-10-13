@@ -61,6 +61,10 @@ test("self-file: can and can't come from code constants and the chain's level", 
   assert.match(selfText({ ...facts, chain: { level: 3, paused: false } }), /no registry ops/);
   assert.match(selfText({ ...facts, chain: { level: null, paused: null } }), /level could not be read/);
   assert.match(a, /Change the hook or the token/);
+  assert.match(a, /the sequencer takes the ideas I accept from X or the idea market \(a game, a fee module or a page on the site\)/);
+  assert.match(a, /Change my own code: an update lands only after an owner merges it/);
+  assert.doesNotMatch(a, /## What my latest update changed/, "no notes: no section");
+  assert.match(selfText({ ...facts, update: ["Site pages block any script the site did not put there"] }), /\n## What my latest update changed\n- Site pages block any script the site did not put there\n/);
 });
 
 test("self-file: each decision with what the signed log shows came of it", () => {

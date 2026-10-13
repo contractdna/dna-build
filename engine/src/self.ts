@@ -1,6 +1,7 @@
 // The self-file: the brain's decision memory. What it can and can't do (code constants and the registry level it
 // holds on-chain), its last SELF_N decisions with what the signed log shows came of each, and open risks. Built only
-// from code, the chain and signed log records of SELF_KINDS: the writer's character memory never reaches it.
+// from code, the chain, signed log records of SELF_KINDS and the running version's public release notes (screened by
+// src/upgrades.ts notesOf): the writer's character memory never reaches it.
 // Signed as `self` records, at least one a day (ref = the UTC day; with the persona and the context hashes): the daily
 // `brain:self` job signs a fresh one, and a decision uses the newest one of its day made beside the running persona and
 // context (signing one first when there is none) and records its sha256.
@@ -27,7 +28,8 @@ export const SELF_KINDS = ["brain", "ship", "ship-cancel", "release", "retire", 
 
 export type Row = { seq: string; kind: string; ref: string; at: string; doc: Record<string, unknown> };
 export type Chain = { level: number | null; paused: boolean | null };
-export type SelfFacts = { day: string; chain: Chain; rows: Row[] };
+/** `update`: the release notes of the version running now (src/upgrades.ts runningNotes), when it has any. */
+export type SelfFacts = { day: string; chain: Chain; rows: Row[]; update?: string[] };
 
 const DAY = 86_400_000;
 const pct = (pips: number) => `${(pips / 1e4).toFixed(2)}%`;
@@ -128,6 +130,8 @@ export function selfText(f: SelfFacts): string {
     "- Run one fee experiment at a time: shadow, canary, then keep it or roll it back by the published kill rules.",
     `- Queue at most ${LIMITS.agentQueueOps} registry ops a UTC day, ${LIMITS.agentPending} pending at once.`,
     "- Build one game at a time and ship it only after every gate passed and a public hour.",
+    "- Build only what was asked for: the sequencer takes the ideas I accept from X or the idea market (a game, a fee module or a page on the site), and nothing ships before it passes every gate.",
+    "- Write and answer on X by myself, under the daily caps code sets.",
     "- Reward idea authors from the idea reserve, never the treasury, each reward after a public hour the Safe can veto.",
     `- Spend at most $${LLM.dailyCapUsd} a day on models ($${LLM.week1DailyCapUsd} in the first week after launch) and $${LLM.monthlyCapUsd} a month.`,
     "",
@@ -138,7 +142,9 @@ export function selfText(f: SelfFacts): string {
     "- Act on-chain while the Safe has me paused. The Safe can veto a queued op within its delay and lower my level.",
     "- Ship a game that failed a gate, edit CI, or give a game any power over the hook or the fees.",
     "- Swap my own model without a public tryout; a brain swap needs two Safe owners.",
+    "- Change my own code: an update lands only after an owner merges it and it waits a public hour in the timelock.",
     "",
+    ...(f.update?.length ? ["## What my latest update changed", ...f.update.map((n) => `- ${n}`), ""] : []),
     `## My last ${SELF_N} decisions and what came of them`,
     ...(decisionLines.length ? decisionLines : ["None yet."]),
     "",
@@ -186,7 +192,8 @@ export async function selfFacts(day: string): Promise<SelfFacts> {
     sql<LogRow[]>`select ${cols} from log where kind = 'security' order by log.seq desc limit 500`,
     SELF_DEPS.chain(),
   ]);
-  return { day, chain, rows: [...brain, ...(await signed(rest)), ...(await signed(security))] };
+  const update = await (await import("./upgrades.ts")).runningNotes(); // dynamic: upgrades.ts reaches x.ts
+  return { day, chain, rows: [...brain, ...(await signed(rest)), ...(await signed(security))], ...(update.length ? { update } : {}) };
 }
 
 const sha = (t: string) => createHash("sha256").update(t).digest("hex");

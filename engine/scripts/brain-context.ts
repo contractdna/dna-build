@@ -195,6 +195,14 @@ export function mechanics(): Record<string, string[]> {
       `nothing ships unless it passes every gate: fuzz and invariant tests, a fork simulation, static analysis, planted-bug checks, a gas cap and a spec check`,
       `a new game goes live only after ${R("MIN_DELAY")} public hour, a fee module only when the Safe approves it, and an engine change only when an owner merges it`,
     ],
+    // what the engine does by itself and what it cannot; a reply on this topic also hears its latest update's release
+    // notes (src/x.ts resolve)
+    abilities: [
+      `the engine acts on its own: it runs fee experiments inside fixed bounds, decides idea rounds, rewards idea authors from the idea reserve, and posts and answers people by itself`,
+      `the sequencer builds only ideas the brain accepted, from people's replies or the idea market: games, fee modules and pages on the site; every build passes the same gates`,
+      `it cannot change the hook or the token, as neither can be upgraded, charge a fee above ${pctPips(H("MAX_PROJECT_FEE"))}, or skip the Safe's veto hour on a change it queues`,
+      `its own code changes only when an owner merges an update, and the update waits ${R("MIN_DELAY")} hour in a public timelock`,
+    ],
   };
 }
 export const MECHANICS_FILE = new URL("../brain/mechanics.json", import.meta.url);

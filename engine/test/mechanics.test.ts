@@ -7,6 +7,7 @@ import { test } from "node:test";
 import { mechanics } from "../scripts/brain-context.ts";
 import { ENCLAVE } from "../src/enclave.ts";
 import { MECHANICS, mechanicsFor, TOPICS } from "../src/mechanics.ts";
+import { SEQ } from "../src/sequencer.ts";
 import { factNumbers, isVoiceIssue, MentionOut, postFilter, STAKING_DENIED, voiceIssues } from "../src/voice.ts";
 
 test("mechanics: generated, committed fresh, one block per topic", () => {
@@ -105,4 +106,10 @@ test("vaults: what a vault is for comes first, and a plain answer from it passes
     assert.deepEqual(postFilter(t, factNumbers(facts)), [], t);
     assert.deepEqual(voiceIssues(facts, t, { linked: false }), [], t);
   }
+});
+
+test("abilities: the lines hold only while the sequencer builds people's ideas alone, site pages included", () => {
+  assert.equal(SEQ.ownIdeas, false, "the abilities lines say people's ideas only");
+  assert.equal(SEQ.siteLive, true, "the abilities lines say pages on the site");
+  assert.match(MECHANICS.abilities.join(" "), /only ideas the brain accepted/);
 });

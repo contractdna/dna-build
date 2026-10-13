@@ -7,7 +7,7 @@ import { parseAbi } from "viem";
 import { ENCLAVE } from "./enclave.ts";
 
 /** The reader's closed topic enum (src/voice.ts MentionOut): every mechanics block, plus what's happening now and other. */
-export const TOPICS = ["hook_fee", "launch_guard", "buyback_burn", "liquidity_lock", "fee_split", "veto_safe", "idea_market", "games", "vaults", "proof_enclave", "dev_team", "staking", "status_wen", "other"] as const;
+export const TOPICS = ["hook_fee", "launch_guard", "buyback_burn", "liquidity_lock", "fee_split", "veto_safe", "idea_market", "games", "vaults", "proof_enclave", "dev_team", "staking", "abilities", "status_wen", "other"] as const;
 export type Topic = (typeof TOPICS)[number];
 type Block = Exclude<Topic, "status_wen" | "other">;
 

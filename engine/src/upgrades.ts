@@ -222,6 +222,20 @@ const bare = (h: unknown) => String(h ?? "").replace(/^0x/, "").toLowerCase();
 export const RUNNING = { composeHash: async (): Promise<string | null> => (ENCLAVE.on ? (await tcbInfo()).composeHash : null), bootAt: Date.now() };
 /** This engine's compose hash, bare; null outside an enclave or when the report can't be read (never fails a tick). */
 const running = async () => bare(await RUNNING.composeHash().catch(() => null)) || null;
+/** The release notes of the version this engine runs, as last read: the watcher tick reads them (primeRunningNotes),
+ *  so a reply or a decision never waits on the public repository; [] until read, outside an enclave, or with no record. */
+const NOTES = { hash: "", notes: [] as string[], triedAt: 0 };
+export async function runningNotes(): Promise<string[]> {
+  const h = await running();
+  return h && NOTES.hash === h ? NOTES.notes : [];
+}
+/** Read the running version's release record once; with none yet or a failed read, again after 10 minutes. */
+export async function primeRunningNotes(h: string, now = Date.now()) {
+  if (NOTES.hash === h || now - NOTES.triedAt < 10 * 60_000) return;
+  NOTES.triedAt = now;
+  const r = await releaseFor(h).catch(() => null);
+  if (r) Object.assign(NOTES, { hash: h, notes: r.notes });
+}
 /** "It's in" once this engine runs the newest allowed update's code and started after the allow (it switched; a
  *  version it ran before the allow is no switch): once per allow (key update:running:<timelock id>:<tx>), its link the
  *  execute tx. Called every watcher tick: the newest allowed row (a backward scan of the outbox, small) when there is
@@ -229,6 +243,7 @@ const running = async () => bare(await RUNNING.composeHash().catch(() => null)) 
 export async function runningCheck() {
   const mine = await running();
   if (!mine) return;
+  void primeRunningNotes(mine).catch(() => {});
   const [a] = await sql<{ event: Ev; link: string | null }[]>`select event, link from x_outbox where event->>'event' = 'update_allowed' order by id desc limit 1`;
   if (!a || bare(a.event.hash) !== mine || !(Number(a.event.at) * 1000 < RUNNING.bootAt)) return;
   const key = `update:running:${a.event.id}:${a.event.tx}`;

@@ -1,0 +1,41 @@
+# The website deploys from the release branch: each push to release that touches web/ asks Railway to deploy that exact
+# commit to the main site's service and, once there is one, the play service (game pages on play.<site>; both build
+# web/ from this repository). The token is scoped to the site's environment; it and the ids are repository secrets,
+# never printed. Nothing is built or uploaded here.
+name: site-deploy
+on:
+  push:
+    branches: [release]
+    paths: ["web/**"]
+  workflow_dispatch:
+permissions: {}
+concurrency:
+  group: site-deploy
+  cancel-in-progress: false
+jobs:
+  deploy:
+    if: github.repository == 'contractdna/dna-build' && github.ref == 'refs/heads/release'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: deploy the release commit
+        env:
+          TOKEN: ${{ secrets.RAILWAY_SITE_TOKEN }}
+          SITE: ${{ secrets.RAILWAY_SITE_SERVICE }}
+          PLAY: ${{ secrets.RAILWAY_PLAY_SERVICE }}
+          ENVIRONMENT: ${{ secrets.RAILWAY_SITE_ENV }}
+          SHA: ${{ github.sha }}
+        run: |
+          deploy() {
+            body=$(jq -nc --arg s "$2" --arg e "$ENVIRONMENT" --arg c "$SHA" \
+              '{query: "mutation($s: String!, $e: String!, $c: String!) { serviceInstanceDeployV2(serviceId: $s, environmentId: $e, commitSha: $c) }", variables: {s: $s, e: $e, c: $c}}')
+            out=$(curl -sS --max-time 60 -w '\n%{http_code}' https://backboard.railway.com/graphql/v2 -H "Project-Access-Token: $TOKEN" -H 'content-type: application/json' -d "$body")
+            code=${out##*$'\n'}; r=${out%$'\n'*}
+            if [ "$code" = 200 ] && echo "$r" | jq -e '(.errors | not) and (.data.serviceInstanceDeployV2 | type == "string")' > /dev/null 2>&1; then
+              echo "$1: deploy started for $SHA"
+            else
+              echo "$1: deploy refused (HTTP $code): $(echo "$r" | jq -c '[.errors[]?.message]' 2>/dev/null | head -c 300)"; return 1
+            fi
+          }
+          deploy site "$SITE"
+          if [ -n "$PLAY" ]; then deploy play "$PLAY"; fi

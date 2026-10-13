@@ -573,7 +573,9 @@ export async function resolve(ev: Record<string, unknown>): Promise<Record<strin
       // the asked topic's mechanics (code's lines; the launch guard's only on a hook that has it)
       const topic = typeof ev.topic === "string" ? (ev.topic as Topic) : undefined;
       // the vaults' and staking's lines only once their contract is deployed (the deployment names it): never a live claim before
-      const mechanics = topic ? mechanicsFor(topic, await hasLaunchGuard(HOOK_READ.launchGuard), !!d.genomeVaults, !!d.convictionVault) : [];
+      // what it can do also hears what its running version changed (the public release notes, screened as they are read)
+      const mechanics = [...(topic ? mechanicsFor(topic, await hasLaunchGuard(HOOK_READ.launchGuard), !!d.genomeVaults, !!d.convictionVault) : []),
+        ...(topic === "abilities" ? (await (await import("./upgrades.ts")).runningNotes()).map((n) => `the engine's latest update: ${n}`) : [])];
       // lang: the reader's (SCRIPTS); lead: code's "@handle" before a reply in our own thread (a thread presence turn)
       // the live state only where it answers (a question about the rules or what is happening): a hello or a price ask
       // that gets the fee and a countdown tacked on reads the same every time

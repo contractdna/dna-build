@@ -8,7 +8,9 @@ import { notesIssue, release } from "../scripts/compose.ts";
 import { priorityOf, titleOf } from "../src/announce.ts";
 import { encodeOp } from "../src/lib.ts";
 import { pendingOf } from "../src/life.ts";
-import { changeFacts, changeLine, composeHashOf, figuresOf, fixedLine, notesOf, registryChange, releaseFor, RELEASES, updateFacts } from "../src/upgrades.ts";
+import { MECHANICS } from "../src/mechanics.ts";
+import { changeFacts, changeLine, composeHashOf, figuresOf, fixedLine, notesOf, registryChange, releaseFor, RELEASES, primeRunningNotes, RUNNING, runningNotes, updateFacts } from "../src/upgrades.ts";
+import { HOOK_READ, resolve } from "../src/x.ts";
 import { appendWeight, claimIssues, factNumbers, factSheet, parrotIssue, postFilter, voiceIssues } from "../src/voice.ts";
 
 const APP = "0xf0839119995E13Aa6C5148eDD0ce7C7a929952BC";
@@ -189,4 +191,48 @@ test("the day's changelog: the changes with their numbers; a draft that calls th
   assert.deepEqual(issues(f, "yesterday i got a new brain, the games now take 10% of the fees, and the site grew a wallet link."), []);
   assert.equal(titleOf(raw), `What changed on 2026-10-11: ${changes.join("; ")}`);
   assert.ok(priorityOf({ event: "day_changes" }) < 4);
+});
+
+test("what it can do: a reply on its abilities hears code's lines and the running version's notes, read once per version", async () => {
+  const saved = { fetch: RELEASES.fetch, hash: RUNNING.composeHash, guard: HOOK_READ.launchGuard };
+  const h = "ab".repeat(32);
+  let reads = 0;
+  let up = false;
+  RELEASES.fetch = async (url: string) => {
+    reads++;
+    if (!up) throw new Error("offline");
+    return url.endsWith(`releases/${h}.json`) ? new Response(JSON.stringify({ composeHash: `0x${h}`, notes: ["Up to 50 posts a day, at least 10 minutes apart"] })) : new Response("404", { status: 404 });
+  };
+  RUNNING.composeHash = async () => `0x${h}`;
+  HOOK_READ.launchGuard = async () => { throw new Error("no guard"); };
+  const before = [...MECHANICS.abilities];
+  try {
+    const t0 = Date.now();
+    await primeRunningNotes(h, t0);
+    assert.deepEqual(await runningNotes(), [], "an unread record: nothing");
+    up = true;
+    await primeRunningNotes(h, t0 + 60_000);
+    assert.deepEqual(await runningNotes(), [], "a failed read is tried again only after 10 minutes");
+    await primeRunningNotes(h, t0 + 11 * 60_000);
+    assert.deepEqual(await runningNotes(), ["Up to 50 posts a day, at least 10 minutes apart"]);
+    const n = reads;
+    await primeRunningNotes(h, t0 + 60 * 60_000);
+    await runningNotes();
+    assert.equal(reads, n, "read once per version; a reply reads only what the tick read");
+    const r = (await resolve({ event: "reply", category: "thanks", topic: "abilities", question: "They ask if the engine can change the website." })) as { mechanics: string[] };
+    assert.deepEqual(r.mechanics, [...MECHANICS.abilities, "the engine's latest update: Up to 50 posts a day, at least 10 minutes apart"]);
+    assert.deepEqual(MECHANICS.abilities, before, "code's lines are never changed in place");
+    assert.match(MECHANICS.abilities.join(" "), /pages on the site/);
+    assert.match(MECHANICS.abilities.join(" "), /cannot change the hook or the token/);
+    const f = factSheet({ event: "reply", category: "rules_question", topic: "abilities", question: "What changed?", mechanics: r.mechanics });
+    assert.ok(factNumbers(f).has("50") && factNumbers(f).has("10"), "the notes' numbers may be stated");
+    const other = (await resolve({ event: "reply", category: "thanks", topic: "games", question: "" })) as { mechanics: string[] };
+    assert.ok(!other.mechanics.some((l) => l.includes("latest update")), "only the abilities topic hears the notes");
+    RUNNING.composeHash = async () => null;
+    assert.deepEqual(await runningNotes(), [], "outside an enclave: none");
+  } finally {
+    Object.assign(RELEASES, { fetch: saved.fetch });
+    RUNNING.composeHash = saved.hash;
+    HOOK_READ.launchGuard = saved.guard;
+  }
 });
