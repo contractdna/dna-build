@@ -221,7 +221,7 @@ export const CHAPTERS: Chapter[] = [
     dumb: [
       `every trade pays ${FEE.total}: ${FEE.ours} to DNA plus ${FEE.platform} to programmable, the launchpad. the first hour starts at ${FEE.totalLaunch} and slides down.`,
       `the AI can tune DNA's part between 1% and 3.5%, and after the launch tax it can never pass ${FEE.cap}. (on programmable.market their router adds another ${FEE.platform}.)`,
-      "DNA's part splits four ways: 35% buys $DNA and burns it, 35% adds liquidity, 30% goes to the Safe, 0% to the games for now. games share turns on later.",
+      "DNA's part splits four ways: 35% buys $DNA and burns it, 30% adds liquidity, 25% goes to the Safe, 10% to the games. the live split is on the treasury page.",
     ],
     smart: {
       lead: "Fees are taken in ETH, on the swap's ETH leg. The project fee is minted to FeeVault as ERC-6909 claims; the platform fee goes to PlatformRevenue, whose only recipient is Programmable: it is the launchpad's fee, not DNA's.",
@@ -235,9 +235,9 @@ export const CHAPTERS: Chapter[] = [
         steps: [`Swap pays DNA's fee (${FEE.ours} baseline, 1%–3.5% tuned) + Programmable's ${FEE.platform} (not ours), in ETH`, "FeeVault.distribute(), anyone, at ≥ 0.05 ETH"],
         branches: [
           { when: "35%", then: "BuybackBurn: buys DNA and burns it" },
-          { when: "35%", then: "LiquidityVault: adds liquidity, never removes it" },
-          { when: "30%", then: "Treasury: ETH to the Safe" },
-          { when: "0% now", then: "GamePot: 70% jackpot, 30% idea rewards. Games share turns on later (up to 20%)" },
+          { when: "30%", then: "LiquidityVault: adds liquidity, never removes it" },
+          { when: "25%", then: "Treasury: ETH to the Safe" },
+          { when: "10%", then: "GamePot: 70% jackpot, 30% idea rewards (games bounds 0–20%)" },
         ],
       },
       facts: [
@@ -547,7 +547,7 @@ export const CHAPTERS: Chapter[] = [
         { k: "Game vetoes", v: "cancelList (jackpot), cancelBallot, cancelSeal, cancelReward, cancelDrawInterval, cancelOutcome (ideas)", at: "GamePot, MutationBoard, IdeaMarket" },
         { k: "Queued like anyone", v: "register modules, set parameters, promote, raise the level, rotate the agent key, approve bytecode: all public for 1 h first", at: "ModuleRegistry.queue" },
         { k: "Cannot", v: "Change any constant (5% cap, supply, queue delay, split bounds), alter the hook, remove liquidity, move anyone's DNA or staked DNA, or take the jackpot or the idea reserve", at: "SPEC §1, §13" },
-        { k: "Receives", v: "The 30% treasury share of project fees, in ETH", at: "FeeVault.distribute" },
+        { k: "Receives", v: "The treasury share of project fees (25% today), in ETH", at: "FeeVault.distribute" },
         { k: "Also", v: "Telegram /halt, /mute and /delete for signers: they only stop the engine or its posting, or remove one of its own posts", at: "/proof" },
       ],
       links: [

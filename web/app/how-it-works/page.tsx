@@ -29,9 +29,9 @@ const RULES = [
 
 const SPLIT = [
   { pct: 35, name: "Burn", text: "buys DNA back and burns it", c: "var(--coral)" },
-  { pct: 35, name: "Liquidity", text: "deepens the pool, never removed", c: "var(--teal)" },
-  { pct: 30, name: "Treasury", text: "ETH to the Safe", c: "var(--amber)" },
-  { pct: 0, name: "Games", text: "turns on later: 70% jackpot, 30% idea rewards", c: "var(--violet)" },
+  { pct: 30, name: "Liquidity", text: "deepens the pool, never removed", c: "var(--teal)" },
+  { pct: 25, name: "Treasury", text: "ETH to the Safe", c: "var(--amber)" },
+  { pct: 10, name: "Games", text: "70% jackpot, 30% idea rewards", c: "var(--violet)" },
 ];
 
 const GAMES = [
@@ -118,7 +118,7 @@ export default function HowItWorksPage() {
             The AI can tune DNA&apos;s part between 1% and 3.5% (hard cap {FEE.cap}). Programmable&apos;s {FEE.platform} goes to Programmable.
             DNA&apos;s part splits four ways:
           </p>
-          <div className={s.split} role="img" aria-label="DNA's fee: 35% burn, 35% liquidity, 30% treasury, 0% games for now">
+          <div className={s.split} role="img" aria-label="DNA's fee: 35% burn, 30% liquidity, 25% treasury, 10% games">
             {SPLIT.filter((x) => x.pct > 0).map((x) => <span key={x.name} style={{ flexGrow: x.pct, "--c": x.c } as React.CSSProperties} />)}
           </div>
           <ul className={s.splitKey}>

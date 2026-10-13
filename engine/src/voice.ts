@@ -696,6 +696,9 @@ const words = (t: string) => t.toLowerCase().match(/\p{L}[\p{L}'’-]*/gu) ?? []
 // whole words: a hyphenated compound is one word ("mid-canary" is not "mid")
 const phraseRe = (p: string) => new RegExp(`(^|[^\\p{L}'’-])${p.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(?=$|[^\\p{L}'’-])`, "u");
 const BANNED_RE = BANNED.map((p) => [p, phraseRe(p)] as const);
+/** A quote mark not inside a word ('claim', ‘claim’) is a space, so a quoted banned term is still that term; an
+ *  apostrophe inside one (don't, holders' is not inside) stays. */
+export const unquote = (t: string) => t.replace(/(?<!\p{L})['’‘]|['’‘](?!\p{L})/gu, " ");
 const OLD_TOKEN_RE = BANNED.slice(BANNED.indexOf("relaunch"), BANNED.indexOf("same name") + 1).map(phraseRe);
 /** A mention about a relaunch, an old or other token or a migration (code reads it; no model): only the official line
  *  answers it. */
@@ -807,7 +810,7 @@ export function postFilter(text: string, allowed: Set<string>, link: boolean | n
   // a field name (dna_burned) is code's, never a word of a post
   if (/\b[a-z]+_[a-z0-9_]+\b/i.test(t)) issues.push("field name");
   // a public reason phrase is said as is ("a kill condition fired"), never read as the banned term inside it
-  const lower = PUBLIC_REASONS.reduce((x, r) => x.replaceAll(r, " "), t.toLowerCase());
+  const lower = PUBLIC_REASONS.reduce((x, r) => x.replaceAll(r, " "), unquote(t.toLowerCase()));
   let forward = false;
   for (const [p, re] of BANNED_RE) {
     if (!re.test(lower) || (o.priceJoke && PRICE_SITUATION.has(p)) || (o.claim && p === "claim")) continue;

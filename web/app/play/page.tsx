@@ -13,6 +13,7 @@ import { MysteryCheck } from "./MysteryCheck";
 import { NewGames } from "./NewGames";
 import s from "./play.module.css";
 import { DNA, STAKE_VAULT } from "./stake";
+import { CollectPanel } from "./CollectPanel";
 import { StakePanel } from "./StakePanel";
 
 export const metadata: Metadata = {
@@ -32,18 +33,18 @@ const RULES = [
   ["Who can win", "Anyone averaging 1,000+ DNA over the window. Not the Safe or its signers, the AI's wallets, DNA's contracts or the exchange wallets listed before the window."],
   ["Fair odds", "No wallet holds more than 2% of the tickets (1% once a recent draw had 100+ wallets). Fewer than 50 eligible wallets: no draw, the pot rolls over."],
   ["Draw timing", "Every 12 to 24 hours. The AI sets the timing and posts each window's rules before it opens. A window whose rules were not posted before it opened is not drawn; its pot carries over."],
-  ["Payout", "Sent to each winner automatically. A wallet that can't receive ETH has 7 days to claim."],
+  ["Payout", "Sent to each winner automatically. A wallet that can't receive ETH has 7 days to collect its share on this page, to any address."],
   ["Proof", "Every draw gets a page you can check in your browser."],
   ["Who can play", "18+ only. Check that it's legal where you live."],
 ];
-const FULL_RULES = [
+const fullRules = (gamesBps: number | null) => [
   ["The list", "After each window the AI builds the ticket list from every DNA transfer and posts its fingerprint on-chain. The Safe has 1 hour to veto it while an independent watchdog rebuilds it. Then anyone can start the draw."],
   ["Randomness", "One Chainlink VRF word, delivered after the list is fixed, picks all 10 winning tickets, so nobody can change the list to win."],
-  ["Paid from", `The games pot gets a share of DNA's fee: 70% jackpot, 30% idea rewards. That share is 0% today; games share turns on later. Programmable's ${FEE.platform} pays nothing here. If the games share is ever rolled back, the games stop and nothing else does.`],
+  ["Paid from", `The games pot gets a share of DNA's fee: 70% jackpot, 30% idea rewards. ${gamesBps === null ? "The live share is on Treasury." : `That share is ${gamesBps / 100}% of DNA's fee today (live on Treasury).`} Programmable's ${FEE.platform} pays nothing here. If the games share is ever rolled back, the games stop and nothing else does.`],
   ["Prize cap", "The pot holds up to 15 ETH. Anything above goes to buyback and burn."],
   ["Gas", "Draws wait while gas would cost more than 20% of the prize."],
   ["Short list", "Fewer than 10 wallets in the list: the unfilled shares stay in the pot."],
-  ["Unclaimed", "An unclaimed share goes back to the pot after 7 days."],
+  ["Not collected", "A share nobody collects goes back to the pot after 7 days."],
 ];
 
 const when = (iso: string) => `${fmtDate(iso)}, ${fmtTime(iso)}`;
@@ -63,7 +64,7 @@ type Game = {
   extra?: React.ReactNode;
 };
 
-function jackpot(p?: PlayLive, gamesBps = 0): Game {
+function jackpot(p?: PlayLive, gamesBps: number | null = null): Game {
   const base = { title: "Holder jackpot", c: "var(--amber)", states: ["Window open", "Ticket list", "Drawing", "Paying out"],
     how: "Hold at least 1,000 DNA on average through a draw window and you're in. Staking counts ×2 to ×4. Each draw picks 10 wallets with Chainlink randomness and splits the prize equally, up to 3 ETH, sent straight to them." };
   if (!p) return { ...base, ...PRE, move: LIVE ? UNREAD : <>Nothing to do yet. At launch: hold at least 1,000 DNA through a draw window and you are in.</> };
@@ -71,7 +72,7 @@ function jackpot(p?: PlayLive, gamesBps = 0): Game {
   const open = j.stage === "window open", skipped = open && !j.drawn; // this window is never drawn (engine paramsOf)
   // GamePot.requestDraw: a draw waits (the pot accrues) until the pot covers 0.25 ETH after the VRF top-up
   const low = j.prizeEth === null
-    ? <> The pot is under {j.gateEth} ETH: a draw needs at least 0.25 ETH after the Chainlink fee, so draws wait until it fills from the games share of fees{gamesBps === 0 ? <>, which is 0% for now and turns on later</> : null}.</>
+    ? <> The pot is under {j.gateEth} ETH: a draw needs at least 0.25 ETH after the Chainlink fee, so draws wait until it fills from the games share of fees{gamesBps === 0 ? <>, which is 0% right now</> : null}.</>
     : null;
   return {
     ...base, at, status: base.states[at],
@@ -164,7 +165,8 @@ function Panel({ g }: { g: Game }) {
 
 export default async function PlayPage() {
   const [live, { split }] = await Promise.all([getPlay(), getTreasury()]);
-  const games = [jackpot(live, split.find((x) => x.dest === "games")?.bps ?? 0), vote(live), mystery(live)];
+  const gamesBps = split.find((x) => x.dest === "games")?.bps ?? null; // null: the split could not be read
+  const games = [jackpot(live, gamesBps), vote(live), mystery(live)];
   const last = live?.jackpot.lastWin; // the latest draw's winners (up to 10)
   const winners = last ? last.winners : [];
   // the first draw: after the open window if it is drawn, else after the next one if that one is
@@ -202,7 +204,7 @@ export default async function PlayPage() {
                   <Link href={`/play/draw/${last!.window}`}>
                     <span className={s.wPrize}>{last!.shareEth} ETH</span>
                     <span className={s.wWho}>{short(w.account)}</span>
-                    <span className={ui.dim}>window {last!.window} · {when(last!.at)}{w.pushed ? "" : " · claim pending"}</span>
+                    <span className={ui.dim}>window {last!.window} · {when(last!.at)}{w.pushed ? "" : " · to collect"}</span>
                   </Link>
                 </li>
               ))}
@@ -231,6 +233,7 @@ export default async function PlayPage() {
               <PoisonNote />
             </Section>
           </div>
+          {LIVE && <Section title="Collect a prize" note="only if a payout couldn't reach your wallet"><CollectPanel /></Section>}
           <Suspense fallback={null}><NewGames /></Suspense>
         </WalletProvider>
 
@@ -241,7 +244,7 @@ export default async function PlayPage() {
           <details className={ui.more}>
             <summary>Full rules</summary>
             <dl className={s.rules}>
-              {FULL_RULES.map(([k, v]) => <div key={k}><dt>{k}</dt><dd>{v}</dd></div>)}
+              {fullRules(gamesBps).map(([k, v]) => <div key={k}><dt>{k}</dt><dd>{v}</dd></div>)}
             </dl>
           </details>
           <p className={`${ui.prose} ${ui.muted}`}>Every draw, reward and vote result lands on <Link className={ui.link} href="/announcements">News</Link>. How X ideas get in: <Link className={ui.link} href="/rules">rules for ideas</Link>.</p>

@@ -60,7 +60,7 @@ test("the games row is jackpot, idea rewards, mystery, vote; idea rewards are fe
   const into = Object.values(EDGES).filter((e) => e.to === "rewards");
   assert.ok(into.some((e) => e.from === "pot" && e.label === "30%"), "pot → rewards, 30%");
   assert.ok(into.some((e) => e.from === "deploy" && e.label === "reward"), "shipped build → rewards");
-  assert.equal(NODES.pot.text, "Feeds the jackpot (70%) and idea rewards (30%). Games share turns on later.");
+  assert.equal(NODES.pot.text, "Feeds the jackpot (70%) and idea rewards (30%).");
 });
 
 test("game-row nodes do not overlap", () => {
@@ -93,4 +93,12 @@ test("right now: keeps the newest chain events in block order, ignores swaps, en
 test("rounded corners", () => {
   assert.equal(rounded([[0, 0], [10, 0]]), "M0,0 L10,0");
   assert.equal(rounded([[0, 0], [40, 0], [40, 40]]), "M0,0 L31,0 Q40,0 40,9 L40,40");
+});
+
+test("the fee split reads the same on the desktop map and the phone track (35/30/25/10)", () => {
+  assert.deepEqual([NODES.burn.label, NODES.lp.label, NODES.treasury.label, NODES.pot.label], ["Buyback & burn 35%", "Liquidity 30%", "Treasury 25%", "Games pot 10%"]);
+  const money = TRACKS.find((t) => t.name === "Money").steps.filter((s) => s.kind === "node");
+  const note = (id) => money.find((s) => s.id === id).note;
+  assert.deepEqual([note("burn"), note("lp"), note("treasury")], ["35%", "30%", "25%"]);
+  assert.match(note("pot"), /^10% /);
 });

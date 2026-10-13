@@ -23,7 +23,7 @@ test("mechanics: the numbers are the contracts' own", () => {
   const all = (t: keyof typeof MECHANICS) => MECHANICS[t].join(" ");
   assert.match(all("hook_fee"), /never charges more than 5%/);
   assert.match(all("hook_fee"), /\b0\.3%/);
-  assert.match(all("fee_split"), /35% to buyback-and-burn, 35% to liquidity, 30% to the treasury/);
+  assert.match(all("fee_split"), /launch split module sends project fees 35% to buyback-and-burn, 30% to liquidity, 25% to the treasury and 10% to games/);
   assert.match(all("veto_safe"), /at least 1 hour/);
   assert.match(all("idea_market"), /24 hours/);
   assert.match(all("games"), /10 winners/);

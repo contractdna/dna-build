@@ -61,9 +61,17 @@ export async function finish(job: Job, err?: unknown): Promise<"done" | "queued"
  *  each job is in flight in this process. */
 export const workerPulse = { polledAt: Date.now(), running: new Map<string, { kind: string; since: number }>() };
 /** A poll loop that has not come round in `pollMs` is stuck on a call that never returns (a DB socket gone dead); a
- *  job in flight past its limit holds its lane shut for good. A build's page check (wait for the service, then a deep
- *  check) is ≤ 2.5 h; the daily check runs one check per shipped game in series, so it grows with the games. */
-export const STALL = { pollMs: 10 * 60_000, jobMs: 4 * 3600_000, jobMsByKind: { "pages:daily": 12 * 3600_000 } as Record<string, number> };
+ *  job in flight past its limit holds its lane shut for good. The limits are backstops for a call that never returns,
+ *  not timings: the long kinds get a day (the idea intake screens and judges dozens of mentions in series, each model
+ *  call up to 10 min with a retry; a sequencer step and the daily check run page checks in series). */
+export const STALL = { pollMs: 10 * 60_000, jobMs: 8 * 3600_000, jobMsByKind: { "pages:daily": 24 * 3600_000, "seq:step": 24 * 3600_000, "ideas:intake": 24 * 3600_000 } as Record<string, number> };
+/** Call `exit` (in the same tick as the check: nothing can start signing in between) once no state record is being
+ *  signed and the last one finished QUIET.ms ago, so its row write (one statement right after) has landed; at most
+ *  QUIET.maxMs in all (a dead DB never finishes one). */
+export const QUIET = { ms: 30_000, maxMs: 10 * 60_000 };
+export async function quietSpell(w: { at: number; pending: number }, exit: () => void, q = QUIET, now = () => Date.now(), sleep = (ms: number) => new Promise((r) => setTimeout(r, ms))) {
+  for (const end = now() + q.maxMs; ; await sleep(1_000)) if ((w.pending === 0 && now() - w.at >= q.ms) || now() >= end) return exit();
+}
 /** Why the worker is stuck, or null. */
 export function stalled(p: typeof workerPulse, now = Date.now()): string | null {
   if (now - p.polledAt > STALL.pollMs) return `the job poll has not come round in ${Math.round((now - p.polledAt) / 60_000)} min`;
@@ -81,7 +89,7 @@ export function startWorker(handlers: Record<string, Handler>, onFailed: (job: J
     while (!stopped) {
       workerPulse.polledAt = Date.now();
       try {
-        for (let job = await claim(open()); job; job = await claim(open())) {
+        for (let job = await claim(open()); job && !stopped; job = stopped ? undefined : await claim(open())) {
           const j = job;
           const h = handlers[j.kind];
           busy[h.lane] = (busy[h.lane] ?? 0) + 1;

@@ -14,11 +14,12 @@ import { edb as sql, migrate } from "./db.ts";
 import { dstackKeyProvider, ENCLAVE } from "./enclave.ts";
 import { ownerCommand } from "./approve.ts";
 import { CT, ctHandler } from "./ct.ts";
+import { STATE_WRITES } from "./log.ts";
 import { attestation, nonceOk } from "./attest.ts";
 import { gameAgentHandler, gameKeeperHandlers } from "./games.ts";
 import { bootAnchor, bootCheck, persistHead } from "./head.ts";
 import { setKeyProvider } from "./sealed.ts";
-import { enqueue, type Handler, schedule, type Schedule, stalled, startWorker, workerPulse } from "./jobs.ts";
+import { enqueue, type Handler, quietSpell, schedule, type Schedule, stalled, startWorker, workerPulse } from "./jobs.ts";
 import { ideaLoopHandler } from "./idea-queue.ts";
 import { intakeHandler, liveHandler, roundsHandler } from "./ideas.ts";
 import { ideaOfDayHandler, ideaUpdatesHandler, shoutoutHandler, threadsHandler } from "./x-social.ts";
@@ -254,14 +255,18 @@ const loops = [
 // the compose's restart: always brings it back; every job is restart-safe (an expired lock is reclaimed, a mid-post
 // attempt resolved). The console line is the sure trace: the alert is a queued job (a DB write that may fail the same
 // way), sent once the restarted worker runs it.
+// Before it exits it takes no new job, queues the alert, and waits (src/jobs.ts quietSpell) until no state record is in
+// flight or was signed for a while, exiting in the same tick as that check: a
+// record whose row was never written would leave that row unverifiable after the restart.
 let exiting = false;
 const guard = setInterval(() => {
   const why = stalled(workerPulse);
   if (!why || stopping || exiting) return;
   exiting = true;
   console.error(`worker stalled: ${why}; exiting for a restart`);
+  stopWorker();
   void Promise.race([alert(`Engine restarting itself: ${why}.`, `alert:stall:${new Date().toISOString().slice(0, 13)}`), new Promise((r) => setTimeout(r, 10_000))])
-    .catch(() => {}).finally(() => process.exit(1));
+    .catch(() => {}).then(() => quietSpell(STATE_WRITES, () => process.exit(1)));
 }, 60_000);
 console.log(`engine up: mode ${(await getFlags()).mode}, port ${PORT}, ${Object.keys(handlers).length} job kinds`);
 

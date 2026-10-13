@@ -157,10 +157,19 @@ export async function trustedRecord(r: EnclaveRow, what: string) {
 export const stateDigest = (table: string, key: string, value: unknown, seq: string) =>
   sha256(Buffer.concat([STATE_DOMAIN, Buffer.from(canonical({ table, key, value, seq }))])).toString("hex");
 const valueDigest = (value: unknown) => sha256(canonical(value)).toString("hex");
+/** State records being signed now, and when the last one finished: its row is written right after (one statement), so a
+ *  process that exits on its own (src/engine.ts stall guard) waits for none in flight and a quiet spell first. */
+export const STATE_WRITES = { at: 0, pending: 0 };
 export async function stateSig(table: string, key: string, value: unknown) {
   if (!ENCLAVE.on) return null;
-  const rec = await append("state", `${table}:${key}`, { digest: valueDigest(value) });
-  return `${rec.seq}:${await (await import("./signed.ts")).signDigest(stateDigest(table, key, value, rec.seq))}`;
+  STATE_WRITES.pending++;
+  try {
+    const rec = await append("state", `${table}:${key}`, { digest: valueDigest(value) });
+    return `${rec.seq}:${await (await import("./signed.ts")).signDigest(stateDigest(table, key, value, rec.seq))}`;
+  } finally {
+    STATE_WRITES.pending--;
+    STATE_WRITES.at = Date.now();
+  }
 }
 /** Load-side check for a state row (always true in the plain build); a failure is alerted (hourly per table). */
 export async function trusted(table: string, key: string, value: unknown, sig: string | null | undefined) {

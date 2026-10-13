@@ -36,10 +36,10 @@ export const NODES = {
   safe: { x: 640, y: 716, w: 160, label: "Safe", chip: "VETO", tone: "guard", text: "The project's 2-of-3 multisig. Any two signers can cancel anything in the public hour. It can pause the AI, and it must sign new hook code.", now: "No veto this week." },
   trade: { x: 40, y: 804, w: 140, label: "Every trade", tone: "money", money: true, text: "Each buy or sell in the pool pays the fee.", now: "1,284 trades today." },
   fee: { x: 210, y: 804, w: 140, label: `Fee ${FEE.ours}`, tone: "money", money: true, text: `DNA's fee. Programmable's ${FEE.platform} launchpad fee is on top and is not ours.`, now: "3.1 ETH today." },
-  treasury: { x: 380, y: 804, w: 130, label: "Treasury 30%", tone: "money", money: true, text: "Goes to the Safe. New games are funded from here, inside a published limit, through the public hour.", now: "0.1 ETH to Floor Defense." },
-  pot: { x: 790, y: 804, w: 132, label: "Games pot 0%", tone: "money", money: true, text: "Feeds the jackpot (70%) and idea rewards (30%). Games share turns on later.", now: "3.1 ETH in the pot." },
+  treasury: { x: 380, y: 804, w: 130, label: "Treasury 25%", tone: "money", money: true, text: "Goes to the Safe. New games are funded from here, inside a published limit, through the public hour.", now: "0.1 ETH to Floor Defense." },
+  pot: { x: 790, y: 804, w: 132, label: "Games pot 10%", tone: "money", money: true, text: "Feeds the jackpot (70%) and idea rewards (30%).", now: "3.1 ETH in the pot." },
   burn: { x: 955, y: 804, w: 170, label: "Buyback & burn 35%", tone: "money", money: true, text: "Buys DNA and burns it.", now: "1.09 ETH burned." },
-  lp: { x: 1140, y: 804, w: 140, label: "Liquidity 35%", tone: "money", money: true, text: "Added to the pool automatically.", now: "0.93 ETH added." },
+  lp: { x: 1140, y: 804, w: 140, label: "Liquidity 30%", tone: "money", money: true, text: "Added to the pool automatically.", now: "0.93 ETH added." },
 } satisfies Record<string, Node>;
 
 export type NodeId = keyof typeof NODES | "brain" | "gate";
@@ -134,7 +134,7 @@ export const BEATS: Beat[] = [
   { title: "The fee loop", text: "Meanwhile the fee loop proposes a new fee: a red-team check, the public hour, 2 hours on paper, 4 hours on real trades. Fixed rules judge the result.", edges: ["e_prop", "e_rt_g", "e_g_sh", "e_sh_lt", "e_res"], nodes: ["redteam", "shadow", "livetest"], gate: true, brain: true },
   { title: "Keep it, or roll it back", text: "It worked, so it's promoted through the public hour again. The Safe signs this step until level 8. Had it failed, rollback is instant.", edges: ["e_keep", "e_g_lh", "e_rb"], nodes: ["livehook"], gate: true, brain: true },
   { title: "Games and announcements", text: "The AI sets each game round inside its contract limits, the brain rewards the people whose idea shipped, and every result goes to X with proof.", edges: ["e_params", "e_g_gm", "e_d_jp", "e_d_rw", "e_dp_rw", "e_d_my", "e_d_vt", "e_b_x", "e_pot_jp", "e_pot_rw"], nodes: ["jackpot", "rewards", "mystery", "vote", "xposts", "pot"], gate: true, brain: true },
-  { title: "Where the money goes", text: "Every trade pays the fee: 35% buys and burns DNA, 35% deepens liquidity, 30% goes to the treasury. Games share turns on later.", edges: ["e_tr_fee", "e_split", "e_s_tr", "e_s_pot", "e_s_bn", "e_s_lp"], nodes: ["trade", "fee", "treasury", "pot", "burn", "lp"], money: true },
+  { title: "Where the money goes", text: "Every trade pays the fee: 35% buys and burns DNA, 30% deepens liquidity, 25% goes to the treasury, 10% to the games pot.", edges: ["e_tr_fee", "e_split", "e_s_tr", "e_s_pot", "e_s_bn", "e_s_lp"], nodes: ["trade", "fee", "treasury", "pot", "burn", "lp"], money: true },
 ];
 
 /** Phone: the same story as four vertical tracks. A step is a node (optionally relabelled), a public-hour gate, or a loop back to the brain. */
@@ -165,8 +165,8 @@ export const TRACKS: Track[] = [
   ] },
   { name: "Money", caption: "Where every fee goes", money: true, steps: [
     { kind: "node", id: "trade" }, { kind: "node", id: "fee", note: `+${FEE.platform} Programmable` }, { kind: "node", id: "burn", label: "Buyback & burn", note: "35%" },
-    { kind: "node", id: "lp", label: "Liquidity", note: "35%" }, { kind: "node", id: "treasury", label: "Treasury", note: "30%" }, gate("Funding for new games"),
-    { kind: "node", id: "newgame", label: "New games" }, { kind: "node", id: "pot", label: "Games pot", note: "0% now · jackpot 70%, idea rewards 30%" },
+    { kind: "node", id: "lp", label: "Liquidity", note: "30%" }, { kind: "node", id: "treasury", label: "Treasury", note: "25%" }, gate("Funding for new games"),
+    { kind: "node", id: "newgame", label: "New games" }, { kind: "node", id: "pot", label: "Games pot", note: "10% · jackpot 70%, idea rewards 30%" },
   ] },
 ];
 

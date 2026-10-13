@@ -46,7 +46,7 @@ import { jsonSafe } from "./lib.ts";
 import { dayOfLife, mindNow, pendingNow, storyNow } from "./life.ts";
 import { GUARD_ABI, hasLaunchGuard, mechanicsFor, type Topic } from "./mechanics.ts";
 import { isVaultLog, resolveVault, VAULT_X_EVENTS } from "./vaults.ts";
-import { flatTake, intentOf, MIND_EVENTS, oldTokenTalk, questionOf, unclearReflection, writerSystem } from "./voice.ts";
+import { flatTake, intentOf, MIND_EVENTS, oldTokenTalk, questionOf, unclearReflection, unquote, writerSystem } from "./voice.ts";
 import { eventPost } from "./event-posts.ts";
 
 export { weightedLength };
@@ -633,10 +633,6 @@ const CONTRACT_ASK = /\b(contract|ca|real|official|legit|scam|fake|genuine|right
 const MILESTONE_MOOD = new Set(["online", "contracts_connected", "keys_handed", "first_idea_round", "first_burn", "milestone", "seq_online"]);
 /** Posts that carry what the engine waits on (a status, the opening post, a reply that asks what is happening). */
 const PENDING_EVENTS = new Set(["status", "online", "reply"]);
-/** A reply to someone who asked about claiming what vaults, staking or games pay may say "claim" back ("there is nothing
- *  to claim"): the word is theirs, and a reply carries no link. Never an airdrop ask. */
-export const askedClaim = (facts: Record<string, unknown>) => facts.event === "reply" && facts.category !== "airdrop_ask"
-  && ["vaults", "staking", "games"].includes(String(facts.topic)) && /\bclaim/i.test(String(facts.question ?? ""));
 /** A rules or state question the reader returned no restatement for: a reply to it would answer nothing in particular. */
 export const notUnderstood = (kind: string, question: unknown) => ["rules_question", "state_question"].includes(kind) && !String(question ?? "").trim();
 export const NOT_UNDERSTOOD = "not understood: no restatement";
@@ -815,7 +811,7 @@ async function sendOne(item: Outbox, m: string): Promise<unknown> {
   // a draft that only restates code's stage text is refused (parrotIssue); an echo of the private bundle too (bundleIssues)
   // a reply in the reader's language (facts.lang) may use that language's letters (SCRIPTS)
   const script = typeof facts.lang === "string" ? SCRIPTS[facts.lang] : undefined;
-  const filter = (text: string) => [...postFilter(text, allowed, extra, { intent: intentOf(facts), priceJoke: facts.category === "price_fud", claim: claimFacts(facts) || askedClaim(facts), script, one: facts.category === "idea" }), ...(before.some((b) => overlap(b, text) >= GATE.overlap) ? ["no new fact"] : []), ...claimIssues(facts, text), ...allyIssues(facts, text), ...promiseIssue(text), ...voiceIssues(facts, text, { linked: !!item.link, mention }), ...[parrotIssue(facts, text)].filter((x): x is string => !!x), ...bundleIssues(text)];
+  const filter = (text: string) => [...postFilter(text, allowed, extra, { intent: intentOf(facts), priceJoke: facts.category === "price_fud", claim: claimFacts(facts), script, one: facts.category === "idea" }), ...(before.some((b) => overlap(b, text) >= GATE.overlap) ? ["no new fact"] : []), ...claimIssues(facts, text), ...allyIssues(facts, text), ...promiseIssue(text), ...voiceIssues(facts, text, { linked: !!item.link, mention }), ...[parrotIssue(facts, text)].filter((x): x is string => !!x), ...bundleIssues(text)];
   let w: Drafted;
   try {
     w = fixed ? { model: "code", candidates: [{ text: fixed, issues: [] }], redraft: false }
@@ -1097,7 +1093,8 @@ export const pressReply: ReplyButton = async (id, send, by) => {
   const m = await mode();
   if (m !== "live") return `Reply #${id} not sent: the mode is ${m}.`;
   if (await muted()) return `Reply #${id} not sent: X posting is muted.`;
-  const block = await replyBlock(item);
+  // a draft held from before replies stopped saying "claim" (the writer's filter now rejects it) is not sent as is
+  const block = (await replyBlock(item)) ?? (HELD_CLAIM.test(unquote(text.replace(/@\w+/g, " "))) ? "the draft says claim, which replies no longer say" : null);
   if (block) return (await claim("skipped", block)) ? `Reply #${id} not sent: ${block}.` : notWaiting("already taken");
   if (await repliesPaused()) return `Reply #${id} not sent yet: X refused a reply in the last hour. Tap Send again after the pause.`;
   if (await overCeiling(id)) return `Reply #${id} not sent yet: the reply ceilings are reached. Tap Send again later.`;
@@ -1106,6 +1103,8 @@ export const pressReply: ReplyButton = async (id, send, by) => {
   const r = await deliver(item, text, null, { ...rec, by }, true);
   return (r as { tweetId?: string })?.tweetId ? `Reply #${id} sent: ${statusUrl((r as { tweetId: string }).tweetId)}` : `Reply #${id}: ${String(r)}`;
 };
+
+export const HELD_CLAIM = /(^|[^\p{L}'’-])claim(?=$|[^\p{L}'’-])/iu;
 
 /** Replies to one person's same question (its words, mentions, links and punctuation aside) before it is left alone. */
 export const SAME_ASK = 2;

@@ -11,15 +11,15 @@
     "in that window nobody can add liquidity except at the pool's initialization"
   ],
   "buyback_burn": [
-    "35% of the project fees go to buyback-and-burn by default",
+    "the launch split module sends 35% of the project fees to buyback-and-burn",
     "the buyback contract buys DNA on the pool with that ETH and burns every DNA it buys: at most 1 ETH a buy, at most 1 buy every 1 hour"
   ],
   "liquidity_lock": [
-    "35% of the project fees go to the liquidity vault by default",
+    "the launch split module sends 30% of the project fees to the liquidity vault",
     "the liquidity vault adds that ETH to the pool just above the price, at most every 4 hours, and nothing it adds can ever be withdrawn, by anyone"
   ],
   "fee_split": [
-    "by default the fee vault splits project fees 35% to buyback-and-burn, 35% to liquidity, 30% to the treasury and 0% to games",
+    "the launch split module sends project fees 35% to buyback-and-burn, 30% to liquidity, 25% to the treasury and 10% to games; the treasury page shows the split in force",
     "a split module may move those shares only inside ranges the vault enforces, and the vault distributes once it holds at least 0.05 ETH"
   ],
   "veto_safe": [
@@ -34,7 +34,8 @@
   ],
   "games": [
     "the games pot splits what arrives 70% to the jackpot and 30% to the idea reserve",
-    "a jackpot draw pays 10 winners, at most 3 ETH a draw, and waits until the pot holds 0.25 ETH; a prize stays open for 7 days",
+    "a jackpot draw pays 10 winners, at most 3 ETH a draw, and waits until the pot holds 0.25 ETH",
+    "when a draw settles, the prize is split equally and paid straight to the winners; a winner whose wallet refuses the ETH has 7 days to collect it on the site's play page, and then it goes back to the pot",
     "at most 3 games from the sequencer run at once, and a game nobody plays gets retired with its funds sent back"
   ],
   "vaults": [

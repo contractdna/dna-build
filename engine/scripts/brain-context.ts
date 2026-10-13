@@ -116,6 +116,10 @@ export function mechanics(): Record<string, string[]> {
   const k = (name: string) => { const v = all.get(name) ?? GUARD_DEFAULTS[name.replace(/^DNAHook\./, "")]; if (v === undefined) throw new Error(`no constant ${name}`); return valueOf(v); };
   const H = (n: string) => k(`DNAHook.${n}`), R = (n: string) => k(`ModuleRegistry.${n}`), V = (n: string) => k(`FeeVault.${n}`), I = (n: string) => k(`IdeaMarket.${n}`), G = (n: string) => k(`GamePot.${n}`), N = (n: string) => k(`GenomeVaults.${n}`);
   const supply = k("DNAToken.SUPPLY");
+  // the launch split module (BaselineSplit): read from its return. simplification: a later split module with other
+  // shares makes these lines history, not the split in force; the treasury page (FeeVault.currentSplit) is the live one
+  const split = (sol("modules/BaselineSplit.sol").match(/return \((\d+), (\d+), (\d+), (\d+)\);/) ?? []).slice(1).map(Number);
+  if (split.length !== 4 || split.reduce((a, b) => a + b, 0) !== 10_000) throw new Error("BaselineSplit: split not read");
   // staking's terms and multiples live in ConvictionVault's pure functions, not constants: read from their return
   // expressions (a reshaped function throws here rather than state a stale number)
   const cv = sol("ConvictionVault.sol");
@@ -141,15 +145,15 @@ export function mechanics(): Record<string, string[]> {
       `in that window nobody can add liquidity except at the pool's initialization`,
     ],
     buyback_burn: [
-      `${pctBps(V("BASELINE_BUYBACK"))} of the project fees go to buyback-and-burn by default`,
+      `the launch split module sends ${pctBps(split[0])} of the project fees to buyback-and-burn`,
       `the buyback contract buys DNA on the pool with that ETH and burns every DNA it buys: at most ${k("BuybackBurn.MAX_SIZE")} ETH a buy, at most 1 buy every ${k("BuybackBurn.COOLDOWN")} hour`,
     ],
     liquidity_lock: [
-      `${pctBps(V("BASELINE_LP"))} of the project fees go to the liquidity vault by default`,
+      `the launch split module sends ${pctBps(split[1])} of the project fees to the liquidity vault`,
       `the liquidity vault adds that ETH to the pool just above the price, at most every ${k("LiquidityVault.COOLDOWN")} hours, and nothing it adds can ever be withdrawn, by anyone`,
     ],
     fee_split: [
-      `by default the fee vault splits project fees ${pctBps(V("BASELINE_BUYBACK"))} to buyback-and-burn, ${pctBps(V("BASELINE_LP"))} to liquidity, ${pctBps(V("BASELINE_TREASURY"))} to the treasury and ${pctBps(V("BASELINE_GAME"))} to games`,
+      `the launch split module sends project fees ${pctBps(split[0])} to buyback-and-burn, ${pctBps(split[1])} to liquidity, ${pctBps(split[2])} to the treasury and ${pctBps(split[3])} to games; the treasury page shows the split in force`,
       `a split module may move those shares only inside ranges the vault enforces, and the vault distributes once it holds at least ${V("MIN_DISTRIBUTE")} ETH`,
     ],
     veto_safe: [
@@ -164,7 +168,8 @@ export function mechanics(): Record<string, string[]> {
     ],
     games: [
       `the games pot splits what arrives ${pctBps(G("JACKPOT_BPS"))} to the jackpot and ${pctBps(10_000 - G("JACKPOT_BPS"))} to the idea reserve`,
-      `a jackpot draw pays ${G("WINNERS")} winners, at most ${G("PRIZE_CAP")} ETH a draw, and waits until the pot holds ${G("MIN_PRIZE")} ETH; a prize stays open for ${G("CLAIM_WINDOW")} days`,
+      `a jackpot draw pays ${G("WINNERS")} winners, at most ${G("PRIZE_CAP")} ETH a draw, and waits until the pot holds ${G("MIN_PRIZE")} ETH`,
+      `when a draw settles, the prize is split equally and paid straight to the winners; a winner whose wallet refuses the ETH has ${G("CLAIM_WINDOW")} days to collect it on the site's play page, and then it goes back to the pot`,
       `at most ${k("GameFactory.MAX_LIVE")} games from the sequencer run at once, and a game nobody plays gets retired with its funds sent back`,
     ],
     // the Genome Vaults NFT: every figure the contract's own; no earnings figure (a reply reads nothing but the chain) and

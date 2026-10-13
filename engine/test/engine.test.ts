@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { parseGwei, zeroAddress } from "viem";
 import { z } from "zod";
-import { backoff, periodStart, STALL, stalled } from "../src/jobs.ts";
+import { backoff, periodStart, quietSpell, STALL, stalled } from "../src/jobs.ts";
 import { readFileSync } from "node:fs";
 import { anchorDays, AWARD_GRACE, due, EXEC_RETRY_MS, KEEPER_EVERY, queueHandler, retryMs } from "../src/keepers.ts";
 import { decodeOp, encodeOp, OPS } from "../src/lib.ts";
@@ -13,10 +13,10 @@ import { effective } from "../src/mode.ts";
 import { allowed, parseCallback, type Update } from "../src/telegram.ts";
 import { agentCheck, bumpFees, type FeeHistory, gasGuard, nextFees, quoteFees } from "../src/tx.ts";
 import { describe } from "../src/watch.ts";
-import { askedClaim, insertOnce, notUnderstood, postedNote, postIssues, weightedLength } from "../src/x.ts";
+import { HELD_CLAIM, insertOnce, notUnderstood, postedNote, postIssues, weightedLength } from "../src/x.ts";
 import { labelOf, siteChangeDue, treasuryFacts } from "../src/status.ts";
 import { titleOf } from "../src/announce.ts";
-import { factSheet, shapesFor, voiceIssues as vi } from "../src/voice.ts";
+import { claimFacts, factSheet, postFilter, shapesFor, unquote, voiceIssues as vi } from "../src/voice.ts";
 
 const E18 = 10n ** 18n;
 
@@ -55,10 +55,39 @@ test("stall guard: a poll loop that stopped coming round, or a job past its limi
   assert.match(stalled(pulse(STALL.pollMs + 1), now)!, /job poll has not come round in 10 min/);
   // a page check that waited for the service and ran a deep check (2.5 h) is not a stall
   assert.equal(stalled(pulse(1_000, [["pages:check", 150 * 60_000], ["x:send", 60_000]]), now), null);
-  assert.match(stalled(pulse(1_000, [["x:send", 60_000], ["cycle", STALL.jobMs + 1]]), now)!, /job 1 cycle has run 240 min/);
+  assert.match(stalled(pulse(1_000, [["x:send", 60_000], ["cycle", STALL.jobMs + 1]]), now)!, /job 1 cycle has run 480 min/);
+  // the idea intake (up to 40 screens in series, each model call up to 10 min) is not a stall at 20 h
+  assert.equal(stalled(pulse(1_000, [["ideas:intake", 20 * 3600_000]]), now), null);
   // the daily page check (one check per shipped game, in series) has its own limit
   assert.equal(stalled(pulse(1_000, [["pages:daily", 6 * 3600_000]]), now), null);
-  assert.match(stalled(pulse(1_000, [["pages:daily", 12 * 3600_000 + 1]]), now)!, /pages:daily has run 720 min/);
+  assert.match(stalled(pulse(1_000, [["pages:daily", 24 * 3600_000 + 1]]), now)!, /pages:daily has run 1440 min/);
+  // a sequencer step checks its builds in series (each up to a service wait and a deep check): not a stall at 7.5 h
+  assert.equal(stalled(pulse(1_000, [["seq:step", 7.5 * 3600_000]]), now), null);
+  assert.match(stalled(pulse(1_000, [["seq:step", 24 * 3600_000 + 1]]), now)!, /seq:step has run 1440 min/);
+});
+
+test("stall guard exit: exits once no state record is in flight or was signed for a while, never past its limit", async () => {
+  let t = 0;
+  let exitedAt = -1;
+  const now = () => t;
+  const sleep = async (ms: number) => { t += ms; };
+  const exit = () => { exitedAt = t; };
+  const q = { ms: 30_000, maxMs: 600_000 };
+  const w = { at: 0, pending: 0 }; // a record finished at 0: wait the full quiet time
+  await quietSpell(w, exit, q, now, sleep);
+  assert.equal(exitedAt, 30_000);
+  // one in flight for 40 s (a slow DB), then quiet: waits for it, then the quiet time
+  t = 0; w.at = -100_000; w.pending = 1;
+  await quietSpell(w, exit, q, now, async (ms) => { t += ms; if (t === 40_000) { w.pending = 0; w.at = t; } });
+  assert.equal(exitedAt, 70_000);
+  // never finishes (a dead DB): it exits at its limit
+  t = 0; w.pending = 1;
+  await quietSpell(w, exit, { ms: 30_000, maxMs: 60_000 }, now, sleep);
+  assert.equal(exitedAt, 60_000);
+  // quiet already: exits at once
+  t = 100_000; w.pending = 0; w.at = 0;
+  await quietSpell(w, exit, q, now, sleep);
+  assert.equal(exitedAt, 100_000);
 });
 
 test("insertOnce: a signed row is inserted (and signed) once per key, even when callers race", async () => {
@@ -74,14 +103,10 @@ test("insertOnce: a signed row is inserted (and signed) once per key, even when 
   assert.equal(await put("c"), "c");
 });
 
-test("askedClaim: a reply may say claim back only to a claim question about vaults, staking or games", () => {
-  const r = { event: "reply", category: "rules_question", topic: "staking" };
-  assert.equal(askedClaim({ ...r, question: "They ask where staking rewards can be claimed." }), true);
-  assert.equal(askedClaim({ ...r, question: "They ask when the vaults pay out." }), false);
-  assert.equal(askedClaim(r), false);
-  assert.equal(askedClaim({ ...r, topic: "other", question: "They tell holders to claim the airdrop." }), false, "not another topic");
-  assert.equal(askedClaim({ ...r, category: "airdrop_ask", topic: "games", question: "They ask how to claim the airdrop." }), false, "never an airdrop ask");
-  assert.equal(askedClaim({ event: "status", topic: "games", question: "claim" }), false);
+test("claim: a reply says it only where a claimable prize or reward is behind it; a claim question gets collect", () => {
+  assert.ok(postFilter("There is nothing to claim from staking.", new Set(), false, { claim: claimFacts({ event: "reply", category: "rules_question", topic: "staking", question: "They ask where staking rewards can be claimed." }) }).some((i) => /claim/.test(i)));
+  assert.deepEqual(postFilter("A winner collects the prize on the play page.", new Set(), false, { claim: false }), []);
+  assert.equal(claimFacts({ event: "jackpot_drawn" }), true);
 });
 
 test("notUnderstood: only a rules or state question the reader returned nothing for", () => {
@@ -443,4 +468,17 @@ test("the live deployment names the fomo team wallet and looks back to the Safe'
   const dep = JSON.parse(readFileSync(new URL("../deployments/1.json", import.meta.url), "utf8"));
   assert.equal(labelOf("0x1d9fa8780090c08065f9d52fb40755100966f7b7", dep), "fomo team wallet");
   assert.ok(dep.treasuryFromBlock <= 26171336 && dep.treasuryFromBlock >= dep.startBlock);
+});
+
+test("a held reply that says claim is not sent; claimable, claimed and reclaim are other words", () => {
+  for (const s of ["There is nothing to claim from staking.", "Claim it on the play page", "claim."]) assert.ok(HELD_CLAIM.test(s), s);
+  for (const s of ["The prize is claimable for 7 days.", "It was claimed.", "No reclaim here.", "Collect it on the play page."]) assert.ok(!HELD_CLAIM.test(s), s);
+  // as the send path reads it: handles out, quote marks around a word are spaces
+  const held = (s: string) => HELD_CLAIM.test(unquote(s.replace(/@\w+/g, " ")));
+  assert.ok(held("Press 'claim' on the play page."));
+  assert.ok(held("Press \u2018claim\u2019 on the play page."));
+  assert.ok(!held("@claim_updates Collect it on the play page."));
+  assert.ok(!held("Don't wait: holders' shares are collected on the play page."));
+  // the writer's filter catches a quoted claim too
+  assert.ok(postFilter("Press 'claim' on the play page.", new Set(), false, { claim: false }).some((i) => /claim/.test(i)));
 });
