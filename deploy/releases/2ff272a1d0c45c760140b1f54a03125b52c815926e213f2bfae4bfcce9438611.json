@@ -1,0 +1,51 @@
+{
+  "registry": {
+    "address": "0xc6CD8e3C58f557fBd68e977742Eeb62e3F24a34D",
+    "startBlock": 26165041
+  },
+  "commit": "3ad7e35b6b7de672c42dd230b485d0db54e6fdaa",
+  "notes": [
+    "Genome Vaults: 50 NFT vaults, each locks 200,000 DNA, funded by the Safe",
+    "The engine posts every vault mint, fund and burn with the chain's own numbers",
+    "A stake panel on the play page and a standard wallet picker with WalletConnect",
+    "Bait, shilling and collab asks get no reply; a kind word gets a short thank-you",
+    "Replies never promise returns or talk price, in any wording",
+    "No idea is queued as a site page while the site takes no sequencer changes"
+  ],
+  "image": "ghcr.io/contractdna/dna-engine",
+  "imageDigest": "sha256:836f99a8b556f3a3af6c8e5067f193430978f569b4a94ba95eaf9064967228e7",
+  "pagecheckImage": "ghcr.io/contractdna/dna-pagecheck",
+  "pagecheckDigest": "sha256:7ba1d5636c44af72ab638e3c0ca07453a43c4cb02cee1d30ad28b82e40a8a546",
+  "composeHash": "2ff272a1d0c45c760140b1f54a03125b52c815926e213f2bfae4bfcce9438611",
+  "allowedEnvs": [
+    "DATABASE_URL",
+    "ALCHEMY_KEY",
+    "DRPC_KEY",
+    "XAI_API_KEY",
+    "OPENROUTER_API_KEY_ENGINE",
+    "KEEPER_PRIVATE_KEY",
+    "TELEGRAM_BOT_TOKEN",
+    "TELEGRAM_GROUP_ID",
+    "TELEGRAM_ALLOWED_USER_IDS",
+    "X_CLIENT_SECRET",
+    "X_REFRESH_TOKEN",
+    "ENGINE_MODE",
+    "POLICY_THRESHOLDS",
+    "STUDIO_TOKEN",
+    "GITHUB_TOKEN",
+    "DNA_PERSONA"
+  ],
+  "dstackApp": "0xf0839119995E13Aa6C5148eDD0ce7C7a929952BC",
+  "attestationUrl": "https://f0839119995e13aa6c5148edd0ce7c7a929952bc-8080.dstack-eth-prod9.phala.network/attestation",
+  "measurements": {
+    "mrtd": "f06dfda6dce1cf904d4e2bab1dc370634cf95cefa2ceb2de2eee127c9382698090d7a4a13e14c536ec6c9c3c8fa87077",
+    "rtmr0": "ec216f1d1d591468ff4741b9b192f016b26d3f90303bfa9dbb97557273853183981f21a4bcb3ae908247538d371ad072",
+    "rtmr1": "b598fde9491427341bc4683b75d10d3e36770af3a36a6954d8b6b7b22aa66358f13e1f172e51b7d6e6710d99a8d8532f",
+    "rtmr2": "9284cde236231d5ddace01104a440fd504df5182a2ad1ac3d2138b80c6a7864bd2c30f69041d8264217f3d24541580cf",
+    "osImageHash": "6427f4f5ded88b72d326bd973e581c1689c5080c6444a0cf90fec7d9e4c8b92a"
+  },
+  "logSigner": "0x7Ce826aA41E06Ca0D1f6F5a0B87b562f4cf50c59",
+  "funder": "0xe3677495BDc8da19D465660A3434A6041EDCA86F",
+  "kmsAuth": "0xd343a3f5593b93D8056aB5D60c433622d7D65a80",
+  "kmsKeyProvider": "3059301306072a8648ce3d020106082a8648ce3d03010703420004daad2c8833eae6d5912fdc9b1d088caa771120fab387a019acced35f40951561a97621078a66008aaa15c51420086960be14b24dc326b5c012038fdd68812710"
+}
