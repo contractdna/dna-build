@@ -11,7 +11,7 @@ import type { XUser } from "./ideas.ts";
 import { COMPETITOR_NAMES, impersonator, injection, isAlly, linksOut, phishing, replyPath, spamShape, summoned, tierOf } from "./tiers.ts";
 import { classifyMention, questionOf, SCRIPTS } from "./voice.ts";
 import { ideaShip } from "./sequencer.ts";
-import { braked, enqueueX, LOOSE_ADDRESS, MENTION_FIELDS, type Mention, overCeiling, statusUrl, xApi } from "./x.ts";
+import { braked, enqueueX, LOOSE_ADDRESS, MENTION_FIELDS, type Mention, NOT_UNDERSTOOD, notUnderstood, overCeiling, statusUrl, xApi } from "./x.ts";
 
 const HANDLE = /^\w{1,15}$/;
 /** A stored mention whose signature holds (the author's profile is part of it), else null. */
@@ -206,7 +206,7 @@ async function threadTurn(c: { conv: string; mention: string }, posts: Found[], 
     // takes an idea in or gives the fixed line) get nothing: recorded like a hard line
     const linked = linksOut(p.text, urls);
     const none = relationship ? null : r.kind === "bait" ? (linked ? "bait with a link" : "bait") : r.kind === "thanks" && linked ? "bait with a link" : null;
-    const skip = none ?? (["idea", "official_contract"].includes(r.kind) ? "an idea or a contract ask in a thread" : null);
+    const skip = none ?? (["idea", "official_contract"].includes(r.kind) ? "an idea or a contract ask in a thread" : notUnderstood(r.kind, r.question) ? NOT_UNDERSTOOD : null);
     if (skip) {
       await sql`insert into x_outbox (type, event_key, event, status, error) values ('reply', ${`thread:${p.id}`}, '{}', 'skipped', ${skip}) on conflict do nothing`;
       continue;

@@ -420,9 +420,10 @@ export function questionOf(q: unknown): string | undefined {
   if (!t || t.length > 140 || /\p{N}/u.test(t) || linkIssues(t).length || nonAscii(t)) return undefined;
   const w = words(t);
   if (IMPERATIVES.has(w[0] ?? "") || w.some((x) => /^(instructions?|prompts?|jailbreak|system)$/.test(x))) return undefined;
-  // a banned term the writer could echo (a price word stays: the FUD desk answers those, and the filter still holds it)
+  // a banned term the writer could echo (a price word stays: the FUD desk answers those; "claim" stays: a missing claim
+  // button is a real question, and the reader already sent scam to no reply. The draft's filter still holds both)
   const lower = t.toLowerCase();
-  if (BANNED_RE.some(([p, re]) => !PRICE_SITUATION.has(p) && re.test(lower))) return undefined;
+  if (BANNED_RE.some(([p, re]) => !PRICE_SITUATION.has(p) && p !== "claim" && re.test(lower))) return undefined;
   return t;
 }
 
@@ -886,7 +887,8 @@ const PLAIN_RULES = [
 /** How every reply sounds, under PLAIN_RULES. The examples' facts are illustrations. */
 export const REPLY_REGISTER = [
   "Replies:",
-  "- Answer what the person said or asked, directly, in one or two short sentences. Use the facts (`mechanics`, `state`, `pending`, `mind`, the idea's parts) where they answer it.",
+  "- Answer what the person said or asked, directly, in one or two short sentences. Use the facts (`mechanics`, `state`, `pending`, `mind`, the idea's parts) only where they answer it.",
+  "- Only what was asked: never tack a countdown, the fee or a status onto an answer about something else. Vary the wording; never open two replies the same way.",
   "- A complaint gets a plain acknowledgement, a hello gets a plain hello back.",
   "Examples of the register (their numbers and facts are made up: never reuse them):",
   "- A complaint about replies to bots: \"Fair point. Replies to spam accounts are being switched off.\"",
@@ -894,7 +896,7 @@ export const REPLY_REGISTER = [
   "- Asked what is happening: \"A fee test is waiting out its public hour. The Safe's signers can still cancel it for another 40 minutes.\"",
   "- Price worries: \"I don't talk about price. Every burn and fee change is on chain with its transaction, so you can check the work.\"",
   "- An airdrop ask: \"There is no airdrop, and I never ask anyone for a wallet. The DNA the buyback buys is burned.\"",
-  "- A hello: \"Hey, thanks for stopping by. Today's fee test is still running.\"",
+  "- A hello: \"Hey, thanks for stopping by.\"",
   "- An idea: \"Thanks for the idea: a weekly holder raffle. It is being judged now, and the verdict goes on the site within minutes.\"",
 ].join("\n");
 /** How a take on crypto Twitter sounds, under PLAIN_RULES. */
@@ -1152,8 +1154,8 @@ export async function draftInCharacter(facts: FactSheet, tone: string[], filter:
 
 // ---------------------------------------------------------------- mentions (quarantined reader)
 
-/** The reader's verdict: the kind, the topic (a closed enum: src/mechanics.ts TOPICS) and the question restated
- *  neutrally ("" when there is none). code checks the question again (questionOf) before any writer sees it. scam
+/** The reader's verdict: the kind, the topic (a closed enum: src/mechanics.ts TOPICS) and what was asked or said,
+ *  restated neutrally ("" for thanks and bait). code checks the question again (questionOf) before any writer sees it. scam
  *  (phishing, drainers, fake claims, posing as DNA or an ally) and abuse (slurs, harassment) get no reply. */
 export const MentionOut = z.object({ kind: z.enum(["rules_question", "state_question", "idea", "official_contract", "price_fud", "airdrop_ask", "thanks", "bait", "scam", "abuse"]), topic: z.enum(TOPICS), question: z.string().max(140),
   lang: z.enum(["en", "zh", "ja", "ko", "ru", "es", "pt", "fr", "de", "tr", "vi", "id", "other"]).default("en") });

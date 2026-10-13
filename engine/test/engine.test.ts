@@ -13,7 +13,7 @@ import { effective } from "../src/mode.ts";
 import { allowed, parseCallback, type Update } from "../src/telegram.ts";
 import { agentCheck, bumpFees, type FeeHistory, gasGuard, nextFees, quoteFees } from "../src/tx.ts";
 import { describe } from "../src/watch.ts";
-import { insertOnce, postedNote, postIssues, weightedLength } from "../src/x.ts";
+import { askedClaim, insertOnce, notUnderstood, postedNote, postIssues, weightedLength } from "../src/x.ts";
 import { labelOf, siteChangeDue, treasuryFacts } from "../src/status.ts";
 import { titleOf } from "../src/announce.ts";
 import { factSheet, shapesFor, voiceIssues as vi } from "../src/voice.ts";
@@ -72,6 +72,23 @@ test("insertOnce: a signed row is inserted (and signed) once per key, even when 
   // a failed insert frees the key for the next caller
   await assert.rejects(insertOnce("t:c", async () => false, async () => { throw new Error("db down"); }));
   assert.equal(await put("c"), "c");
+});
+
+test("askedClaim: a reply may say claim back only to a claim question about vaults, staking or games", () => {
+  const r = { event: "reply", category: "rules_question", topic: "staking" };
+  assert.equal(askedClaim({ ...r, question: "They ask where staking rewards can be claimed." }), true);
+  assert.equal(askedClaim({ ...r, question: "They ask when the vaults pay out." }), false);
+  assert.equal(askedClaim(r), false);
+  assert.equal(askedClaim({ ...r, topic: "other", question: "They tell holders to claim the airdrop." }), false, "not another topic");
+  assert.equal(askedClaim({ ...r, category: "airdrop_ask", topic: "games", question: "They ask how to claim the airdrop." }), false, "never an airdrop ask");
+  assert.equal(askedClaim({ event: "status", topic: "games", question: "claim" }), false);
+});
+
+test("notUnderstood: only a rules or state question the reader returned nothing for", () => {
+  assert.equal(notUnderstood("state_question", ""), true);
+  assert.equal(notUnderstood("rules_question", "  "), true);
+  assert.equal(notUnderstood("state_question", "They ask what triggers a buyback."), false, "a restatement code refuses still gets its reply");
+  for (const k of ["price_fud", "idea", "airdrop_ask", "thanks", "official_contract"]) assert.equal(notUnderstood(k, ""), false, k);
 });
 
 test("gas guard: ceiling, value share, emergency, max-delay override", () => {

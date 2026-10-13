@@ -1345,7 +1345,7 @@ test("X replies: an important account's question in Chinese and a 3-day-old comp
   const drafts = [ZH, "目标十美元。"]; // the second one's English reading names a number the facts never gave
   fakes.llm.xai = (b) => {
     const u = userOf(b);
-    if (!sysOf(b).startsWith("agent:") && /claus排第一|take the compliment/.test(u)) return xaiOut(JSON.stringify({ kind: /claus/.test(u) ? "state_question" : "bait", topic: "other", question: "", lang: /claus/.test(u) ? "zh" : "en" }))();
+    if (!sysOf(b).startsWith("agent:") && /claus排第一|take the compliment|这个项目现在怎么样/.test(u)) return xaiOut(JSON.stringify({ kind: /claus|现在怎么样/.test(u) ? "state_question" : "bait", topic: "other", question: /claus/.test(u) ? "They rank DNA behind another hook project." : "", lang: /claus|现在怎么样/.test(u) ? "zh" : "en" }))();
     if (sysOf(b).startsWith("agent: x-writer") && JSON.parse(u).facts?.lang === "zh") return xaiOut(JSON.stringify({ candidates: [drafts.shift()] }))();
     return synthetic("xai", b);
   };
@@ -1357,8 +1357,11 @@ test("X replies: an important account's question in Chinese and a 3-day-old comp
     await putMention("9701", "9701", "@contractdna 在ETH主网的hook赛道上，claus排第一，dna排第二，upeg应该重新估值", { user: big });
     await putMention("9702", COMPETITORS[0], "@contractdna I'll take the compliment. Unipeg's NFT mechanics helped inspire mine, so credit to the OG for that.", { user: rival });
     await putMention("9703", "9703", "@contractdna 价格会涨吗", { user: { ...big, username: "bigzh" } });
+    await putMention("9704", "9704", "@contractdna 这个项目现在怎么样", { user: { ...big, username: "bigzh2" } });
     const r = await xM.repliesHandler.run(job()) as Record<string, string>;
     assert.deepEqual([r["9701"], r["9702"], r["9703"]], ["state_question", "greeting", "state_question"], "a competitor's bait is a greeting; no author gate");
+    // a question the reader could not restate gets no reply: one would answer nothing in particular
+    assert.equal(r["9704"], "not understood: no restatement");
     const ev = async (id: string) => (await sql<{ e: Record<string, unknown> }[]>`select event as e from x_outbox where event_key = ${`reply:${id}`}`)[0].e;
     assert.deepEqual([(await ev("9701")).lang, (await ev("9701")).tier, (await ev("9702")).relationship, (await ev("9702")).lang], ["zh", "important", "competitor", undefined]);
     // the Chinese reply: its letters pass, its English reading passed every check; the alert's Plan is the reply

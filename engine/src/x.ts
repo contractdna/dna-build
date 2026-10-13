@@ -575,7 +575,9 @@ export async function resolve(ev: Record<string, unknown>): Promise<Record<strin
       // the vaults' and staking's lines only once their contract is deployed (the deployment names it): never a live claim before
       const mechanics = topic ? mechanicsFor(topic, await hasLaunchGuard(HOOK_READ.launchGuard), !!d.genomeVaults, !!d.convictionVault) : [];
       // lang: the reader's (SCRIPTS); lead: code's "@handle" before a reply in our own thread (a thread presence turn)
-      return { event: "reply", category: ev.category, topic, question: ev.question, ...(ev.category === "thanks" ? {} : { state: await stateFacts() }), relationship: ev.relationship, ...(mechanics.length ? { mechanics } : {}), ...(typeof ev.rival === "string" ? { rival: ev.rival } : {}),
+      // the live state only where it answers (a question about the rules or what is happening): a hello or a price ask
+      // that gets the fee and a countdown tacked on reads the same every time
+      return { event: "reply", category: ev.category, topic, question: ev.question, ...(STATE_REPLIES.has(String(ev.category)) ? { state: await stateFacts() } : {}), relationship: ev.relationship, ...(mechanics.length ? { mechanics } : {}), ...(typeof ev.rival === "string" ? { rival: ev.rival } : {}),
         ...(typeof ev.lang === "string" && ev.lang in SCRIPTS ? { lang: ev.lang } : {}), ...(typeof ev.lead === "string" ? { lead: ev.lead } : {}) };
     }
     case "game": {
@@ -627,8 +629,17 @@ type Outbox = { id: string; type: Kind; event_key: string; event: Record<string,
 /** A mention asking which contract is real: with a 0x address in it, it still gets the official line. */
 const CONTRACT_ASK = /\b(contract|ca|real|official|legit|scam|fake|genuine|right one|the one)\b/i;
 const MILESTONE_MOOD = new Set(["online", "contracts_connected", "keys_handed", "first_idea_round", "first_burn", "milestone", "seq_online"]);
-/** Posts that carry what the engine waits on (a status, the opening post, a reply). */
+/** Posts that carry what the engine waits on (a status, the opening post, a reply that asks what is happening). */
 const PENDING_EVENTS = new Set(["status", "online", "reply"]);
+/** A reply to someone who asked about claiming what vaults, staking or games pay may say "claim" back ("there is nothing
+ *  to claim"): the word is theirs, and a reply carries no link. Never an airdrop ask. */
+export const askedClaim = (facts: Record<string, unknown>) => facts.event === "reply" && facts.category !== "airdrop_ask"
+  && ["vaults", "staking", "games"].includes(String(facts.topic)) && /\bclaim/i.test(String(facts.question ?? ""));
+/** A rules or state question the reader returned no restatement for: a reply to it would answer nothing in particular. */
+export const notUnderstood = (kind: string, question: unknown) => ["rules_question", "state_question"].includes(kind) && !String(question ?? "").trim();
+export const NOT_UNDERSTOOD = "not understood: no restatement";
+/** Reply categories that get the live state (`state`); only a state question also gets what the engine waits on. */
+const STATE_REPLIES = new Set(["rules_question", "state_question"]);
 /** Events whose first ever is marked `first` (a first experiment, test, result, build, ship, draw, round, reward). */
 const FIRST_EVENTS = new Set(["queued", "test_live", "outcome", "seq_started", "seq_shipped", "seq_released", "jackpot_drawn", "idea_round", "reward_paid", "ballot_result", "mystery_result", "module_approved"]);
 /** Writer failures (not an LLM-cap Defer) an item may have before it is dropped: no Grok call every minute for 6 h. */
@@ -751,7 +762,7 @@ async function sendOne(item: Outbox, m: string): Promise<unknown> {
   if (item.type === "reply" && raw.category === "idea" && item.reply_to && Date.now() - new Date(item.created_at).getTime() < IDEA_READ_WAIT_MS
     && !(await sql`select 1 from intake where mention_id = ${item.reply_to}`).length) return WAIT;
   const facts = factSheet({
-    ...raw, day: await dayOfLife(), ...(await storyNow(item.event_key, ev)), ...(MIND_EVENTS.has(ev) ? { mind: await mindNow() } : {}), ...(PENDING_EVENTS.has(ev) && raw.category !== "thanks" ? { pending: await pendingNow(Date.now(), ev) } : {}),
+    ...raw, day: await dayOfLife(), ...(await storyNow(item.event_key, ev)), ...(MIND_EVENTS.has(ev) ? { mind: await mindNow() } : {}), ...(PENDING_EVENTS.has(ev) && (ev !== "reply" || raw.category === "state_question") ? { pending: await pendingNow(Date.now(), ev) } : {}),
     ...(FIRST_EVENTS.has(ev) && !(await sql`select 1 from log where kind = 'announce' and doc->>'type' = ${ev} and ref <> ${item.event_key} limit 1`).length ? { first: true } : {}),
     // an idea the intake took in: the reply says it is logged (live idea mode: where its verdict stands)
     ...(item.type === "reply" && raw.category === "idea" && item.reply_to ? await intakeFact(item.reply_to) : {}),
@@ -802,7 +813,7 @@ async function sendOne(item: Outbox, m: string): Promise<unknown> {
   // a draft that only restates code's stage text is refused (parrotIssue); an echo of the private bundle too (bundleIssues)
   // a reply in the reader's language (facts.lang) may use that language's letters (SCRIPTS)
   const script = typeof facts.lang === "string" ? SCRIPTS[facts.lang] : undefined;
-  const filter = (text: string) => [...postFilter(text, allowed, extra, { intent: intentOf(facts), priceJoke: facts.category === "price_fud", claim: claimFacts(facts), script, one: facts.category === "idea" }), ...(before.some((b) => overlap(b, text) >= GATE.overlap) ? ["no new fact"] : []), ...claimIssues(facts, text), ...allyIssues(facts, text), ...promiseIssue(text), ...voiceIssues(facts, text, { linked: !!item.link, mention }), ...[parrotIssue(facts, text)].filter((x): x is string => !!x), ...bundleIssues(text)];
+  const filter = (text: string) => [...postFilter(text, allowed, extra, { intent: intentOf(facts), priceJoke: facts.category === "price_fud", claim: claimFacts(facts) || askedClaim(facts), script, one: facts.category === "idea" }), ...(before.some((b) => overlap(b, text) >= GATE.overlap) ? ["no new fact"] : []), ...claimIssues(facts, text), ...allyIssues(facts, text), ...promiseIssue(text), ...voiceIssues(facts, text, { linked: !!item.link, mention }), ...[parrotIssue(facts, text)].filter((x): x is string => !!x), ...bundleIssues(text)];
   let w: Drafted;
   try {
     w = fixed ? { model: "code", candidates: [{ text: fixed, issues: [] }], redraft: false }
@@ -1151,7 +1162,11 @@ async function decide(m: MentionRow, tier: Tier, idea: boolean): Promise<Decisio
     if ((r.kind === "bait" || r.kind === "thanks") && (isAlly(m.author_id) || tier === "competitor")) return { kind: "greeting", topic: r.topic, lang };
     if (r.kind === "bait" && !idea) return { skip: "bait" };
     if (r.kind === "thanks" && !idea) return linksOut(m.text, m.raw.entities ? (m.raw.entities.urls ?? []).map((u) => u.expanded_url) : undefined) ? { skip: "bait with a link" } : { kind: "thanks", topic: "other", lang };
-    return oldTokenTalk(r.question) ? { kind: "official_contract", topic: r.topic } : { kind: r.kind, topic: r.topic, question: questionOf(r.question), lang };
+    if (oldTokenTalk(r.question)) return { kind: "official_contract", topic: r.topic };
+    // a rules or state question the reader could not restate at all is not answered: the reply would answer nothing in
+    // particular. An idea's author always hears back; a restatement code refused (a banned word) still gets its reply
+    if (notUnderstood(r.kind, r.question) && !idea) return { skip: NOT_UNDERSTOOD };
+    return { kind: r.kind, topic: r.topic, question: questionOf(r.question), lang };
   } catch (e) {
     if (e instanceof Defer) return { wait: `the reader: ${e.message.slice(0, 120)}` }; // the LLM cap or provider trouble: next run
     const n = (READER_FAILS.get(m.id) ?? 0) + 1;
