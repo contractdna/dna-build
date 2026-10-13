@@ -1,0 +1,30 @@
+{
+  "spec": "Set fee or split parameters so a defined portion of trading fees is used to buy the token. The combined fee stays within the current cap, supply remains fixed, and no new minting or hook change is required.",
+  "specSha256": "8bf062a02a8fb79755b82510432b3b1c9046d74a9f8dae4f282fdb37d22e7ab8",
+  "module": "split",
+  "interface": [],
+  "bounds": {
+    "min": [
+      "4000",
+      "2000",
+      "0",
+      "0"
+    ],
+    "max": [
+      "5000",
+      "3000",
+      "1000",
+      "0"
+    ],
+    "start": [
+      "4000",
+      "3000",
+      "1000",
+      "0"
+    ]
+  },
+  "files": [
+    "contracts/src/modules/split-module-with-a-1000011/BuybackSplit.sol",
+    "contracts/test/modules/split-module-with-a-1000011/BuybackSplit.t.sol"
+  ]
+}
