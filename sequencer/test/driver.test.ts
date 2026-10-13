@@ -39,6 +39,7 @@ test("the CLI's env: OpenRouter as the API, the Sequencer key as the auth token,
   assert.equal(e.ANTHROPIC_AUTH_TOKEN, "k");
   assert.equal(e.ANTHROPIC_API_KEY, "");
   assert.equal(e.GITHUB_TOKEN, undefined);
+  assert.equal(e.CLAUDE_CODE_MAX_OUTPUT_TOKENS, "64000", "a page written in one reply fits (the CLI asks Haiku for 32,000 by default)");
   assert.notEqual(e.HOME, "/srv/runner");
   assert.throws(() => sdkEnv({ PATH: "/usr/bin" }), /OPENROUTER_API_KEY_SEQUENCER/);
 });

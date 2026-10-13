@@ -2,9 +2,10 @@
 //  - main (SITE_ROLE unset): the site. Never serves game code: /g/* redirects to the play origin.
 //  - play (SITE_ROLE=play, play.<site>): only the Sequencer's game pages (/g/*), their assets and the kill check.
 // Game pages are code an AI wrote, so they run on their own origin: they can't read the main site's storage or script
-// its pages, and the main site sets only host-only (__Host-) cookies, never sent to play.<site>. The play origin's CSP
-// carries a per-request nonce (proxy.ts): no inline script without it, no eval, no remote script, no network but its
-// own origin, no frames, no workers.
+// its pages, and the main site sets only host-only (__Host-) cookies, never sent to play.<site>. Both origins' CSPs
+// carry a per-request nonce (proxy.ts): no inline script without it, no eval, no remote script. The play origin also
+// gets no network but its own origin, no frames, no workers. The main site takes Sequencer pages too (server-rendered
+// only): a <script> one renders has no nonce, so it never runs.
 export type Role = "main" | "play";
 export const roleOf = (env: Record<string, string | undefined>): Role => (env.SITE_ROLE === "play" ? "play" : "main");
 export const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL ?? "https://genomedna.xyz";
@@ -41,12 +42,13 @@ export function playCsp(nonce: string, dev = false) {
  *  policy opens to its relay and verify origins only then. */
 export const WALLET_CONNECT = !!process.env.NEXT_PUBLIC_WC_PROJECT_ID;
 
-/** The main site's policy: its own scripts (Next's inline bootstrap needs 'unsafe-inline' on statically rendered
- *  pages), its own fonts and images; reads over https (the proof page checks the attestation and RPC providers). */
-export function mainCsp(dev = false, walletConnect = WALLET_CONNECT) {
+/** The main site's policy for one response: its own scripts and inline ones with this request's nonce (Next puts it
+ *  on its own, the root layout on its one; every page renders per request for it), its own fonts and images; reads
+ *  over https (the proof page checks the attestation and RPC providers). */
+export function mainCsp(nonce: string, dev = false, walletConnect = WALLET_CONNECT) {
   return join({
     "default-src": "'self'",
-    "script-src": `'self' 'unsafe-inline'${dev ? " 'unsafe-eval'" : ""}`,
+    "script-src": `'self' 'nonce-${nonce}'${dev ? " 'unsafe-eval'" : ""}`,
     "style-src": "'self' 'unsafe-inline'",
     "img-src": "'self' data: blob:",
     "font-src": "'self'",
@@ -60,18 +62,19 @@ export function mainCsp(dev = false, walletConnect = WALLET_CONNECT) {
     "form-action": "'self'",
     "base-uri": "'self'",
     "object-src": "'none'",
+    "report-uri": "/api/csp",
   });
 }
 
 export const HSTS = "max-age=63072000; includeSubDomains";
 
-/** Headers on every response of a role (the play CSP itself is per request, from proxy.ts). */
+/** Headers on every response of a role (both CSPs are per request, from proxy.ts). */
 export function staticHeaders(role: Role, dev = false): { key: string; value: string }[] {
   const common = [
     { key: "Strict-Transport-Security", value: HSTS },
     { key: "X-Content-Type-Options", value: "nosniff" },
   ];
-  if (role === "main") return [...common, { key: "Content-Security-Policy", value: mainCsp(dev) }, { key: "Referrer-Policy", value: "strict-origin-when-cross-origin" }];
+  if (role === "main") return [...common, { key: "Referrer-Policy", value: "strict-origin-when-cross-origin" }];
   return [
     ...common,
     { key: "Cross-Origin-Opener-Policy", value: "same-origin" },
@@ -115,11 +118,11 @@ export const killWhy = (w: unknown) => (typeof w === "string" && /^[a-z0-9 ,.:;(
 export const maintenanceOn = (env: Record<string, string | undefined>) => env.SITE_MAINTENANCE === "1";
 export const staysUp = (pathname: string) => /^\/(token\.png|api\/health|api\/log\/.+)$/.test(pathname);
 
-/** The maintenance response's headers: the role's security headers and CSP (the play origin's CSP with a fresh nonce,
- *  though the page runs no script), never cached, retry in 10 minutes. */
+/** The maintenance response's headers: the role's security headers and CSP (with a fresh nonce, though the page runs
+ *  no script), never cached, retry in 10 minutes. */
 export function maintenanceHeaders(role: Role, nonce: string, dev = false) {
   const h = new Headers(staticHeaders(role, dev).map(({ key, value }): [string, string] => [key, value]));
-  if (role === "play") h.set("Content-Security-Policy", playCsp(nonce, dev));
+  h.set("Content-Security-Policy", role === "play" ? playCsp(nonce, dev) : mainCsp(nonce, dev));
   h.set("Content-Type", "text/html; charset=utf-8");
   h.set("Cache-Control", "no-store");
   h.set("Retry-After", "600");

@@ -33,6 +33,9 @@ WORKDIR /app
 COPY web/package.json web/package-lock.json ./web/
 RUN cd web && NODE_DISABLE_COMPILE_CACHE=1 npm ci --ignore-scripts --no-audit --no-fund --no-update-notifier --cache /tmp/npm \
   && rm -rf /tmp/npm /tmp/node-compile-cache /root/.npm
+# Next's swc and sharp's native binaries load from here, on the image's read-only filesystem: a check's copy of the web
+# app lives on /tmp, a noexec tmpfs, and leaves them out (pagecheck/src/site.ts), so Node walks up from it to these
+RUN mkdir /node_modules && ln -s /app/web/node_modules/@next /node_modules/@next && ln -s /app/web/node_modules/@img /node_modules/@img
 COPY web ./web
 COPY pagecheck/package.json pagecheck/package-lock.json ./pagecheck/
 RUN cd pagecheck && NODE_DISABLE_COMPILE_CACHE=1 npm ci --omit=dev --ignore-scripts --no-audit --no-fund --no-update-notifier --cache /tmp/npm \

@@ -33,13 +33,15 @@ const JS_CLASS = "document.documentElement.classList.add('js')";
 
 export default async function RootLayout({ children }: LayoutProps<"/">) {
   if (roleOf(process.env) === "play") return <PlayRoot>{children}</PlayRoot>;
-  // LIVE: server-render the chain-backed core (per request); mock: nothing dynamic, pages stay static
-  if (LIVE) await connection(); // outside the catch below: Next must see the dynamic bail-out at build time
+  // every page renders per request: its scripts carry this request's nonce (proxy.ts, security.ts mainCsp); LIVE also
+  // server-renders the chain-backed core
+  await connection(); // outside the catch below: Next must see the dynamic bail-out at build time
+  const nonce = (await headers()).get("x-nonce") ?? "";
   const [initial, ca] = LIVE ? await Promise.all([getCore().catch(() => undefined), getToken().catch(() => undefined)]) : [];
   return (
     <html lang="en" className={karrik.variable} suppressHydrationWarning>
       <head>
-        <script dangerouslySetInnerHTML={{ __html: JS_CLASS }} />
+        <script nonce={nonce} dangerouslySetInnerHTML={{ __html: JS_CLASS }} />
       </head>
       <body><LiveProvider initial={initial} ca={ca}>{children}</LiveProvider></body>
     </html>

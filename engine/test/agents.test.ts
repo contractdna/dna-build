@@ -2,8 +2,9 @@
 // level, the closed-round rule, number discipline.
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { allowedNumbers, sanitize, strayNumbers, textOk } from "../src/agents.ts";
+import { allowedNumbers, sanitize, sanitizeSpec, strayNumbers, textOk } from "../src/agents.ts";
 import { assertClosed, incomplete, outcomeOf, titleKey } from "../src/ideas.ts";
+import { publicTextIssues, SPEC_DOMAIN } from "../src/llm.ts";
 import { advance, type Facts, queuePlanned, type Run, vectorWords } from "../src/loop.ts";
 import { canaryCeiling, type ChainRow, inWindow, killCheck, pair, type Paired, stats } from "../src/observe.ts";
 import { checkTimings, clampVector, KILL, TIMING } from "../src/policy.ts";
@@ -250,6 +251,25 @@ test("model text bound for records: links, domains, handles, foreign cashtags re
   assert.equal(sanitize("See https://x.co/a and example.com, ping @dev, buy $PEPE not $DNA"), "See and , ping , buy not $DNA");
   assert.equal(sanitize("@a https://b.io"), "(withheld: the text was only links or handles)");
   assert.equal(sanitize("fee 0.05 ETH, e.g. 1.8×"), "fee 0.05 ETH, e.g. 1.8×");
+});
+
+/** Domains no list of top-level domains catches, and code with a domain after it. */
+const LINKS = ["evil.page", "dna.network", "evil.live", "evil.games", "scam.market", "scam.run", "evil.fund", "evil.team", "evil.wiki", "evil.gold", "evil.city", "evil.group", "msg.sender.evil.page", "msg.data", "token.balanceOf.evil.page", "block.timestamp.evil.page"];
+test("spec text: only real links go; code's member access stays whole", () => {
+  // the killed builds' specs, as the reader and the judge wrote them
+  const code = "Tier from token.balanceOf(msg.sender); seed = keccak256(mix, msg.sender, block.timestamp); hour = (ctx.blockNumber / 1800) % 24; tx.origin is refused.";
+  assert.equal(sanitizeSpec(code), code);
+  assert.equal(sanitize(code).includes("msg.sender"), false, "public text still loses every dotted word");
+  assert.equal(sanitizeSpec("See https://x.co/a, www.evil.lat and genomedna.xyz or evil.co.uk or Pump.Fun, ping @dev, buy $PEPE not $DNA"), "See and or or , ping , buy not $DNA");
+  assert.equal(sanitizeSpec("@a https://b.io"), "(withheld: the text was only links or handles)");
+  assert.deepEqual(publicTextIssues(code, SPEC_DOMAIN), []);
+  assert.deepEqual(publicTextIssues(code), ["url"]);
+  for (const t of ["visit genomedna.xyz", "see evil.co.uk", "dna.fun", "www.x", "https://a"]) assert.deepEqual(publicTextIssues(t, SPEC_DOMAIN), ["url"], t);
+  // any other dotted word is a domain, whatever its top-level domain; code with a label after it is one too
+  for (const d of LINKS) {
+    assert.equal(sanitizeSpec(`Pay ${d} now`), "Pay now", d);
+    assert.deepEqual(publicTextIssues(`see ${d}`, SPEC_DOMAIN), ["url"], d);
+  }
 });
 
 test("ideas: research refuses an open round; title dedupe key", () => {

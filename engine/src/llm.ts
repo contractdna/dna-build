@@ -589,10 +589,21 @@ export const utf8Cut = (s: string, max: number) => {
   return out;
 };
 
-/** Issues that keep text off public channels: URLs or domains, @handles, cashtags other than $DNA. */
-export function publicTextIssues(text: string): string[] {
+/** A domain in public text: any dotted word. */
+export const DOMAIN = /\b[a-z0-9-]+(\.[a-z0-9-]+)*\.[a-z]{2,}\b/gi;
+/** Code a spec names that DOMAIN would take for a domain: a Solidity global, a fee module's ctx field or a token read,
+ *  with no further label after it (msg.sender.evil.page is a domain). Every name here is no top-level domain (msg.data
+ *  is left out: .data is one). simplification: a list of names, not a parser; a dotted call it misses (pot.claim(...))
+ *  is cut from the spec, and an amendment naming one is refused, never a link let through. */
+const SPEC_CODE = String.raw`(?:msg\.(?:sender|value|sig)|block\.(?:timestamp|number|chainid|basefee|blobbasefee|coinbase|prevrandao|difficulty|gaslimit)|tx\.(?:origin|gasprice)|abi\.(?:encode|encodePacked|encodeCall|encodeWithSelector|encodeWithSignature|decode)|ctx\.(?:zeroForOne|exactInput|amount|sqrtPriceX96|tick|volEma|blockNumber)|[a-z0-9_]+\.(?:balanceOf|totalSupply|allowance|ownerOf|decimals))(?![a-z0-9_-]|\.[a-z0-9])`;
+/** A domain in a spec, which is about code: any dotted word (DOMAIN) that is not SPEC_CODE. */
+export const SPEC_DOMAIN = new RegExp(String.raw`\b(?!${SPEC_CODE})[a-z0-9-]+(\.[a-z0-9-]+)*\.[a-z]{2,}\b`, "gi");
+
+/** Issues that keep text off public channels: URLs or domains (`domain`: SPEC_DOMAIN for a spec), @handles, cashtags
+ *  other than $DNA. */
+export function publicTextIssues(text: string, domain = DOMAIN): string[] {
   const issues: string[] = [];
-  if (/https?:\/\/|www\.|\b[a-z0-9-]+(\.[a-z0-9-]+)*\.[a-z]{2,}\b/i.test(text)) issues.push("url");
+  if (/https?:\/\/|www\./i.test(text) || new RegExp(domain.source, "i").test(text)) issues.push("url");
   if (/(^|[^\w])@\w/.test(text)) issues.push("handle");
   if ((text.match(/\$[A-Za-z][A-Za-z0-9_]*/g) ?? []).some((t) => t.toUpperCase() !== "$DNA")) issues.push("cashtag");
   return issues;

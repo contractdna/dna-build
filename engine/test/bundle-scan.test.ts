@@ -25,8 +25,9 @@ test("bundle scan: no section of the private bundle appears in the public tree",
   assert.deepEqual(hits, []);
 });
 
-test("bundle scan: the public export checks itself against the private bundle, and refuses to run without it", () => {
-  const sh = readFileSync(new URL("../../scripts/export-public.sh", import.meta.url), "utf8");
+const EXPORT = new URL("../../scripts/export-public.sh", import.meta.url);
+test("bundle scan: the public export checks itself against the private bundle, and refuses to run without it", { skip: existsSync(EXPORT) ? false : "no export script in this checkout (it stays private)" }, () => {
+  const sh = readFileSync(EXPORT, "utf8");
   // inside the export the default path (<export>/persona/bundle.md) never exists: the script must name the repo's
   assert.match(sh, /\[ -f "\$ROOT\/persona\/bundle\.md" \] \|\| fail/);
   assert.match(sh, /BUNDLE_FILE="\$ROOT\/persona\/bundle\.md"[^\n]*publish-scan\.ts/);

@@ -2,7 +2,9 @@
 // wall behind every kind), and a site change's G2 and G11.
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { readFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { describe, test } from "node:test";
 import { runGates } from "../src/seq-forge.ts";
 import { type Change, depGate, engineReachGate, NEVER, pathGate, scopeIssue, siteNewIssues, touchLines, webGate } from "../src/seq-gates.ts";
@@ -208,9 +210,15 @@ export default async function Faq() {
 `;
 
 describe("site: G2 dependencies", () => {
+  test("react's Fragment and Suspense by name and its types pass", () => {
+    assert.deepEqual(depGate(page(`import { Fragment, Suspense, type ReactNode } from "react";\nimport type { FC } from "react";\nexport default function P(): ReactNode { return null; }\n`), "faq", "site").issues, []);
+  });
   test("react, next/link, next/image, types from next, the shared UI, shell, icons, the data facade and the page's own folder pass", () => {
     assert.deepEqual(depGate(page(OK_PAGE), "faq", "site").issues, []);
     assert.deepEqual(depGate(page(`import { IconX } from "../_ui/icons";\nimport type { Module } from "../_data/types";\nimport { LIVE } from "../_data/flags";\nimport { Answer } from "./Answer";\nexport default function P() { return null; }\n`), "faq", "site").issues, []);
+  });
+  test("a type imported beside next/link's default passes, as a type-only import does", () => {
+    assert.deepEqual(depGate(page(`import Link, { type LinkProps } from "next/link";\nimport { type ImageProps } from "next/image";\nconst to: LinkProps["href"] = "/rules";\nexport default function P(p: { i?: ImageProps }) { return <Link href="/rules">{String(to)}{String(p.i)}</Link>; }\n`), "faq", "site").issues, []);
   });
   test("the fee constants pass: the pages that show a fee stay editable", () => {
     assert.deepEqual(depGate(page(`import { FEE, FEE_LINE, PLATFORM_NOTE } from "../_data/launchFee";\nexport default function P() { return FEE_LINE + FEE.ours + PLATFORM_NOTE; }\n`, "web/app/rules/page.tsx"), "rules", "site").issues, []);
@@ -234,6 +242,17 @@ describe("site: G2 dependencies", () => {
     ["the database client", `import { db } from "../_data/live";`],
     ["request internals", `import { clientIp } from "../_data/clientIp";`],
     ["a re-export", `export * from "postgres";`],
+    // React as a whole: its createElement renders any tag, a <script> included
+    ["React as a namespace", `import * as R from "react";`],
+    ["React's default import", `import React from "react";`],
+    ["createElement by name", `import { createElement } from "react";`],
+    ["createElement renamed", `import { createElement as mk } from "react";`],
+    ["a hook from react", `import { useRef } from "react";`],
+    ["react re-exported", `export * from "react";`],
+    ["next/link by a namespace", `import * as L from "next/link";`],
+    ["next/image by name", `import { default as Img } from "next/image";`],
+    ["a value beside next/link's default", `import Link, { useLinkStatus } from "next/link";`],
+    ["a value beside a type from next/link", `import { type LinkProps, useLinkStatus } from "next/link";`],
   ] as [string, string][]) {
     test(`planted: ${what}`, () => assert.equal(depGate(page(`${imp}\nexport default function P() { return null; }\n`), "faq", "site").ok, false));
   }
@@ -302,6 +321,12 @@ describe("site: G11 code", () => {
     ["computed access", `const m = { a: 1 }; export default function P({ k }: { k: "a" }) { return <p>{m[k]}</p>; }`, /computed member access/],
     ["eval", `export default function P() { return <p>{eval("1")}</p>; }`, /eval/],
     ["a dynamic import", `export default async function P() { await import("../_data/source"); return null; }`, /dynamic import/],
+    ["import.meta", `export default function P() { return <p>{String(import.meta.url)}</p>; }`, /import\.meta/],
+    ["import.meta's resolver", `export default function P() { return <p>{String((import.meta as never as { resolve: (s: string) => string }).resolve("../_data/live"))}</p>; }`, /import\.meta/],
+    ["new.target", `function F() { return new.target; }\nexport default function P() { return <p>{String(F())}</p>; }`, /new\.target/],
+    ["this at the top", `const t = this;\nexport default function P() { return <p>{String(t)}</p>; }`, /this outside a class/],
+    ["this in a plain function", `function f() { return (this as never as { constructor: unknown }); }\nexport default function P() { return <p>{String(f.call(1))}</p>; }`, /this outside a class/],
+    ["this in an object's method", `const o = { m() { return this; } };\nexport default function P() { return <p>{String(o.m())}</p>; }`, /this outside a class/],
     ["a URL", `export default function P() { return <a href="https://x.example">x</a>; }`, /:\\\/\\\//],
     ["a wallet method", `export default function P() { return <p>{"eth_sendTransaction"}</p>; }`, /eth_/],
     ["an address", `export default function P() { return <p>0x5FbDB2315678afecb367f032d93F642f64180aa3</p>; }`, /address literal/],
@@ -317,6 +342,10 @@ describe("site: G11 code", () => {
     ["a cashtag in the page's text", `export default function P() { return <p>Better than $PEPE</p>; }`, /a cashtag in the page's text/],
     ["a handle in a string", `const who = "@someone";\nexport default function P() { return <p>{who}</p>; }`, /a handle in the page's text/],
     ["another site's name", `export default function P() { return <p>Claim it at evil.example today</p>; }`, /another site's name or link/],
+    ["another site's name in a path a component of its own shows", `function Show({ src }: { src: string }) { return <p>{src}</p>; }\nexport default function P() { return <Show src="/claim at evil.example" />; }`, /another site's name or link/],
+    ["another site's name in a path as a child", `export default function P() { return <p>{"/evil.example"}</p>; }`, /another site's name or link/],
+    ["a decoder", `export default function P() { return <p>{decodeURIComponent("%2F%2Fevil")}</p>; }`, /decodeURIComponent/],
+    ["escape", `export default function P() { return <p>{escape("x")}</p>; }`, /: escape/],
     // links stay on the site
     ["a link built off the site", `export default function P() { return <a href={"/" + "/evil.example"}>x</a>; }`, /href must be a path on this site/],
     ["a link with a tab after the slash", `export default function P() { return <a href="/\t/evil.example">x</a>; }`, /href must be a path on this site/],
@@ -339,12 +368,72 @@ describe("site: G11 code", () => {
     ["a tag by a member", `import * as R from "react";\nexport default function P() { return <R.Fragment>x</R.Fragment>; }`, /a tag is a plain name/],
     ["a namespaced attribute", `export default function P() { return <a xlink:href="/rules">x</a>; }`, /a namespaced attribute xlink:href/],
     ["next/link's as", `import Link from "next/link";\nexport default function P() { return <Link href="/rules" as="/x">x</Link>; }`, /attribute as/],
+    // React's createElement by reflection: it would render a <script> (the nonce CSP stops it running, a second wall)
+    ["createElement found by Object.entries", `import * as R from "react";\nexport default function P() { const mk = Object.entries(R).find(([k]) => k.length === 13)![1] as (t: string, p: null, c: string) => unknown; return mk("scr" + "ipt", null, "alert(1)"); }`, /the global Object/],
+    ["createElement by a computed destructuring key", `import * as R from "react";\nconst { ["create" + "Element"]: mk } = R as never as Record<string, (t: string, p: null, c: string) => unknown>;\nexport default function P() { return mk("scr" + "ipt", null, "alert(1)"); }`, /a computed key/],
+    ["createElement by for…in and Object", `import * as R from "react";\nexport default function P() { let mk: unknown; for (const k in R) if (k.startsWith("create")) mk = Object.getOwnPropertyDescriptor(R, k)!.value; return (mk as (t: string, p: null, c: string) => unknown)("scr" + "ipt", null, "alert(1)"); }`, /the global Object/],
+    ["createElement from a namespace by a computed member", `import * as R from "react";\nconst k = "create" + "Element";\nexport default function P() { return (R as never as Record<string, (t: string) => unknown>)[k]("script"); }`, /computed member access/],
+    // the Function constructor on the server
+    ["the Function constructor by getPrototypeOf", `export default function P() { const F = Object.getOwnPropertyDescriptor(Object.getPrototypeOf(() => 0), "constr" + "uctor")!.value as (s: string) => () => string; return <p>{F("return pro" + "cess.env.DATABASE_URL")()}</p>; }`, /the global Object/],
+    ["the Function constructor by a string key", `const { "constructor": F } = (() => 0) as never as Record<string, (s: string) => () => string>;\nexport default function P() { return <p>{F("return 1")()}</p>; }`, /constructor as a key/],
+    ["a global bound in another scope only", `function f(Object: unknown) { return Object; }\nexport default function P() { return <p>{String(f(1))}{Object.keys({ a: 1 }).length}</p>; }`, /the global Object/],
+    ["a global as a destructuring default", `export default function P() { const { k = Object } = {} as { k?: unknown }; return <p>{String(k)}</p>; }`, /the global Object/],
+    ["a global not on the list", `export default function P() { return <p>{String(typeof queueMicrotask)}</p>; }`, /the global queueMicrotask/],
+    ["an ambient declare hiding the global Object", `declare const Object: ObjectConstructor;\nexport default function P() { const d = Object.getOwnPropertyDescriptor(Object.getPrototypeOf(() => 0), "constr" + "uctor")!; return <p>{String(d.value)}</p>; }`, /the global Object/],
+    ["an ambient declare function", `declare function Function(s: string): () => unknown;\nexport default function P() { return <p>{String(Function)}</p>; }`, /ambient declare/],
+    ["an ambient declare let", `declare let Reflect: typeof globalThis.Reflect;\nexport default function P() { return <p>{String(Reflect)}</p>; }`, /ambient declare/],
+    ["a function signature with no body hiding the global Object", `function Object(a: unknown): never;\nexport default function P() { const d = Object.getOwnPropertyDescriptor(Object.getPrototypeOf(() => 0), "constr" + "uctor")!; return <p>{String(d.value)}</p>; }`, /the global Object/],
+    ["a type-only import read as a value", `import type { Thing as Object } from "../_data/source";\nexport default function P() { return <p>{String(Object)}</p>; }`, /the global Object/],
+    ["__lookupGetter__", `const o = { a: 1 };\nexport default function P() { return <p>{String((o as never as Record<string, (k: string) => unknown>).__lookupGetter__("a"))}</p>; }`, /__lookupGetter__/],
+    // SVG animation sets an href after the page is read
+    ["<set> to an off-site href", `export default function P() { return <svg><a href="/rules"><set attributeName="href" to={"https:/" + "/evil.example"} /><text>x</text></a></svg>; }`, /<set>/],
+    ["<animate> values off the site", `export default function P() { return <svg><a href="/rules"><animate attributeName="href" values={"/rules;" + "/" + "/evil.example"} /><text>x</text></a></svg>; }`, /<animate>/],
+    ["<set> with an entity", `export default function P() { return <svg><a href="/rules"><set attributeName="href" to="&#47;&#47;evil.example" /><text>x</text></a></svg>; }`, /<set>/],
+    ["<animate> with an entity", `export default function P() { return <svg><a href="/rules"><animate attributeName="href" values="/rules;&#47;/evil.example" /><text>x</text></a></svg>; }`, /<animate>/],
+    ["<animateMotion>", `export default function P() { return <svg><animateMotion dur="1s" /></svg>; }`, /<animateMotion>/],
+    ["<animateTransform>", `export default function P() { return <svg><animateTransform attributeName="transform" /></svg>; }`, /<animateTransform>/],
+    // character references, attribute case, the other URL attributes
+    ["an entity in an <a> href", `export default function P() { return <a href="/&#47;evil.example">x</a>; }`, /a character reference in href/],
+    ["an entity in an <area> href", `export default function P() { return <map name="m"><area href="/&#47;evil.example" alt="" /></map>; }`, /a character reference in href/],
+    ["a named entity in an href", `export default function P() { return <a href="/&sol;evil.example">x</a>; }`, /a character reference in href/],
+    ["HREF in capitals", `export default function P() { return <a HREF={"/" + "/evil.example"}>x</a>; }`, /HREF must be a path on this site/],
+    ["a joined poster", `export default function P() { return <video poster={"/" + "/evil.example/p.png"} />; }`, /poster must be a path on this site/],
+    ["a joined srcSet", `export default function P() { return <img alt="" src="/a.png" srcSet={"/a.png 1x, /" + "/evil.example/b.png 2x"} />; }`, /srcSet must be a path on this site/],
+    ["a second srcSet candidate off the site", `export default function P() { return <img alt="" src="/a.png" srcSet="/a.png 1x, //evil.example/b.png 2x" />; }`, /srcSet is one path written out/],
+    ["a joined style image", `export default function P() { return <div style={{ backgroundImage: "url(/" + "/evil.example/x.png)" }} />; }`, /style backgroundImage is a number or a string written out/],
+    ["a style image from a variable", `const bg = "url(/" + "/evil.example/x.png)";\nexport default function P() { return <div style={{ background: bg }} />; }`, /style background is a number or a string written out/],
+    ["a style string key", `export default function P() { return <div style={{ ["--x" as string]: "1" }} />; }`, /style keys are plain names/],
+    ["a CSS escape", `.q { background: u\\72l(//evil.example/x.png); }`, /a backslash or image-set\(\) in CSS/],
+    ["a CSS image-set()", `.q { background-image: image-set("/x.png" 1x); }`, /a backslash or image-set\(\) in CSS/],
   ] as [string, string, RegExp][]) {
     test(`planted: ${what}`, () => {
-      const files = what === "a CSS url()" ? { "web/app/faq/faq.module.css": body } : page(body);
+      const files = what.startsWith("a CSS") ? { "web/app/faq/faq.module.css": body } : page(body);
       assert.match(webGate(files, "faq", "site").issues.join("\n"), want);
     });
   }
+  test("a page naming only the allowed globals and its own bindings passes (patterns, imports, a style written out)", () => {
+    const body = `import { Fragment } from "react";
+import { getXp } from "../_data/source";
+const n = Math.max(1, Number("2"), parseInt("3", 10));
+export default async function P() {
+  const [rows, { x }] = await Promise.all([getXp().catch(() => []), Promise.resolve({ x: 3 })]);
+  const when = new Date(0);
+  return <Fragment><p style={{ color: "red", width: \`\${n}%\`, backgroundColor: "#000" }}>{rows.length + x}{JSON.stringify([when.getTime(), Array.isArray(rows), new Map([[1, 2]]).size, String(undefined)])}</p></Fragment>;
+}
+`;
+    assert.deepEqual(webGate(page(body), "faq", "site").issues, []);
+  });
+  test("a file on the site in a URL attribute is no other site's name; an encoded path part and a class's own this pass", () => {
+    const body = `import Image from "next/image";
+import Link from "next/link";
+class Count { n = 1; get() { return this.n + [1].map(() => this.n).length; } }
+export default function P() {
+  return <div><img alt="" src="/token.png" /><img alt="" src="/faq/chart.svg" /><Image src="/token.png" alt="" width={1} height={1} />
+    <Link href={\`/journal/\${encodeURIComponent("a b")}.html\`}>{encodeURI("/x y")}{new Count().get()}</Link></div>;
+}
+`;
+    assert.deepEqual(webGate(page(body), "faq", "site").issues, []);
+  });
   test("a tag the file binds as a function declaration or a const arrow passes, as an imported one does", () => {
     assert.deepEqual(webGate(page(`import { Section } from "../_ui/ui";\nconst Row = ({ q }: { q: string }) => <p>{q}</p>;\nfunction Head() { return <h1>x</h1>; }\nexport default function P() { return <Section><Head /><Row q="a" /></Section>; }\n`), "faq", "site").issues, []);
   });
@@ -535,4 +624,28 @@ test("runGates: a site change runs the static gates only (no workspace, no forge
   assert.equal(bad.results[0].ok, false);
   const blind = await runGates({ kind: "site", slug: "faq-page", changes, files, baseHasSlug: false, prBody: "A questions page with plain answers.", kit: "/nonexistent-kit", order: { seed: "a" } });
   assert.match(blind.results[0].issues.join(), /no base tree/, "no base paths: G1 refuses");
+});
+
+test("CI's gate run reads the build's own changes from where it branched, not what main gained since", () => {
+  const d = mkdtempSync(join(tmpdir(), "seq-gate-"));
+  try {
+    const g = (...a: string[]) => execFileSync("git", ["-C", d, "-c", "user.name=t", "-c", "user.email=t@t", "-c", "commit.gpgsign=false", ...a]).toString().trim();
+    const put = (p: string, t: string) => { mkdirSync(join(d, p, ".."), { recursive: true }); writeFileSync(join(d, p), t); };
+    g("init", "-q", "-b", "main");
+    put("web/app/home/page.tsx", "export default function P() { return null; }\n");
+    g("add", "-A"); g("commit", "-qm", "base");
+    g("checkout", "-qb", "pr");
+    put("web/app/faq/page.tsx", "export default function Faq() {\n  return <p>Plain answers.</p>;\n}\n");
+    g("add", "-A"); g("commit", "-qm", "the build");
+    g("checkout", "-q", "main");
+    put("engine/src/x.ts", "export const x = 1;\n");
+    g("add", "-A"); g("commit", "-qm", "main moves on");
+    const main = g("rev-parse", "HEAD");
+    g("checkout", "-q", "pr");
+    // the pull request's base is main's tip: engine/src/x.ts is not the build's
+    const out = execFileSync(process.execPath, [new URL("../scripts/seq-gate.ts", import.meta.url).pathname, "--pr", d, "--base", main, "--kit", "/nonexistent", "--kind", "site"]).toString();
+    assert.match(out, /^ok {3}G1 paths$/m);
+  } finally {
+    rmSync(d, { recursive: true, force: true });
+  }
 });

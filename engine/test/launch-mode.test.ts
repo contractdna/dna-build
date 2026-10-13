@@ -9,6 +9,7 @@ import { HOOK_FEES } from "../src/hook-fees.ts";
 import { type ChainRow, isLaunchTax, launchTax, MAX_PROJECT_FEE, pair, stats } from "../src/observe.ts";
 import { launchQueue, progressDayFacts, progressFacts, PROGRESS, statusFacts, xSchedules } from "../src/status.ts";
 import { replyPath } from "../src/tiers.ts";
+import { factLayer } from "../src/card.ts";
 import { appendWeight, claimIssues, factNumbers, factSheet, MentionOut, OFFICIAL_REPLY, postFilter, weightedLength, WRITER, writerCall } from "../src/voice.ts";
 import { PERSONA } from "../src/persona.ts";
 import { PRIORITY, priorityOf } from "../src/announce.ts";
@@ -79,8 +80,14 @@ test("status: the launch-tax swaps are reported apart (count, volume, the tax se
 
 // ---------------------------------------------------------------- the launch window's post caps
 
-test("post caps: 40 a UTC day, 10 min apart on every UTC day the 48 h after LLM_LAUNCH_AT touch, then 25 and 20 min; the digest keeps the last slot", () => {
-  assert.deepEqual([X.launchDailyPosts, X.launchSpacingMs, X.launchWindowMs, X.dailyPosts, X.spacingMs], [40, 10 * 60_000, 48 * 3600_000, 25, 20 * 60_000], "the defaults (the enclave sets none of them)");
+test("post caps: the defaults are 50 a UTC day 10 min apart, in and out of the launch window", () => {
+  assert.deepEqual([X.launchDailyPosts, X.launchSpacingMs, X.launchWindowMs, X.dailyPosts, X.spacingMs], [50, 10 * 60_000, 48 * 3600_000, 50, 10 * 60_000], "the defaults (the enclave sets none of them)");
+});
+
+test("post caps, set apart (40 / 10 min in the window, 25 / 20 min after): every UTC day the 48 h after LLM_LAUNCH_AT touch; the digest keeps the last slot", () => {
+  const saved = { ...X };
+  Object.assign(X, { launchDailyPosts: 40, launchSpacingMs: 10 * 60_000, dailyPosts: 25, spacingMs: 20 * 60_000 });
+  try {
   const launch = Date.parse("2026-10-12T15:00:00Z");
   const H = 3600_000;
   const launchCaps = { daily: 40, spacingMs: 10 * 60_000 }, normal = { daily: 25, spacingMs: 20 * 60_000 };
@@ -97,6 +104,7 @@ test("post caps: 40 a UTC day, 10 min apart on every UTC day the 48 h after LLM_
   assert.ok(used < eventPosts(late, launch) && used < postCaps(late, launch).daily, "events and the digest still post on D+2");
   assert.deepEqual(postCaps(launch, undefined), normal, "no launch time: the normal caps");
   assert.deepEqual([eventPosts(launch + H, launch), eventPosts(launch + 73 * H, launch)], [39, 24], "events take all but the digest's slot");
+  } finally { Object.assign(X, saved); }
 });
 
 // ---------------------------------------------------------------- replies from day one
@@ -131,16 +139,16 @@ const progressRows: { tx: string; event: string; args: Record<string, string> }[
   { tx: TX(5), event: "LiquidityAdded", args: { salt: "1", tickLower: "10", tickUpper: "20", liquidity: "1", eth: E("0.26") } },
 ];
 
-test("chain progress: one post per kind that happened in the window, every number the chain's (code-rounded), the latest tx linked", () => {
-  assert.deepEqual(PROGRESS, { hours: 2, lagMs: 30 * 60_000 });
+test("chain progress: every kind that happened in the window, every number the chain's (code-rounded), the latest tx linked", () => {
+  assert.deepEqual(PROGRESS, { hours: 6, lagMs: 30 * 60_000 });
   const s = xSchedules().find((x) => x.kind === "x:progress")!;
-  assert.deepEqual([s.everyMs, s.offsetMs], [2 * 3600_000, 30 * 60_000], "00:30, 02:30, … 22:30 UTC for the windows ending on the hour");
+  assert.deepEqual([s.everyMs, s.offsetMs], [6 * 3600_000, 30 * 60_000], "00:30, 06:30, 12:30, 18:30 UTC for the 6 h windows ending on the hour");
   assert.ok(xSchedules().some((x) => x.kind === "x:launch" && x.everyMs === 60_000));
   const p = progressFacts(progressRows);
   assert.deepEqual(p, [
-    { tx: TX(3), facts: { event: "fees_distributed", hours: 2, distributions: 2, totalEth: 0.523, buybackEth: 0.183, liquidityEth: 0.157, treasuryEth: 0.131, gamesEth: 0.0525 } },
-    { tx: TX(4), facts: { event: "burn_summary", hours: 2, buybacks: 2, spentEth: 0.75, burnedDna: 1_834_567 } },
-    { tx: TX(5), facts: { event: "liquidity_added", hours: 2, adds: 1, ethAdded: 0.26 } },
+    { tx: TX(3), facts: { event: "fees_distributed", hours: 6, distributions: 2, totalEth: 0.523, buybackEth: 0.183, liquidityEth: 0.157, treasuryEth: 0.131, gamesEth: 0.0525 } },
+    { tx: TX(4), facts: { event: "burn_summary", hours: 6, buybacks: 2, spentEth: 0.75, burnedDna: 1_834_567 } },
+    { tx: TX(5), facts: { event: "liquidity_added", hours: 6, adds: 1, ethAdded: 0.26 } },
   ]);
   assert.deepEqual(progressFacts([]), [], "nothing happened: no post");
   assert.deepEqual(progressFacts(progressRows.filter((r) => r.event === "Buyback")).map((x) => x.facts.event), ["burn_summary"]);
@@ -151,9 +159,9 @@ test("chain progress: one post per kind that happened in the window, every numbe
     assert.equal(PRIORITY[facts.event as string], 3.5);
   }
   assert.deepEqual(p.map((x) => titleOf(factSheet(x.facts))), [
-    "Last 2 h: 2 fee distributions sent 0.523 ETH: 0.183 to buyback-and-burn, 0.157 to liquidity, 0.131 to the treasury, 0.0525 to games",
-    "Last 2 h: 2 buybacks spent 0.75 ETH and burned 1,834,567 DNA",
-    "Last 2 h: 1 liquidity add put 0.26 ETH into the pool",
+    "Last 6 h: 2 fee distributions sent 0.523 ETH: 0.183 to buyback-and-burn, 0.157 to liquidity, 0.131 to the treasury, 0.0525 to games",
+    "Last 6 h: 2 buybacks spent 0.75 ETH and burned 1,834,567 DNA",
+    "Last 6 h: 1 liquidity add put 0.26 ETH into the pool",
   ]);
 });
 
@@ -197,7 +205,7 @@ test("samples: each new post type as x:send would post it (fixture drafts, code-
     rendered({ event: "contracts_connected" }, "The Safe's owners connected the registry and the vaults to the hook in a single batch. The first fee plates are queued behind the veto hour.", link(9)),
     rendered(progressFacts(progressRows)[0].facts, "Fees split twice in 2 h: 0.523 ETH out. 0.183 to buyback-and-burn, 0.157 to liquidity, 0.131 to the treasury, 0.0525 to games.", link(3)),
     rendered(progressFacts(progressRows)[1].facts, "2 buybacks in 2 h: 0.75 ETH spent, 1.83M DNA burned. Gone for good.", link(4)),
-    rendered(progressFacts(progressRows)[2].facts, "0.26 ETH turned into permanent liquidity in the last 2 h. It never comes back out.", link(5)),
+    rendered(progressFacts(progressRows)[2].facts, "0.26 ETH turned into permanent liquidity in the last 6 h. It never comes back out.", link(5)),
   ];
   for (const t of samples) assert.ok(weightedLength(t.replace(/https?:\/\/\S+/g, "x".repeat(23))) <= 280, t);
   assert.equal(samples[3], `2 buybacks in 2 h: 0.75 ETH spent, 1.83M DNA burned. Gone for good.\n${link(4)}`);
@@ -214,7 +222,7 @@ test("the writer for every new post type is the persona's: the voice section rid
   }
 });
 
-test("chain progress after the launch window: one combined post a UTC day (fees, burns, liquidity), low priority; nothing happened, none", () => {
+test("chain progress: one combined post a window (fees, burns, liquidity), with the events' priority; nothing happened, none", () => {
   const day = progressDayFacts(progressRows)!;
   assert.deepEqual(day, { tx: TX(5), facts: { event: "progress_day", hours: 24, distributions: 2, totalEth: 0.523, buybackEth: 0.183, liquidityEth: 0.157, treasuryEth: 0.131, gamesEth: 0.0525,
     buybacks: 2, spentEth: 0.75, burnedDna: 1_834_567, adds: 1, ethAdded: 0.26 } });
@@ -222,6 +230,11 @@ test("chain progress after the launch window: one combined post a UTC day (fees,
   assert.deepEqual(progressDayFacts(progressRows.filter((r) => r.event === "Buyback"))!.facts, { event: "progress_day", hours: 24, buybacks: 2, spentEth: 0.75, burnedDna: 1_834_567 });
   const sheet = factSheet(day.facts);
   for (const [k, v] of Object.entries(day.facts)) assert.deepEqual(sheet[k], v, k);
-  assert.equal(priorityOf(day.facts), 4, "below every event: the digest absorbs it on a full day");
+  assert.equal(priorityOf(day.facts), 3.5, "with the chain events it replaces");
   assert.equal(titleOf(sheet), "Last 24 h: 2 fee distributions sent 0.523 ETH: 0.183 to buyback-and-burn, 0.157 to liquidity, 0.131 to the treasury, 0.0525 to games; 2 buybacks spent 0.75 ETH and burned 1,834,567 DNA; 1 liquidity add put 0.26 ETH into the pool");
+  const six = progressDayFacts(progressRows, PROGRESS.hours)!;
+  assert.deepEqual([six.tx, six.facts.hours, six.facts.burnedDna], [TX(5), 6, 1_834_567], "the 6 h window the job posts");
+  assert.match(titleOf(factSheet(six.facts)), /^Last 6 h: 2 fee distributions/);
+  assert.equal(factLayer(six.facts, {}, 0).headline, "THE LAST 6 HOURS");
+  assert.equal(factLayer(day.facts, {}, 0).headline, "THE DAY'S WORK");
 });

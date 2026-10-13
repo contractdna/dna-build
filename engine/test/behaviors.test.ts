@@ -1,7 +1,7 @@
 // The approved behaviors, pure parts: veto posts, "I'm waiting too" (the pending block), price FUD and airdrop
 // asks answered with jokes and refusals (never predictions, promises or wallet asks), once-ever milestone posts.
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { test } from "node:test";
 import { ENCLAVE } from "../src/enclave.ts";
 import { pendingOf } from "../src/life.ts";
@@ -343,7 +343,9 @@ test("idea replies: the writer is told the plain parts (understood, verdict, why
   const w = prompt("x-writer");
   for (const k of ["`understood`", "`verdict`", "`why`", "`next`", "`instead`", "`ideaScore`", "`regular`", "idea_update", "idea_of_day", "shoutout"]) assert.ok(w.includes(k), k);
   assert.ok(!w.includes("`ideasToday`"), "no count joke");
-  for (const p of [w, readFileSync(new URL("../../persona/bundle.md", import.meta.url), "utf8")]) assert.match(p, /no riddles?/i);
+  // the private bundle too, where this checkout has it (the public one never)
+  const bundle = new URL("../../persona/bundle.md", import.meta.url);
+  for (const p of [w, ...(existsSync(bundle) ? [readFileSync(bundle, "utf8")] : [])]) assert.match(p, /no riddles?/i);
   assert.match(w, /Replies are plain/);
   assert.match(w, /No promises/);
 });

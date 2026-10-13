@@ -1,9 +1,9 @@
 // Maintenance mode first (security.ts maintenanceOn): one static 503 page for every request but the paths that stay up.
-// Then the play origin's per-request CSP (security.ts playCsp): a fresh nonce on every page, which Next puts on its own
-// scripts and the root layout puts on the wallet guard. Also tells the layouts which game a request is for. The main
-// site passes through untouched.
+// Then each origin's per-request CSP (security.ts mainCsp, playCsp): a fresh nonce on every page, which Next puts on its
+// own scripts and the root layout on its inline ones. On the play origin, also tells the layouts which game a request
+// is for.
 import { type NextRequest, NextResponse } from "next/server.js";
-import { dropsQuery, MAINTENANCE_PAGE, maintenanceHeaders, maintenanceOn, playRequest, roleOf, staysUp } from "./security.ts";
+import { dropsQuery, MAINTENANCE_PAGE, mainCsp, maintenanceHeaders, maintenanceOn, playRequest, roleOf, staysUp } from "./security.ts";
 
 const newNonce = () => Buffer.from(crypto.getRandomValues(new Uint8Array(16))).toString("base64");
 
@@ -17,9 +17,13 @@ export function proxy(request: NextRequest) {
   if (maintenanceOn(process.env) && !staysUp(request.nextUrl.pathname)) {
     return new NextResponse(request.method === "HEAD" ? null : MAINTENANCE_PAGE, { status: 503, headers: maintenanceHeaders(roleOf(process.env), newNonce(), dev) });
   }
-  if (roleOf(process.env) !== "play") return NextResponse.next();
-  // router prefetches carry no page of their own: no nonce for them (the matcher lets them in for maintenance mode)
-  if (request.headers.has("next-router-prefetch") || request.headers.get("purpose") === "prefetch") return NextResponse.next();
+  // every request below gets its own nonce and CSP, router and browser prefetches too: a prefetch can be a whole page
+  // (a CDN may keep it for every visitor), and passed on as it came it would carry the visitor's own nonce, CSP or slug
+  // headers to Next
+  if (roleOf(process.env) !== "play") {
+    const nonce = newNonce();
+    return withCsp(request, nonce, mainCsp(nonce, dev), null);
+  }
   // one cached page per game: a query string on a game page is dropped with a redirect (not on RSC requests, see
   // security.ts dropsQuery)
   if (dropsQuery(request.nextUrl.pathname, request.nextUrl.search, request.headers.has("rsc"))) {
@@ -29,6 +33,13 @@ export function proxy(request: NextRequest) {
   }
   const nonce = newNonce();
   const { csp, slug } = playRequest(request.nextUrl.pathname, nonce, dev);
+  return withCsp(request, nonce, csp, slug);
+}
+
+/** The request on to Next with its nonce and its CSP (Next reads the nonce from the request's CSP; both replace any the
+ *  visitor sent), the CSP on the response; the game slug only when the path names a valid one (anything else, a
+ *  visitor's header included, is dropped). */
+function withCsp(request: NextRequest, nonce: string, csp: string, slug: string | null) {
   const headers = new Headers(request.headers);
   headers.set("x-nonce", nonce);
   headers.set("Content-Security-Policy", csp);

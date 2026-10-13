@@ -24,7 +24,7 @@ import { d, IDEA_OUTCOME_DELAY_MS, IDEAS_LIVE, LOG_BASE_URL, X } from "./config.
 import { edb as sql } from "./db.ts";
 import { ideaOnChain, type IdeaSource, queuedRow, queueLive, xSourceOf } from "./idea-queue.ts";
 import type { Handler } from "./jobs.ts";
-import { publicTextIssues, utf8Cut } from "./llm.ts";
+import { publicTextIssues, SPEC_DOMAIN, utf8Cut } from "./llm.ts";
 import { isRolledBack, stateSig, trusted } from "./log.ts";
 import { mode } from "./mode.ts";
 import { chainRows, pair, stats } from "./observe.ts";
@@ -486,7 +486,7 @@ export async function researchRound(round: number) {
   const reads = new Map<number, { id: number; kind: string; summary: string; spec: string; untrusted: true }>();
   for (const i of ideas) {
     const r = (await agents.readIdea(i.title, i.body)).data;
-    reads.set(i.id, { id: i.id, kind: r.kind, summary: agents.sanitize(r.summary), spec: agents.sanitize(r.spec), untrusted: true });
+    reads.set(i.id, { id: i.id, kind: r.kind, summary: agents.sanitize(r.summary), spec: agents.sanitizeSpec(r.spec), untrusted: true });
   }
   const len = await roundLength();
   const w = researchWindow(Number(await read<bigint>("roundEnd", [BigInt(round)])), len);
@@ -602,7 +602,7 @@ export async function judgeLive(qid: string, i: { idea?: number; round: number; 
   if (prior?.live && prior.status === "rejected" && !(again && prior.judge === undefined)) return { status: "rejected", reason: String(prior.resolution ?? "not taken").slice(0, 300), ...words };
   const r = (await agents.readIdea(i.title, i.body)).data;
   const id = i.idea ?? 0;
-  const read = { id, kind: r.kind, summary: agents.sanitize(r.summary), spec: agents.sanitize(r.spec), untrusted: true as const };
+  const read = { id, kind: r.kind, summary: agents.sanitize(r.summary), spec: agents.sanitizeSpec(r.spec), untrusted: true as const };
   const now = Date.now();
   const swaps = pair(await chainRows(["Swap", "FeeTaken"], now - DAY * 1000)).filter((s) => s.at < now);
   const out = await brain.decide("outcome", { mode: "live: one idea, judged as it came in", round: i.round, ideas: [read], policyBounds: POLICY, stats: stats(swaps, { fromMs: now - DAY * 1000, toMs: now, capPips: 50_000 }) }, `live:${qid}`);
@@ -651,7 +651,7 @@ export async function judgeLive(qid: string, i: { idea?: number; round: number; 
 export function standIn(judged: BrainIdea | undefined, read: { id: number; kind: string; summary: string; spec: string; untrusted: true }, source: IdeaSource | null) {
   const v0 = variantOf(judged, read.kind, source);
   const x: BrainIdea | undefined = v0 ? { ...judged!, decision: "accept", kind: "build", title: v0.title, rubric: v0.rubric, params: null } : judged;
-  const spec = v0 ? { ...read, kind: "build", spec: agents.sanitize(`${v0.spec} (a ${v0.target} build)`) } : read;
+  const spec = v0 ? { ...read, kind: "build", spec: agents.sanitizeSpec(`${v0.spec} (a ${v0.target} build)`) } : read;
   return { v0, x, spec };
 }
 /** After code's rules (reportRow): the version that is built (only when it stood), what was understood, and the
@@ -675,8 +675,8 @@ export function variantOf(x: BrainIdea | undefined, readerKind: string, source: 
   if (!x?.variant || x.decision === "accept" || readerKind === "invalid" || !source) return null;
   // a site page while the website takes no sequencer changes would be queued in public and never built: no version
   if (x.variant.target === "site" && !SEQ.siteLive) return null;
-  const title = agents.sanitize(x.variant.title).slice(0, 120), spec = agents.sanitize(x.variant.spec).slice(0, 900);
-  if (title.startsWith("(withheld") || spec.startsWith("(withheld") || publicTextIssues(`${title} ${spec}`).length) return null;
+  const title = agents.sanitize(x.variant.title).slice(0, 120), spec = agents.sanitizeSpec(x.variant.spec).slice(0, 900);
+  if (title.startsWith("(withheld") || spec.startsWith("(withheld") || publicTextIssues(title).length || publicTextIssues(spec, SPEC_DOMAIN).length) return null;
   return { ...x.variant, title, spec };
 }
 

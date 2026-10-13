@@ -15,7 +15,7 @@ export const NODES = {
   intake: { x: 186, y: 64, w: 178, label: "Intake screen", chip: "SEALED", tone: "idea", text: "A sealed reader turns each post into a plain spec and drops anything that reads like an instruction. Junk is rejected with a public reason.", now: "14 posts today: 3 specs, 11 rejected (reasons public)." },
   market: { x: 420, y: 64, w: 150, label: "Idea market", tone: "idea", text: "Holders stake DNA on the ideas they back. Each round closes after 24 hours.", now: "Round 41 closed: 16 ideas." },
   data: { x: 600, y: 64, w: 150, label: "Market data", tone: "idea", text: "Every swap, fee and price move in the pool. Read every 15 minutes.", now: "Volatility up 18% this hour." },
-  xposts: { x: 1230, y: 96, w: 170, label: "Posts on X", tone: "ai", text: "Short, plain-English announcements, each with a link to its proof. At most 25 a day.", now: "“Floor Defense is live. Proof →”" },
+  xposts: { x: 1230, y: 96, w: 170, label: "Posts on X", tone: "ai", text: "Short, plain-English announcements, each with a link to its proof. At most 50 a day.", now: "“Floor Defense is live. Proof →”" },
   notebook: { x: 1230, y: 206, w: 170, label: "Signed log", tone: "ai", text: "Every decision is signed inside a sealed machine and published. Anyone can check it wasn't edited later.", now: "Decision #2,184 signed." },
   redteam: { x: 400, y: 272, w: 130, label: "Red team", tone: "ai", text: "A second model attacks every proposal before it's queued, and again before it touches real trades.", now: "Passed: no finding." },
   shadow: { x: 780, y: 272, w: 150, label: "Shadow", chip: "2 H", tone: "ai", text: "For 2 hours the new fee is worked out on every 10th trade, never charged.", now: "Base 2.0%, ceiling 3.0%." },

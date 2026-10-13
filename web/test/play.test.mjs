@@ -27,15 +27,18 @@ test("play CSP: nonce scripts only, no eval, no remote anything, no frames or wo
   assert.match(directives(playCsp("n", true))["script-src"], /unsafe-eval/, "dev only");
 });
 
-test("main CSP: no frames of it anywhere, no plugins, its own scripts", () => {
-  const d = directives(mainCsp());
+test("main CSP: no frames of it anywhere, no plugins, its own scripts and inline ones with the request's nonce only", () => {
+  const d = directives(mainCsp("abc123"));
   assert.equal(d["frame-ancestors"], "'none'");
   assert.equal(d["object-src"], "'none'");
-  assert.doesNotMatch(d["script-src"], /https?:|unsafe-eval/);
+  assert.equal(d["script-src"], "'self' 'nonce-abc123'");
+  assert.doesNotMatch(d["script-src"], /https?:|unsafe-inline|unsafe-eval|strict-dynamic/);
+  assert.equal(d["report-uri"], "/api/csp");
+  assert.match(directives(mainCsp("n", true))["script-src"], /unsafe-eval/, "dev only");
 });
 
 test("main CSP: WalletConnect's relay and verify frame only in a build with a project id", () => {
-  const off = directives(mainCsp(false, false)), on = directives(mainCsp(false, true));
+  const off = directives(mainCsp("n", false, false)), on = directives(mainCsp("n", false, true));
   assert.equal(off["connect-src"], "'self' https:");
   assert.equal(off["frame-src"], "'none'");
   assert.equal(on["connect-src"], "'self' https: wss://relay.walletconnect.org");
@@ -51,7 +54,7 @@ test("headers by role: HSTS with subdomains on both; COOP, no referrer and close
   assert.equal(main["Strict-Transport-Security"], HSTS);
   assert.match(HSTS, /includeSubDomains/);
   assert.equal(play["Strict-Transport-Security"], HSTS);
-  assert.ok(main["Content-Security-Policy"]);
+  assert.equal(main["Content-Security-Policy"], undefined, "the main CSP is per request (proxy.ts)");
   assert.equal(play["Content-Security-Policy"], undefined, "the play CSP is per request (proxy.ts)");
   assert.equal(play["Cross-Origin-Opener-Policy"], "same-origin");
   assert.equal(play["Referrer-Policy"], "no-referrer");
@@ -80,7 +83,7 @@ test("proxy: the request's nonce goes into the CSP; only a valid game slug is pa
   const src = readFileSync(new URL("../proxy.ts", import.meta.url), "utf8");
   assert.match(src, /crypto\.getRandomValues\(new Uint8Array\(16\)\)/);
   assert.match(src, /else headers\.delete\("x-game-slug"\)/);
-  assert.match(src, /if \(roleOf\(process\.env\) !== "play"\) return NextResponse\.next\(\);/);
+  assert.match(src, /if \(roleOf\(process\.env\) !== "play"\) \{\n    const nonce = newNonce\(\);\n    return withCsp\(request, nonce, mainCsp\(nonce, dev\), null\);/);
 });
 
 test("cookies: the site sets only host-only __Host- cookies (never sent to play.<site>); no code sets one otherwise", () => {

@@ -78,11 +78,12 @@ still waits for its slot).
 A spec can be impossible as written: paying every finisher at settle is a loop over all players, past the 200k gas
 limit. The lead may then propose one amendment in its plan: the reason, and the smallest change that makes it buildable
 ("pay by claim instead of at settle", "cap players at 50"). The team builds to it, and the build's report carries it to
-the enclave. It is reviewed only when that round reaches a verdict (a round that stops without a pull request tells the
-next round it was not reviewed), and only while a round is left to build it. The enclave checks the amended spec as it
+the enclave. It is reviewed as that round ends, at its verdict or without one (a round that stops without a pull
+request: the team's own review checks the build against the amended spec, so code built to it may never reach a pull
+request), and only while a round is left to build it. The enclave checks the amended spec as it
 checks any spec (plain text, at most 4,000 characters in all), then runs a best-effort text screen on the change (a verb
 that loosens a rule, a cap, a limit or a gate; value in, calls out, low-level code); the screen is not the rule, the
-gates are. What passes, the brain reviews, once a build. Approved, the round is not shipped: it was built to the old
+gates are. What passes, the brain reviews, once a build (one the screen refused leaves a later round's free). Approved, the round is not shipped: it was built to the old
 spec, so the next round rebuilds it to the amended spec (the spec, then the change and its reason), which every later
 order and verdict carry, so the SPEC.json that ships holds the amended spec. Its signed brain record, the build row and
 the ship record name it. Refused, the next round is told to build the spec as written. An amendment changes what is
@@ -94,8 +95,10 @@ stand-ins for the model API and GitHub, with the real Agent SDK in between.
 ## Changes to the site
 
 Besides new games, the brain can order a change to DNA's own website: a new page (`web/app/`). The order says which
-kind it is, and the enclave signs it like any other. The website deploys from the build repository's `release` branch
-(`SEQ.siteLive`, a code constant; off, the brain's pick of a site change is a no-build with an alert to the owners).
+kind it is, and the enclave signs it like any other. The build repository's `release` branch is what the website
+deploys (`SEQ.siteLive`, a code constant, on; off, the brain's pick of a site change is a no-build with an alert to the
+owners). Moving the branch does not deploy the site by itself: until a deploy serves the merge, nothing is announced,
+and the engine checks again every hour (see "Live means served").
 
 - **What it may touch.** New files only: a page, components, CSS modules and plain `.ts` modules in a route folder that
   is new at the base, under `web/app/`. Nothing that exists is changed, renamed or removed (the home page and the trade
@@ -106,19 +109,38 @@ kind it is, and the enclave signs it like any other. The website deploys from th
   server and content-policy settings, packages, or the docs (nothing on the site renders `docs/`).
 - **Its gates.** The paths (G1, against the base's tree; no dynamic, private or grouped folder, so every page a change
   adds can be opened as it is), the
-  imports (G2, an allowlist: react, next/link, next/image, types from next, the shared UI, the shell and its icons, the
+  imports (G2, an allowlist: react only as `Fragment` or `Suspense` by name, never React as a whole (a default or
+  namespace import, whose `createElement` would render any tag), next/link and next/image by their default (a type
+  beside it is erased, so it may come too), types from next, the shared UI, the shell and its icons, the
   data layer's public read side `_data/source`, `types`, `flags`, `chain`, the fee constants `launchFee`,
   and files in the page's own folder), the code
   (G11: the same reach rules as a game page, and a site page is server-rendered HTML only: no `"use client"`, no `on…`
-  handler attribute, no spread attribute or `<style>`, no namespaced attribute or `as`, every tag an intrinsic or a
-  name the file binds as an import, a function or a const arrow, metadata one const holding only a title and a
-  description, every `href` and `src`
-  a path on the site written out, and its words and strings pass the same screen as a public post: no handles, no
-  cashtags, no other site's name or link; it never sees `process`, the network or a server action), the text (G12),
+  handler attribute, no spread attribute, no `<style>` and no SVG animation (`animate`, `set`, `animateMotion`,
+  `animateTransform`, which can set an href after the page is read), no namespaced attribute or `as`, every tag an
+  intrinsic or a name the file binds as an import, a function or a const arrow, metadata one const holding only a
+  title and a description, every URL attribute (`href`, `src`, `srcset`, `poster`, `background`, `data`, `action`,
+  `formaction`, in any case: `HREF` is `href`) a path on the site written out, no character reference in an attribute
+  (`&#47;` would decode to a slash), a style object that builds no URL at run time, no backslash or `image-set()` in
+  its CSS. No reflection: it names no global but plain values and pure helpers (`Math`, `Number`, `String`, `Boolean`,
+  `Date`, `Array`, `JSON`, `Intl`, `Map`, `Set`, `BigInt`, `Promise`, the number parsers and checks, `encodeURIComponent`
+  and `encodeURI`, `undefined`, `NaN`, `Infinity`): every other name it reads is bound in its own file, so no `Object`, `Reflect`, `Function` or
+  `globalThis` to reach a module's members or the Function constructor; no `import.meta`, no `new.target`, no `this`
+  outside a class (a plain function's is whatever called it); no computed key but a literal, and no banned
+  name (`constructor`, `__proto__`, `__lookupGetter__` and its kin) as a key either. Its words and strings pass the
+  same screen as a public post: no handles, no cashtags, no other site's name or link (a path the URL check accepted, on
+  a tag or on next/link's or next/image's component, is a file here: `/token.png` names no site); it never sees `process`, the
+  network or a server action), the text (G12),
   and the page check (G15): the main site is built with the change and every page
   it touches (or, under a page, its nearest page) is opened in the same headless browser. A site page has no wallet at
   all: any wallet request, any call off the site, a link off the site other than the shell's own (as the browser
-  resolves it, so an encoded or assembled address is caught too), a frame or a popup stops it.
+  resolves it, so an encoded or assembled address is caught too, on an `<a>`, an image map's `<area>` or an SVG
+  anchor, its href read as an animation sets it), a frame or a popup stops it. Its document must carry the main site's
+  CSP with a nonce in `script-src` and no `'unsafe-inline'`, and every inline script in it that nonce: a script the
+  page renders itself has none, which the check counts, and which the browser refuses to run.
+- **The main site's CSP.** Every response of the main site carries a fresh nonce in its CSP (`web/proxy.ts`,
+  `web/security.ts`): Next puts it on its own scripts and the root layout on its one inline script, and nothing else
+  inline runs. Every page renders per request for it. So a script a site page manages to render past the gates is
+  still dead in the browser, and reported to `/api/csp`.
 - **Then the same path as a game.** The brain's verdict, one public hour in which the Safe can veto, the page check
   again during that hour, then the merge (exactly the files the ship record names) and the `release` branch. There is
   nothing to deploy or fund.
@@ -126,8 +148,11 @@ kind it is, and the enclave signs it like any other. The website deploys from th
   it: the site's `/api/health` names the deployed commit (`RAILWAY_GIT_COMMIT_SHA`), which must be the merge or a later
   commit on top of it, and each new page answers 200. Until then the engine checks again every minute (a page that
   answers 500 or nothing is waited on like a deploy still building); after 30 minutes without it (counted from when
-  the release could first deploy), the owners get one alert and nothing is announced. A veto once the release branch
-  holds the change takes nothing back: the owners get one alert to revert it on main.
+  the release could first deploy), the owners get one alert and nothing is announced yet. The hourly job then checks
+  again, for 14 days from the first look: once a deploy (by hand or not) serves it, it is announced and its idea's
+  author told it is live, once; still not served after 14 days, one more alert and the engine stops looking. The idea's
+  reward starts at the merge either way; only the public announcement waits for the site. A veto once the release
+  branch holds the change takes nothing back: the owners get one alert to revert it on main.
 - **What the check can't see.** The page check runs a change's pages over a simulated day at most (24 hours in the
   public hour). A page written to render differently after that, or on a date or a condition the check does not
   reach, would pass, and nothing checks the site's released pages again each day, as it does game pages. Code review

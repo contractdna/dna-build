@@ -155,20 +155,20 @@ export const X = {
   clientSecret: env.X_CLIENT_SECRET, // confidential client → Basic auth on token refresh
   refreshToken: env.X_REFRESH_TOKEN, // seed (and re-auth); rotated tokens live SEALED in the `secret` table
   userId: env.X_USER_ID,
-  // ≤ 25 own posts a UTC day, ≥ 20 min apart (≤ 40, ≥ 10 min apart in the launch window). Replies (src/tiers.ts) only to posts that @mention or quote us, from
+  // ≤ 50 own posts a UTC day, ≥ 10 min apart (the launch window's caps are the same). Replies (src/tiers.ts) only to posts that @mention or quote us, from
   // any account (no age, follower or badge gate); an anti-loop brake of ≤ 10 replies an hour to one account, under a
   // safety ceiling of 1,000 a day and 120 an hour. An item queued longer than staleMs is
   // dropped. Mentions are read every minute (X bills per mention returned, not per call)
-  dailyPosts: num(env.X_DAILY_POSTS, 25),
+  dailyPosts: num(env.X_DAILY_POSTS, 50),
   // the launch window: every UTC day the X_LAUNCH_WINDOW_H after LLM_LAUNCH_AT touch, up to X_LAUNCH_DAILY_POSTS a
   // day, ≥ X_LAUNCH_POST_SPACING_MIN apart (src/announce.ts postCaps); the reply caps stay the same
-  launchDailyPosts: num(env.X_LAUNCH_DAILY_POSTS, 40),
+  launchDailyPosts: num(env.X_LAUNCH_DAILY_POSTS, 50),
   launchSpacingMs: num(env.X_LAUNCH_POST_SPACING_MIN, 10) * 60_000,
   launchWindowMs: num(env.X_LAUNCH_WINDOW_H, 48) * 3600_000,
   dailyReplies: num(env.X_DAILY_REPLIES, 1000),
   hourlyReplies: num(env.X_HOURLY_REPLIES, 120),
   repliesPerAuthorHour: num(env.X_REPLIES_PER_AUTHOR_HOUR, 10),
-  spacingMs: num(env.X_POST_SPACING_MIN, 20) * 60_000,
+  spacingMs: num(env.X_POST_SPACING_MIN, 10) * 60_000,
   staleMs: num(env.X_STALE_HOURS, 6) * 3600_000,
   mentionsMs: num(env.X_MENTIONS_INTERVAL_MS, 60_000),
   // X's written approval for AI replies (a compose literal in the enclave). Until then: important accounts get a drafted
@@ -184,7 +184,7 @@ export const X = {
 export const MEDIA = {
   studioUrl: env.STUDIO_URL?.replace(/\/$/, "") || undefined, // "" = no studio: plates at once
   studioToken: env.STUDIO_TOKEN, // sealed: the enclave's bearer token at the studio
-  waitMs: num(env.MEDIA_WAIT_MIN, 20) * 60_000, // then a fallback plate (posts are ≥ 20 min apart anyway)
+  waitMs: num(env.MEDIA_WAIT_MIN, 20) * 60_000, // then a fallback plate (the queue sends other posts meanwhile)
   visionModel: model("vision"), // models.json (MEDIA_VISION_MODEL overrides outside the enclave)
   dir: new URL("../media/", import.meta.url),
 };

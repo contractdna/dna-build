@@ -32,7 +32,7 @@ const PENDING = ["queued", "held", "attempt"];
 // ---------------------------------------------------------------- an idea's progress, told to its author
 
 /** A queue status → the step its author hears about (fee ideas: tested on-chain, kept or not). */
-export const IDEA_STEPS: Record<string, string> = { queued: "picked", building: "building", testing: "testing", shipped: "shipped", reward: "shipped", killed: "killed", not_kept: "killed" };
+export const IDEA_STEPS: Record<string, string> = { queued: "picked", building: "building", testing: "testing", shipped: "shipped", reward: "shipped", rewarded: "shipped", no_reward: "shipped", reward_dropped: "shipped", killed: "killed", not_kept: "killed" };
 const STEP_LINK = new Set(["building", "merged", "shipped"]);
 
 /** Every X idea that moved in the last day: a reply under our latest free posted reply in its conversation (the first
@@ -43,9 +43,14 @@ const STEP_LINK = new Set(["building", "merged", "shipped"]);
 export const ideaUpdatesHandler: Handler = {
   lane: "x",
   run: async () => {
-    const moved = await sql<{ id: string }[]>`select id from idea_queue where data->'source'->>'source' = 'x' and updated_at > now() - interval '1 day' order by updated_at desc limit 20`;
+    // a site change the site served days after its merge (sequencer.ts serveStep): its idea's row did not move then
+    const since = new Date(Date.now() - 86_400_000).toISOString();
+    // checked first and outside the 20 newest: an old idea's row would sort behind every newer one until its day ran out
+    const served = await sql<{ id: string }[]>`select distinct data->>'idea' as id from seq_build where data->>'idea' is not null and data->>'served' > ${since}`;
+    const moved = await sql<{ id: string }[]>`select id from idea_queue where data->'source'->>'source' = 'x'
+      and updated_at > now() - interval '1 day' order by updated_at desc limit 20`;
     const out: Record<string, string> = {};
-    for (const { id } of moved) {
+    for (const id of new Set([...served, ...moved].map((x) => x.id))) {
       if (await overCeiling()) { out[id] = "the reply ceilings"; break; }
       const r = await queuedRow(id);
       const step = r && IDEA_STEPS[r.status];

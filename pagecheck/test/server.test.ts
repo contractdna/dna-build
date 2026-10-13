@@ -3,6 +3,7 @@
 import assert from "node:assert/strict";
 import type { AddressInfo } from "node:net";
 import { after, before, describe, test } from "node:test";
+import { siteCspIssues } from "../src/check.ts";
 import { PAGECHECK, requestIssues, serve, settings } from "../src/server.ts";
 import { rpc, startAnvil } from "../src/util.ts";
 import { guardScript } from "../../web/app/_ui/guard.ts";
@@ -46,6 +47,18 @@ test("site requests: plain files under app/ and up to 10 plain routes; no game o
     ["routes", { ...site, routes: ["https://x"] }],
     ["routes", { ...site, routes: Array(11).fill("/faq") }],
   ] as const) assert.ok(requestIssues(r as never).some((i) => i.startsWith(what)), `${what}: ${JSON.stringify(r).slice(0, 80)}`);
+});
+
+test("a site page's CSP: a nonce in script-src, no 'unsafe-inline', and every inline script carrying the nonce", () => {
+  const csp = "default-src 'self'; script-src 'self' 'nonce-abc'; style-src 'self' 'unsafe-inline'";
+  const html = `<html><head><script nonce="abc">a()</script><script src="/_next/x.js" async></script></head><body><script nonce=abc>b()</script></body></html>`;
+  assert.deepEqual(siteCspIssues(csp, html), [], "style-src's 'unsafe-inline' is not script-src's");
+  assert.match(siteCspIssues("default-src 'self'; script-src 'self' 'unsafe-inline'", "").join(), /no nonce in script-src.*'unsafe-inline'/);
+  assert.match(siteCspIssues("default-src 'self' 'nonce-abc'", "").join(), /no nonce in script-src \(no script-src\)/);
+  assert.match(siteCspIssues("script-src 'self' 'nonce-abc' 'unsafe-inline'", "").join(), /allows inline scripts/);
+  for (const bad of ["<script>alert(1)</script>", "<script nonce=\"abd\">x()</script>", "<SCRIPT type=module>x()</SCRIPT>"]) {
+    assert.match(siteCspIssues(csp, html + bad).join(), /an inline script without the response's nonce/, bad);
+  }
 });
 
 test("settings: the gate runs 48 h on phone and desktop; the public hour runs 7 days on three profiles", () => {
@@ -130,6 +143,21 @@ export default function P() {
     assert.ok(of("/pc-xlink").some((v) => v.kind === "network" && /evil\.example\/x/.test(v.detail)), JSON.stringify(of("/pc-xlink")));
     assert.ok(!of("/pc-xlink").some((v) => /\/rules/.test(v.detail)), "an SVG anchor into the site passes");
     assert.deepEqual(of("/xp"), [], "a page with the shell's own link to X passes");
+  });
+
+  test("a site page's link off the site by an image map's area or an SVG animation, and a script it renders, are caught; the main site's own pages carry its nonce CSP", async () => {
+    const area = `export default function P() { return <main><img src="/icon.png" alt="" useMap="#m" /><map name="m"><area href={"https:/" + "/evil.example/area"} alt="x" shape="rect" coords="0,0,10,10" /></map></main>; }\n`;
+    const anim = `export default function P() { return <main><svg viewBox="0 0 10 10"><a href="/rules"><set attributeName="href" to={"https:/" + "/evil.example/anim"} begin="0s" /><text y="5">x</text></a></svg></main>; }\n`;
+    // React's createElement reached by reflection renders a <script> on the server: it has no nonce, so it never runs
+    const script = `import * as R from "react";\nexport default function P() { const mk = Object.entries(R).find(([k]) => k === "create" + "Element")![1] as (t: string, p: null, c: string) => unknown; return <main>{mk("scr" + "ipt", null, "document.title = 'ran'") as never}</main>; }\n`;
+    const r = await post({ mode: "site", origin: "https://example.xyz", routes: ["/pc-area", "/pc-anim", "/pc-script", "/"], files: { "app/pc-area/page.tsx": area, "app/pc-anim/page.tsx": anim, "app/pc-script/page.tsx": script } }) as { ok: boolean; error?: string; violations: { kind: string; run: string; detail: string }[] };
+    assert.equal(r.error, undefined);
+    const of = (route: string) => r.violations.filter((v) => v.run.startsWith(`${route} `));
+    assert.ok(of("/pc-area").some((v) => v.kind === "network" && /a link off the site: https:\/\/evil\.example\/area/.test(v.detail)), JSON.stringify(of("/pc-area")));
+    assert.ok(of("/pc-anim").some((v) => v.kind === "network" && /a link off the site: https:\/\/evil\.example\/anim/.test(v.detail)), JSON.stringify(of("/pc-anim")));
+    assert.ok(of("/pc-script").some((v) => v.kind === "csp" && /an inline script without the response's nonce: <script>document\.title/.test(v.detail)), JSON.stringify(of("/pc-script")));
+    assert.ok(of("/pc-script").some((v) => v.kind === "csp" && /Content Security Policy|report:/.test(v.detail)), "the browser refused to run it");
+    assert.deepEqual(of("/"), [], "the home page (its scene and the shell's scripts) passes under the nonce CSP");
   });
 
   test("a new site page's words as shown pass the public text screen: a handle, a cashtag or another site's name in its main, its title or its description fails; an existing page with the shell's handle is not screened", async () => {

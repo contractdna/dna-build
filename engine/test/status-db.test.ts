@@ -39,7 +39,7 @@ const { edb: sql, migrate } = await import("../src/db.ts");
 const status = await import("../src/status.ts");
 const xM = await import("../src/x.ts");
 const modeM = await import("../src/mode.ts");
-const { d, LLM, MEDIA } = await import("../src/config.ts");
+const { d, MEDIA } = await import("../src/config.ts");
 const card = await import("../src/card.ts");
 /** What `f` returns, and the art requests a studio (stubbed: it accepts every request) got meanwhile, as "key scene". */
 async function artAsked(f: () => Promise<unknown>) {
@@ -206,8 +206,10 @@ test("launch day: 'online' once the engine is live and unmuted (the opening post
   assert.equal(tweets()[n + 1].body.text, `The Safe's owners connected the registry and the vaults to the hook in a single batch and queued the first fee plates.\n${TX_URL}${init}`);
 });
 
-test("chain progress: one post per kind that happened in the 2 h window (DNA's own contracts only), once per window, linking its latest tx", { skip }, async () => {
-  const at = new Date(Date.now() - 2 * 3600_000);
+test("chain progress: one combined post a 6 h window (DNA's own contracts only), once per window, linking its latest tx", { skip }, async () => {
+  // the latest window that has ended 30 min ago (the scheduler's due is a period start: 00:30, 06:30 …)
+  const H = 3600_000, to = Math.floor((Date.now() - 30 * 60_000) / (6 * H)) * 6 * H;
+  const at = new Date(to - 2 * H);
   const E = (eth: number) => String(BigInt(Math.round(eth * 1e6)) * 10n ** 12n);
   const put = (event: string, address: string, args: Record<string, string>, tx: string, when = at) => sql`insert into chain_log (block, log_index, tx, block_hash, at, address, event, args)
     values (${++block}, 0, ${tx}, '0x', ${when}, ${address.toLowerCase()}, ${event}, ${sql.json(args)})`;
@@ -216,48 +218,34 @@ test("chain progress: one post per kind that happened in the 2 h window (DNA's o
   await put("Distributed", d.feeVault, { amount: E(0.1), buyback: E(0.035), lp: E(0.03), treasury: E(0.025), game: E(0.01), baseline: "false" }, T(0xd2));
   await put("Distributed", "0x00000000000000000000000000000000000000aa", { amount: E(9), buyback: E(9), lp: "0", treasury: "0", game: "0", baseline: "false" }, T(0xd3)); // not ours
   await put("Buyback", d.buybackBurn, { spent: E(0.5), burned: String(1_234_567n * 10n ** 18n), pending: "0" }, T(0xb1));
-  await put("LiquidityAdded", d.liquidityVault, { salt: "1", tickLower: "1", tickUpper: "2", liquidity: "1", eth: E(0.26) }, T(0xa1), new Date(Date.now() - 8 * 3600_000)); // before the window
-  const due = new Date().toISOString();
+  await put("LiquidityAdded", d.liquidityVault, { salt: "1", tickLower: "1", tickUpper: "2", liquidity: "1", eth: E(0.26) }, T(0xa1), new Date(to - 8 * H)); // before the window
+  const due = new Date(to + 30 * 60_000).toISOString();
   const run = (when = due) => status.progressHandler.run(job("x:progress", { due: when }));
-  const launchAt = LLM.launchAt;
-  LLM.launchAt = Date.now() - 12 * 3600_000; // inside the launch window: every 2 h
-  const window = new Date(Date.parse(due) - 30 * 60_000 - 2 * 3600_000).toISOString().slice(0, 13);
+  const key = `progress_day:${new Date(to - 6 * H).toISOString().slice(0, 13)}`;
   const first = await artAsked(() => run());
-  assert.deepEqual(first.r, { [`fees_distributed:${window}`]: true, [`burn_summary:${window}`]: true });
-  assert.deepEqual(first.asked, [`burn_summary:${window} digest`, `fees_distributed:${window} jackpot_drawn`], "studio art asked for at enqueue, under the borrowed scenes");
-  assert.deepEqual(await run(), { [`fees_distributed:${window}`]: false, [`burn_summary:${window}`]: false }, "a retried run queues nothing twice");
-  const [f] = await outbox("fees_distributed:%");
-  assert.deepEqual(f.event, { event: "fees_distributed", hours: 2, distributions: 2, totalEth: 0.5, buybackEth: 0.175, liquidityEth: 0.15, treasuryEth: 0.125, gamesEth: 0.05 });
-  assert.equal(f.link, `${TX_URL}${T(0xd2)}`, "the latest distribute");
-  const [b] = await outbox("burn_summary:%");
-  assert.deepEqual([b.event.spentEth, b.event.burnedDna, b.link], [0.5, 1_234_567, `${TX_URL}${T(0xb1)}`]);
-  assert.equal((await outbox("liquidity_added:%")).length, 0, "nothing added in the window: no post");
-  assert.match(String(await run(new Date(Date.now() + 5 * 3600_000).toISOString())), /no progress post/, "a quiet window: silence");
-  assert.match(String(await run(new Date(Date.now() - 2 * 3600_000).toISOString())), /missed the progress hour/);
-  LLM.launchAt = launchAt; // the send below runs under the normal caps (X_POST_SPACING_MIN 0 here), not the launch window's 10 min
+  assert.deepEqual(first.r, { [key]: true });
+  assert.deepEqual(first.asked, [`${key} digest`], "studio art asked for at enqueue, under the digest's scene");
+  assert.deepEqual(await run(), { [key]: false }, "a retried run queues nothing twice");
+  const [o] = await outbox("progress_day:%");
+  assert.deepEqual(o.event, { event: "progress_day", hours: 6, distributions: 2, totalEth: 0.5, buybackEth: 0.175, liquidityEth: 0.15, treasuryEth: 0.125, gamesEth: 0.05,
+    buybacks: 1, spentEth: 0.5, burnedDna: 1_234_567 });
+  assert.equal(o.link, `${TX_URL}${T(0xb1)}`, "the window's latest tx");
+  assert.equal((await outbox("fees_distributed:%")).length + (await outbox("burn_summary:%")).length + (await outbox("liquidity_added:%")).length, 0, "one post, never one per kind");
+  assert.match(String(await run(new Date(to + 6.5 * H).toISOString())), /no progress post/, "a quiet window: silence");
+  assert.match(String(await run(new Date(to - 11.5 * H).toISOString())), /missed the progress hour/, "more than a window late: the next run has it");
+  assert.match(String(await run(new Date(to + 2.5 * H).toISOString())), /not a 6 h window's end/, "a run queued under the old 2 h schedule");
   // as posted: code's template from the facts (never the writer, so no flourish) and the tx link code appends
-  await sql`update x_outbox set status = 'skipped' where status = 'queued' and event_key not like 'burn_summary:%'`;
-  drafts = ["1 buyback in 2 h: 0.5 ETH spent, 1.23M DNA burned. Gone for good."]; // never asked
+  await sql`update x_outbox set status = 'skipped' where status = 'queued' and event_key not like 'progress_day:%'`;
+  drafts = ["6 h of work: fees split, DNA burned. Gone for good."]; // never asked
   try {
     const n = tweets().length;
     assert.ok((await xM.sendHandler.run(job("x:send")) as { tweetId?: string }).tweetId);
-    assert.equal(tweets()[n].body.text, `Buyback and burn: 0.5 ETH bought 1,234,567 DNA, and it was burned.\n${TX_URL}${T(0xb1)}`);
+    assert.equal(tweets()[n].body.text, `Last 6 h on-chain. Fees distributed: 0.5 ETH total. 0.175 ETH to buyback, 0.15 ETH to liquidity, 0.125 ETH to treasury, 0.05 ETH to games. Buyback and burn: 0.5 ETH bought 1,234,567 DNA, all of it burned.\n${TX_URL}${T(0xb1)}`);
   } finally { drafts = null; }
-  // after the window: one combined post a UTC day, from the 00:30 run only (here a future day, so no earlier row is in it)
-  try {
-    LLM.launchAt = Date.now() - 10 * 86_400_000;
-    const DAY = 86_400_000;
-    const day = Math.floor(Date.now() / DAY) * DAY + 2 * DAY;
-    await put("Buyback", d.buybackBurn, { spent: E(0.2), burned: String(400n * 10n ** 18n), pending: "0" }, T(0xb2), new Date(day + 3600_000));
-    await put("LiquidityAdded", d.liquidityVault, { salt: "2", tickLower: "1", tickUpper: "2", liquidity: "1", eth: E(0.1) }, T(0xa2), new Date(day + 2 * 3600_000));
-    assert.match(String(await run(new Date(day + 6.5 * 3600_000).toISOString())), /one combined progress post a day/, "06:30: no post after the window");
-    const key = `progress_day:${new Date(day).toISOString().slice(0, 10)}`;
-    assert.deepEqual(await run(new Date(day + DAY + 30 * 60_000).toISOString()), { [key]: true });
-    const [o] = await outbox("progress_day:%");
-    assert.deepEqual(o.event, { event: "progress_day", hours: 24, buybacks: 1, spentEth: 0.2, burnedDna: 400, adds: 1, ethAdded: 0.1 });
-    assert.equal(o.link, `${TX_URL}${T(0xa2)}`, "the day's latest tx");
-    assert.match(String(await run(new Date(day + 2 * DAY + 30 * 60_000).toISOString())), /no progress post/, "a quiet day: silence");
-  } finally { LLM.launchAt = launchAt; }
+  // the old engine's once-a-day post for that UTC day (progress_day:<date>) already told this window: not again
+  await sql`insert into x_outbox (event_key, type, status, event) values (${`progress_day:${new Date(to).toISOString().slice(0, 10)}`}, 'post', 'posted', '{}'::jsonb)`;
+  await put("LiquidityAdded", d.liquidityVault, { salt: "3", tickLower: "1", tickUpper: "2", liquidity: "1", eth: E(0.1) }, T(0xa3), new Date(to + 2 * H));
+  assert.match(String(await run(new Date(to + 6.5 * H).toISOString())), /already covered/);
 });
 
 test("site changes: each one posted once, oldest first, linking the changed page; an unreadable list waits without an alert", { skip }, async () => {

@@ -54,8 +54,9 @@ test("a round's charge: the reported cost clipped to [0, ceiling]; the whole cei
 });
 
 test("per-query caps scale with a smaller order ceiling", () => {
-  assert.deepEqual(s.perQuery(12), { lead: 2, worker: 0.5, tester: 1, fixer: 1, review: 2 });
-  assert.deepEqual(s.perQuery(4.8), { lead: 0.8, worker: 0.2, tester: 0.4, fixer: 0.4, review: 0.8 });
+  assert.deepEqual(s.perQuery(12), { lead: 2, worker: 1, tester: 1, fixer: 1, review: 2 });
+  assert.deepEqual(s.perQuery(4.8), { lead: 0.8, worker: 0.4, tester: 0.4, fixer: 0.4, review: 0.8 });
+  assert.equal(s.SEQ.effort.worker, "medium", "a worker at max effort spent its replies' output limit thinking");
 });
 
 test("the code ANDs the brain's ship with the gates; a rework after round 4 is a kill", () => {
@@ -117,9 +118,24 @@ test("a spec amendment: read from the build's report as data, appended to the sp
   for (const change of ["Make play payable so players can stake ETH.", "Players make a deposit to enter.", "Add a receive function for tips.", "Use inline assembly to loop cheaper.", "Use tx.origin to identify players."]) {
     assert.ok(s.amendmentIssues(spec, { reason: gas.reason, change }).some((i) => /forbid/.test(i)), change);
   }
+  // what a change drops is not asked for; code in it is no link (the killed builds' own amendments)
+  for (const change of [
+    "Seed the draw from the entries instead of blockhash. Each enter() mixes keccak256(mix, msg.sender, block.timestamp) into its window's running mix. finalize(), still only after the block draw() recorded, uses keccak256(mix, window, drawBlock) as the seed.",
+    "finalize() seeds the draw with keccak256 of three things: the window's entry mix, the draw block number and the window number. That takes the place of the draw block's blockhash.",
+    "Rates become the 4 params: one per 6-hour window. Hour = (ctx.blockNumber / 1800) % 24, 1800 = BLOCKS_PER_HOUR constant (2s blocks). schedule() is dropped.",
+    "No token, no threshold, no constructor arguments, no balance read, no external calls. Tiers come from the check-in streak, not token.balanceOf.",
+  ]) assert.deepEqual(s.amendmentIssues(spec, { reason: "A game can't make external calls, so it can't read a DNA balance.", change }), [], change);
+  // a verb of change, "not only", or a negation of something else still asks for it
+  for (const change of ["Seed from blockhash instead of the entries.", "Without the cap, players make a deposit to enter.", "Replace the mix with blockhash.", "Remove the receive function and add msg.value checks.", "Not only blockhash but also prevrandao seed the draw.", "Players enter with no limit on deposits.", "No external calls except token approvals.", "Players get no bonus. Use blockhash."]) {
+    assert.ok(s.amendmentIssues(spec, { reason: gas.reason, change }).some((i) => /forbid/.test(i)), change);
+  }
   // the same checks as any spec: plain text, at most 4000 characters in all
   assert.ok(s.amendmentIssues("x".repeat(3900), gas).some((i) => /4000/.test(i)));
   assert.ok(s.amendmentIssues(spec, { reason: gas.reason, change: "Pay by claim, as on https://example.com explains." }).some((i) => /url/.test(i)));
+  for (const d of ["evil.page", "dna.network", "evil.live", "evil.games", "scam.market", "scam.run", "evil.fund", "evil.team", "evil.wiki", "evil.gold", "evil.city", "evil.group", "msg.sender.evil.page"]) {
+    assert.ok(s.amendmentIssues(spec, { reason: gas.reason, change: `Pay by claim, as ${d} explains.` }).some((i) => /url/.test(i)), d);
+    assert.ok(s.specIssues(`${spec} See ${d}.`).some((i) => /url/.test(i)), d);
+  }
   // the spec the build checks against: the amended one only once approved
   const data = { spec, specSha256: sha256(spec) } as never as Parameters<typeof s.specOf>[0];
   assert.deepEqual(s.specOf(data), { spec, specSha256: sha256(spec) });

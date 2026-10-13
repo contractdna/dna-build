@@ -55,7 +55,7 @@ test("X priority: money > ballot / mystery results > experiments > the rest; the
     { id: "4", type: "post", event: { event: "game", name: "Drawn" } }, { id: "5", type: "post", event: { event: "digest" } }];
   assert.deepEqual([...q].sort((a, b) => rankOf(a) - rankOf(b) || Number(a.id) - Number(b.id)).map((i) => i.id), ["5", "4", "2", "1", "3"]);
   assert.equal(p({ event: "digest" }), 0);
-  assert.equal(eventPosts(), 24, "25 a day, the last one is the digest's");
+  assert.equal(eventPosts(), 49, "50 a day, the last one is the digest's");
   assert.deepEqual([bucketOf(typeOf({ event: "game", name: "Drawn" })), bucketOf("ballot_result"), bucketOf("outcome"), bucketOf("mystery_sealed")], ["money", "games", "experiments", "other"]);
 });
 

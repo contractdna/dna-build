@@ -58,7 +58,7 @@
     "nobody, the team included, can sign or post as the engine from outside it"
   ],
   "dev_team": [
-    "the sequencer builds up to 3 ideas at once: a game or a fee module (site changes are not switched on yet)",
+    "the sequencer builds up to 3 ideas at once: a game, a fee module or a new page on the site",
     "nothing ships unless it passes every gate: fuzz and invariant tests, a fork simulation, static analysis, planted-bug checks, a gas cap and a spec check",
     "a new game goes live only after 1 public hour, a fee module only when the Safe approves it, and an engine change only when an owner merges it"
   ]

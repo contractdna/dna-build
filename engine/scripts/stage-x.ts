@@ -68,7 +68,7 @@ const EVENTS: { name: string; raw: Record<string, unknown>; link?: string }[] = 
   { name: "fees_distributed", raw: { event: "fees_distributed", hours: 6, distributions: 2, totalEth: 0.523, buybackEth: 0.183, liquidityEth: 0.157, treasuryEth: 0.131, gamesEth: 0.0525 }, link: TX },
   { name: "burn_summary", raw: { event: "burn_summary", hours: 6, buybacks: 2, spentEth: 0.75, burnedDna: 1_834_567 }, link: TX },
   { name: "liquidity_added", raw: { event: "liquidity_added", hours: 6, adds: 1, ethAdded: 0.26 }, link: TX },
-  { name: "progress_day", raw: { event: "progress_day", hours: 24, distributions: 9, totalEth: 2.41, buybackEth: 0.844, liquidityEth: 0.723, treasuryEth: 0.603, gamesEth: 0.241, buybacks: 12, spentEth: 3.1, burnedDna: 4_120_000 }, link: TX },
+  { name: "progress_day", raw: { event: "progress_day", hours: 6, distributions: 9, totalEth: 2.41, buybackEth: 0.844, liquidityEth: 0.723, treasuryEth: 0.603, gamesEth: 0.241, buybacks: 12, spentEth: 3.1, burnedDna: 4_120_000 }, link: TX },
   ...(["rules_question", "state_question", "idea"] as const).map((category) => ({ name: `reply ${category}`, raw: { event: "reply", category, state: STATE } })),
 ];
 const only = arg.events?.split(",").map((s) => s.trim());

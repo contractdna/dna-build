@@ -31,7 +31,8 @@ export function usageUsd(modelUsage: unknown, model: string): number | null {
   }, 0);
 }
 
-/** The most output tokens the CLI asks any dev model for in one call (0.3.282: 64,000; 32,000 for Haiku). */
+/** The most output tokens the CLI asks any dev model for in one call: sdkEnv sets it (0.3.282 asks Haiku for 32,000 by
+ *  default, too few for a page written in one reply). */
 export const MAX_OUTPUT_TOKENS = 64_000;
 
 /** A running query's cost, call by call, from the SDK's raw stream events: message_start opens a call (its prompt

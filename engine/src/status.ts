@@ -6,11 +6,11 @@
 // A quiet status window (no swaps, nothing burned, nothing changed since the last status) posts nothing: silence when
 // nothing happened, like the digest.
 // Launch day: the engine going live is the opening post (once ever, the first time it is live and unmuted), the Safe's
-// first batch (the registry's Initialized) once; then every 2 h one post per kind of chain progress that happened (fee
-// distributions by leg, buybacks and burns, liquidity adds), each linking its latest tx (code appends the link).
+// first batch (the registry's Initialized) once. Chain progress (fee distributions by leg, buybacks and burns, liquidity
+// adds): every 6 h one combined post of every kind that happened, linking the latest tx (code appends the link).
 import { isDeepStrictEqual } from "node:util";
 import { formatEther } from "viem";
-import { announce, launchDay, recordUrl } from "./announce.ts";
+import { announce, recordUrl } from "./announce.ts";
 import { z } from "zod";
 import { d, type Deployment, LOG_BASE_URL } from "./config.ts";
 import { edb as sql } from "./db.ts";
@@ -30,7 +30,7 @@ const WEEK = 7 * DAY;
 
 /** Chain progress is summed per `hours` window; its job runs `lagMs` after the window ends, so the finalized indexer
  *  (≈ 13 min behind the head) has its last rows. */
-export const PROGRESS = { hours: 2, lagMs: 30 * 60_000 };
+export const PROGRESS = { hours: 6, lagMs: 30 * 60_000 };
 /** UTC hours of the two daily status posts. */
 export const STATUS_HOURS = [14, 22];
 /** The weekly recap: Sunday (0), 18:00 UTC. */
@@ -120,7 +120,8 @@ type ProgressRow = { tx: string; event: string; args: Record<string, string> };
 const sum = (rows: ProgressRow[], k: string) => rows.reduce((n, r) => n + BigInt(r.args[k] ?? 0), 0n);
 const ethOf = (wei: bigint) => sig3(Number(formatEther(wei)));
 /** One window's chain progress (rows: the window's FeeVault Distributed, BuybackBurn Buyback and LiquidityVault
- *  LiquidityAdded logs, in chain order): one post per kind with anything in it, each with its kind's latest tx. */
+ *  LiquidityAdded logs, in chain order): one fact set per kind with anything in it, each with its kind's latest tx
+ *  (progressDayFacts merges them into the one post). */
 export function progressFacts(rows: ProgressRow[], hours = PROGRESS.hours) {
   const of = (e: string) => rows.filter((r) => r.event === e);
   const dist = of("Distributed"), buy = of("Buyback"), add = of("LiquidityAdded");
@@ -132,11 +133,11 @@ export function progressFacts(rows: ProgressRow[], hours = PROGRESS.hours) {
   return out;
 }
 
-/** After the launch window: the day's chain progress in one post (every kind that happened), or null (nothing did). */
-export function progressDayFacts(rows: ProgressRow[]) {
-  const parts = progressFacts(rows, 24);
+/** A window's chain progress in one post (every kind that happened), or null (nothing did). */
+export function progressDayFacts(rows: ProgressRow[], hours = 24) {
+  const parts = progressFacts(rows, hours);
   if (!parts.length) return null;
-  const facts: Record<string, unknown> = { event: "progress_day", hours: 24 };
+  const facts: Record<string, unknown> = { event: "progress_day", hours };
   for (const p of parts) { const { event: _e, hours: _h, ...rest } = p.facts; Object.assign(facts, rest); }
   return { facts, tx: rows.at(-1)!.tx };
 }
@@ -208,10 +209,10 @@ export async function post(key: string, facts: Record<string, unknown>) {
   if (id) await requestArtFor(key, factSheet(facts)); // a post with studio art (the status, the recap): asked for now
   return id;
 }
-/** A scheduled run's hour; null when it runs over an hour late (caught up at boot: a stale status never posts). */
-function dueAt(job: Job) {
+/** A scheduled run's hour; null when it runs more than `late` after it (caught up at boot: a stale status never posts). */
+function dueAt(job: Job, late = HOUR) {
   const t = typeof job.payload.due === "string" ? Date.parse(job.payload.due) : Date.now();
-  return Date.now() - t > HOUR ? null : t;
+  return Date.now() - t > late ? null : t;
 }
 
 /** x:status (14:00 and 22:00 UTC): the last 12 h, or nothing on a quiet window. */
@@ -305,34 +306,27 @@ const progressRows = (from: number, to: number) => sql<ProgressRow[]>`select tx,
   where address = any(${[d.feeVault, d.buybackBurn, d.liquidityVault].map((a) => a.toLowerCase())}) and event = any(${["Distributed", "Buyback", "LiquidityAdded"]})
   and at >= ${new Date(from)} and at < ${new Date(to)} order by block, log_index`;
 
-/** x:progress (every 2 h, 30 min after the window): heavy updates early, never bot spam later.
- *  - On a launch day (src/announce.ts launchDay): the 2 h window's fee distributions, buybacks and liquidity adds, one
- *    post per kind that happened.
- *  - After: one combined post for the UTC day that ended (the 00:30 run only), at the lowest priority, so on a full day
- *    the digest absorbs it.
- *  Nothing happened: no post. Once per window (its key). */
+/** x:progress (every 6 h, 30 min after the window: 00:30, 06:30, 12:30, 18:30 UTC): the window's fee distributions,
+ *  buybacks and liquidity adds in one combined post. Nothing happened: no post. Once per window (its key). */
 export const progressHandler: Handler = {
   lane: "x",
   run: async (job) => {
-    const at = dueAt(job);
+    const at = dueAt(job, PROGRESS.hours * HOUR); // a late run still posts its window (the key is the window's), until the next run is due
     if (at === null) return `missed the progress hour (${job.payload.due})`;
     const to = at - PROGRESS.lagMs, from = to - PROGRESS.hours * HOUR;
-    let posts: { facts: Record<string, unknown>; tx: string; key: string }[];
-    if (launchDay(from)) {
-      const window = new Date(from).toISOString().slice(0, 13);
-      posts = progressFacts(await progressRows(from, to)).map((p) => ({ ...p, key: `${p.facts.event}:${window}` }));
-    } else {
-      if (new Date(to).getUTCHours() !== 0) return "after the launch window: one combined progress post a day (00:30 UTC)";
-      const p = progressDayFacts(await progressRows(to - DAY, to));
-      posts = p ? [{ ...p, key: `progress_day:${new Date(to - DAY).toISOString().slice(0, 10)}` }] : [];
-    }
+    // a run queued under the old 2 h schedule (10:30 …) would sum a window overlapping the next 6 h one: never posted
+    if (new Date(to).getUTCHours() % PROGRESS.hours || new Date(to).getUTCMinutes()) return `not a ${PROGRESS.hours} h window's end (${job.payload.due})`;
+    // a UTC day the old once-a-day post already covered (progress_day:<date>): not told twice
+    if ((await sql`select 1 from x_outbox where event_key = ${`progress_day:${new Date(from).toISOString().slice(0, 10)}`}`).length) return "the day's combined post already covered this window";
+    const p = progressDayFacts(await progressRows(from, to), PROGRESS.hours);
+    const posts = p ? [{ ...p, key: `progress_day:${new Date(from).toISOString().slice(0, 13)}` }] : [];
     if (!posts.length) return "nothing distributed, bought back or added in the window: no progress post";
     const out: Record<string, boolean> = {};
     for (const p of posts) {
       const link = `${TX_URL}${p.tx}`;
       await announce(p.key, p.facts, { tx: link });
       out[p.key] = !!(await enqueueX(p.key, "post", p.facts, { link })); // false: queued by an earlier run
-      if (out[p.key]) await requestArtFor(p.key, factSheet(p.facts)); // a fee split, a buyback: studio art, asked for now
+      if (out[p.key]) await requestArtFor(p.key, factSheet(p.facts)); // studio art under the digest's scene, asked for now
     }
     return out;
   },

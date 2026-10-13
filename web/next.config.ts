@@ -15,8 +15,8 @@ const nextConfig: NextConfig = {
   // Browsers still revalidate every time (max-age=0). No stale-while-revalidate: Cloudflare ignores it next to s-maxage
   // ("s-maxage disables stale-while-revalidate"), so HTML is at most 5 s old, also right after a deploy.
   async headers() {
-    // Mock (pre-launch) pages are prerendered and Next would send `s-maxage=31536000`: Cloudflare would then hold HTML
-    // for a year and serve it after a deploy, pointing at removed /_next chunks. Cap it at 60 s instead.
+    // Mock (pre-launch) pages hold no live data: 60 s. (Every page renders per request for its CSP nonce, so a CDN
+    // serves one nonce for at most this long; never a year, which would point at removed /_next chunks after a deploy.)
     const sMaxAge = process.env.NEXT_PUBLIC_LIVE === "1" ? 5 : 60;
     return [{
       source: "/:path((?!api/|api$|_next/).*)",

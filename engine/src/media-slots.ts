@@ -15,9 +15,10 @@ export const MEME_EVENTS = ["roast"] as const;
 export const IMAGE_EVENTS = [...ART_EVENTS, ...MEME_EVENTS] as const;
 /** Posts that carry the studio's art under an image event's scene (the studio's enum stays as it is): the lab's
  *  simulated candidates and a site change under the experiment's, the status, the nightly reflection, the weekly recap
- *  and a buyback and burn (the glow dims) under the digest's, a fee split under the jackpot's (sparks drawn out). */
+ *  and a buyback and burn (the glow dims) under the digest's, a fee split under the jackpot's (sparks drawn out), the
+ *  6 h chain progress (fees, burns, liquidity in one post) under the digest's. */
 export const SCENE_OF: Record<string, (typeof IMAGE_EVENTS)[number]> = {
-  lab: "outcome", status: "digest", reflection: "digest", recap: "digest", burn_summary: "digest", fees_distributed: "jackpot_drawn", site_changed: "outcome",
+  lab: "outcome", status: "digest", reflection: "digest", recap: "digest", burn_summary: "digest", fees_distributed: "jackpot_drawn", site_changed: "outcome", progress_day: "digest",
 };
 /** A post the studio makes art for (its own scene or a borrowed one). */
 export const hasArt = (event: string) => (IMAGE_EVENTS as readonly string[]).includes(event) || event in SCENE_OF;

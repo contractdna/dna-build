@@ -135,8 +135,8 @@ const schedules: Schedule[] = PRELAUNCH ? [{ kind: "cycle", everyMs: LOOP.cycleM
   { kind: "anchor", everyMs: DAY, offsetMs: 10 * 60_000, payload: prevDay },
   ...(X.userId ? [{ kind: "x:mentions", everyMs: X.mentionsMs }, { kind: "ideas:intake", everyMs: X.mentionsMs }, { kind: "x:replies", everyMs: X.mentionsMs }, ...(IDEAS_LIVE ? [{ kind: "x:quotes", everyMs: HOUR }] : [])] : []),
   // X posting: the outbox drains one item a minute within the caps; the tone brief daily at 06:00 UTC; the status at
-  // 14:00 and 22:00 UTC, the recap Sundays 18:00 UTC, milestones hourly, the launch-day posts and chain progress every
-  // 2 h (src/status.ts); the lab every 2 h on a launch day, 6 h after (src/lab.ts)
+  // 14:00 and 22:00 UTC, the recap Sundays 18:00 UTC, milestones hourly, the launch-day posts, chain progress every
+  // 6 h (src/status.ts); the lab every 2 h on a launch day, 6 h after (src/lab.ts)
   ...(X.clientId ? [{ kind: "x:send", everyMs: X.sendMs }, { kind: "x:scout", everyMs: DAY, offsetMs: 6 * HOUR }, { kind: "voice:audit", everyMs: 7 * DAY, offsetMs: 5 * HOUR }, { kind: "x:digest", everyMs: DAY, offsetMs: 23 * HOUR, payload: (start: Date) => ({ due: start.toISOString() }) }, ...xSchedules(), labSchedule()] : []),
   // agent loop: observe every 5 min (a feed line per finalized
   // advance), the full cycle every CYCLE_MS, plate ticks with the keeper cadence, an hourly pulse, journal 00:05 UTC.

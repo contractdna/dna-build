@@ -129,13 +129,27 @@ jobs:
           grep -q "enclave env lockdown" /tmp/lockdown.log
           grep -q "XAI_API_BASE is set" /tmp/lockdown.log
           grep -q "DNA_PERSONA is required" /tmp/lockdown.log
-      - name: smoke test (Chromium renders with no network; the service answers)
+      - name: smoke test (Chromium renders with no network; a page builds on a noexec /tmp; the service answers)
         if: matrix.image == 'pagecheck'
         run: |
           ID=dna-pagecheck:smoke
           # a whole check as the compose runs it (no network, read-only but /tmp): Playwright drives
           # the image's Chromium against its own anvil and catches a planted unguarded wallet request
           docker run --rm --network none --read-only --tmpfs /tmp "$ID" node pagecheck/src/selftest.ts
+          # a game page built and served as G15 does it, on the compose's /tmp (a noexec tmpfs): Next's swc must load
+          # from the image's /node_modules, never from the copy on /tmp (a build that can't load it fails here)
+          docker run --rm -i --network none --read-only --tmpfs /tmp:size=3g --entrypoint node "$ID" --input-type=module - <<'JS'
+          import { readFileSync } from "node:fs";
+          import { buildSite, prepareSite, removeSite, startSite } from "/app/pagecheck/src/site.ts";
+          import { startAnvil } from "/app/pagecheck/src/util.ts";
+          const t = "/app/web/app/g/_template-raffle";
+          const dir = prepareSite("/app/web", { raffle: Object.fromEntries(["page.tsx", "page.module.css", "game.json"].map((f) => [f, readFileSync(`${t}/${f}`, "utf8")])) });
+          await buildSite(dir);
+          const a = await startAnvil();
+          const site = await startSite(dir, { rpc: a.url, factory: `0x${"22".repeat(20)}` }); // resolves once it answers
+          site.stop(); a.stop(); removeSite(dir);
+          console.log("built and served");
+          JS
           docker run -d --name pagecheck-smoke --read-only --tmpfs /tmp -p 127.0.0.1:18090:8090 "$ID"
           for i in $(seq 1 30); do curl -fsS http://127.0.0.1:18090/health && break; sleep 1; done
           curl -fsS http://127.0.0.1:18090/health | grep -q '"ok":true'

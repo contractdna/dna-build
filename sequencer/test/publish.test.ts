@@ -124,6 +124,47 @@ for (const [what, title, want] of [
   });
 }
 
+test("a rate limit or a server error is tried again, up to 3 times, after its Retry-After; anything else fails at once", async () => {
+  const n = calls.length;
+  gh.fails.push({ status: 502 }, { status: 429, retryAfter: "1" }, { status: 503 });
+  const t = Date.now();
+  assert.deepEqual(await pub.gh("tok", "GET", "/repos/o/r/installation", undefined, 10), { id: 7 });
+  assert.ok(Date.now() - t >= 1000, "the Retry-After second was waited");
+  assert.equal(calls.length - n, 4);
+  gh.fails.push({ status: 500 }, { status: 500 }, { status: 500 }, { status: 500 });
+  await assert.rejects(pub.gh("tok", "GET", "/repos/o/r/installation", undefined, 10), /: 500 /);
+  assert.equal(calls.length - n, 8, "3 retries, then the error");
+  gh.fails.push({ status: 422 });
+  await assert.rejects(pub.gh("tok", "POST", "/repos/o/r/git/refs", {}, 10), /: 422 /);
+  assert.equal(calls.length - n, 9, "a 4xx is not tried again");
+});
+
+test("a create tried again that answers \"already exists\" is taken only when what is there is what it made", async () => {
+  const REF = "POST /repos/o/r/git/refs", PULL = "POST /repos/o/r/pulls";
+  const exists = (on: string, message: string) => [{ status: 502, on }, { status: 422, on, message }];
+  const run = async (plant: () => void, ...fails: { status: number; on: string; message?: string }[]) => {
+    const { patch, dir, base } = patchAndBase();
+    gh.refs.clear();
+    gh.pulls.length = 0;
+    plant();
+    gh.fails.push(...fails);
+    try {
+      return await pub.publish(order(base), patch, BODY, "Last Click", dir, "o/r", "tok");
+    } finally {
+      gh.fails.length = 0;
+    }
+  };
+  const branch = "seq/o-test-0001-r1";
+  // the first tries went through (the branch on this commit; the pull request from it to main): published
+  assert.deepEqual(await run(() => gh.refs.set(`refs/heads/${branch}`, "c1"), ...exists(REF, "Reference already exists")), { pr: 12, sha: "c1", branch });
+  assert.deepEqual(await run(() => gh.pulls.push({ number: 12, head: { ref: branch, sha: "c1" }, base: { ref: "main" } }), ...exists(PULL, `Validation Failed: A pull request already exists for o:${branch}.`)), { pr: 12, sha: "c1", branch });
+  // a branch on another commit, or a 422 on the first try: refused
+  await assert.rejects(run(() => gh.refs.set(`refs/heads/${branch}`, "c0"), ...exists(REF, "Reference already exists")), /: 422 /);
+  await assert.rejects(run(() => gh.refs.set(`refs/heads/${branch}`, "c1"), { status: 422, on: REF, message: "Reference already exists" }), /: 422 /);
+  // a pull request already open from this branch to another base: refused
+  await assert.rejects(run(() => gh.pulls.push({ number: 9, head: { ref: branch, sha: "c1" }, base: { ref: "dev" } }), { status: 502, on: PULL }, { status: 422, on: PULL, message: "A pull request already exists" }), /: 422 /);
+});
+
 test("the App's JWT is RS256 over its id, valid for 9 minutes", () => {
   const { privateKey, publicKey } = generateKeyPairSync("rsa", { modulusLength: 2048 });
   const jwt = pub.appJwt("1234", privateKey.export({ type: "pkcs8", format: "pem" }).toString(), 1_000_000);

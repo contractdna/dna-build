@@ -98,21 +98,28 @@ export async function artifactFiles(runId: number, artifact: string): Promise<Re
 /** A file out of a run's artifact: report.json, plan.json. null when absent. */
 export const artifactFile = async (runId: number, artifact: string, file: string) => (await artifactFiles(runId, artifact))?.[file] ?? null;
 
-/** CI's advisory gate run on a commit (sequencer-gates.yml): its conclusion and Slither's findings, short. DATA for the
- *  brain; the enclave's own gates decide (M3). null when CI has not run. */
+/** Slither's findings in one report (slither-<contract>.json), short: only those in the build's own folder. Slither reads
+ *  the shared kit (contracts/src/games/GameKit.sol) through every game, and the build can't change it. */
+export function slitherFindings(report: string): { check: string; impact: string; text: string }[] {
+  try {
+    const j = JSON.parse(report) as { results?: { detectors?: { check?: string; impact?: string; description?: string; elements?: { source_mapping?: { filename_relative?: string } }[] }[] } };
+    const own = (x: { description?: string; elements?: { source_mapping?: { filename_relative?: string } }[] }) =>
+      [...(x.elements ?? []).map((e) => e.source_mapping?.filename_relative ?? ""), x.description ?? ""].some((t) => /src\/games\/[^/#()\s]+\/[^/#()\s]+\.sol/.test(t));
+    return (j.results?.detectors ?? []).filter(own).map((x) => ({ check: String(x.check ?? "").slice(0, 60), impact: String(x.impact ?? "").slice(0, 20), text: String(x.description ?? "").slice(0, 200) }));
+  } catch {
+    return []; // not JSON: nothing to pass on
+  }
+}
+
+/** CI's advisory gate run on a commit (sequencer-gates.yml, the build's own: the repository's general CI is not asked):
+ *  its conclusion and Slither's findings in the build's folder, short. DATA for the brain; the enclave's own gates decide
+ *  (M3). null when CI has not run. */
 export async function ciAdvice(sha: string) {
   const r = await gh<{ workflow_runs: Run[] }>("GET", `/repos/{repo}/actions/workflows/sequencer-gates.yml/runs?head_sha=${sha}&per_page=5`);
   const run = (r.workflow_runs ?? []).sort((a, b) => b.id - a.id)[0];
   if (!run) return null;
   const files = run.status === "completed" ? await artifactFiles(run.id, "sequencer-gates").catch(() => null) : null;
-  const findings: { check: string; impact: string; text: string }[] = [];
-  for (const [name, b] of Object.entries(files ?? {})) {
-    if (!/^slither-.*\.json$/.test(name)) continue;
-    try {
-      const j = JSON.parse(b.toString("utf8")) as { results?: { detectors?: { check?: string; impact?: string; description?: string }[] } };
-      for (const x of j.results?.detectors ?? []) findings.push({ check: String(x.check ?? "").slice(0, 60), impact: String(x.impact ?? "").slice(0, 20), text: String(x.description ?? "").slice(0, 200) });
-    } catch { /* not JSON: nothing to pass on */ }
-  }
+  const findings = Object.entries(files ?? {}).filter(([name]) => /^slither-.*\.json$/.test(name)).flatMap(([, b]) => slitherFindings(b.toString("utf8")));
   return { status: run.status, conclusion: run.conclusion, slither: findings.slice(0, 20) };
 }
 

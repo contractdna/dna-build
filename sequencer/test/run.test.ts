@@ -111,6 +111,48 @@ test("the lead's spec amendment: every later role gets it in the plan, and the r
   }
 });
 
+test("a file the plan gives to two tasks stays with the first; a task left with no file is dropped, its goal going to the first", async () => {
+  const { dir, base } = checkout();
+  try {
+    const sol = "contracts/src/games/lastclick/LastClick.sol";
+    const tests = { goal: "Write the tests, and the contract's leader view.", files: ["contracts/test/games/lastclick/LastClick.t.sol", sol] };
+    const t = team(dir, { plan: { ...PLAN, tasks: [PLAN.tasks[0], tests, PLAN.tasks[2], { goal: "Add the deadline view to the contract.", files: [sol, sol] }] }, tester: () => ({ pass: false, findings: ["x"] }) });
+    const r = await build(order(base, { fixRounds: 1 }), dir, t.driver, {});
+    assert.equal(r.why, "tests still fail after 1 rounds");
+    const workers = t.calls.filter((c) => c.role === "worker");
+    assert.deepEqual(workers.map((w) => w.access.write), [[sol], ["contracts/test/games/lastclick/LastClick.t.sol"], ["web/app/g/lastclick/page.tsx", "web/app/g/lastclick/page.module.css"]]);
+    // the tests task keeps a file, so keeps its own goal
+    assert.deepEqual(r.plan!.tasks.map((x) => x.goal), ["Write the game contract from the spec. Also: Add the deadline view to the contract.", tests.goal, PLAN.tasks[2].goal]);
+    // a merged goal stays within the plan's 800 characters
+    const long = team(dir, { plan: { ...PLAN, tasks: [...PLAN.tasks, { goal: "g".repeat(800), files: [sol] }] }, tester: () => ({ pass: false, findings: ["x"] }) });
+    const lr = await build(order(base, { fixRounds: 1 }), dir, long.driver, {});
+    assert.equal(lr.plan!.tasks.length, PLAN.tasks.length);
+    assert.equal(lr.plan!.tasks[0].goal.length, 800);
+    assert.ok(lr.plan!.tasks[0].goal.startsWith(`${PLAN.tasks[0].goal} Also: ggg`) && lr.plan!.tasks[0].goal.endsWith("g…"));
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("a lead with no valid plan: its own answer goes to the report (cut, the key never in it)", async () => {
+  const { dir, base } = checkout();
+  try {
+    const raw = `{"title":"Holder Badges","amendment":{"reason":"r","change":"${"c".repeat(3000)}"},"note":"sk-or-SECRET"}`;
+    const failed = await build(order(base), dir, scriptDriver(() => ({ subtype: "error_max_structured_output_retries", raw })), { OPENROUTER_API_KEY_SEQUENCER: "sk-or-SECRET" });
+    assert.equal(failed.why, "the lead did not finish");
+    assert.equal(failed.report.leadAnswer!.length, 2000);
+    assert.ok(failed.report.leadAnswer!.startsWith('{"title":"Holder Badges"'));
+    const invalid = await build(order(base), dir, scriptDriver(() => ({ output: null, raw: '{"title":"x","note":"sk-or-SECRET"}' })), { OPENROUTER_API_KEY_SEQUENCER: "sk-or-SECRET" });
+    assert.equal(invalid.why, "the lead's plan is not valid");
+    assert.equal(invalid.report.leadAnswer, '{"title":"x","note":"<key>"}');
+    // a plan that is valid: nothing of the lead's in the report
+    const ok = await build(order(base, { fixRounds: 1 }), dir, team(dir, { tester: () => ({ pass: false, findings: ["x"] }) }).driver, {});
+    assert.equal(ok.report.leadAnswer, undefined);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 describe("a whole order", { skip: hasForge ? false : "needs forge and forge-std" }, () => {
   const made: string[] = [];
   after(() => { for (const d of made) rmSync(d, { recursive: true, force: true }); });
@@ -266,15 +308,6 @@ describe("a whole order", { skip: hasForge ? false : "needs forge and forge-std"
     assert.equal(fixes.length, 1);
     assert.match(fixes[0].prompt, /G3 Solidity patterns: .*cheatcode vm\.setEnv/);
     assert.doesNotMatch(fixes[0].prompt, /G9 /, "G9 never ran: a build already refused spends nothing on it");
-  });
-
-  test("planted: a plan that gives one file to two tasks stops before any worker", async () => {
-    const { dir, base } = checkout();
-    made.push(dir);
-    const t = team(dir, { plan: { ...PLAN, tasks: [...PLAN.tasks, { goal: "Write the game contract again.", files: ["contracts/src/games/lastclick/LastClick.sol"] }] } });
-    const r = await build(order(base), dir, t.driver, {});
-    assert.match(r.why, /one file to two tasks/);
-    assert.deepEqual(t.calls.map((c) => c.role), ["lead"]);
   });
 
   test("a game's plan says which template it copies (or none); one that doesn't stops before any worker", async () => {

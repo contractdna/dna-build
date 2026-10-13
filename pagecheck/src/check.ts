@@ -13,7 +13,9 @@
 // through the guard (its stack, its frame); anything the guard refused (it says so on the console); a decoy touched; a
 // frame, a new page or a popup; a request or navigation off the origin; a CSP violation; a page that throws while
 // loading, or a game that never mounts. A site page (a site change's) is checked the same way at its own path, except
-// that it has no wallet at all: any wallet request is a violation, and there is no guard or game to find.
+// that it has no wallet at all: any wallet request is a violation, and there is no guard or game to find; its document
+// must carry the main site's nonce CSP (siteCspIssues), and its links (a, area, an SVG anchor's animated href) stay on
+// the site.
 import { randomBytes } from "node:crypto";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -105,6 +107,22 @@ export function cspReport(body: string) {
 }
 
 const lc = (s: unknown) => (typeof s === "string" ? s.toLowerCase() : "");
+
+/** A site page's document against the main site's CSP: a nonce in script-src and no 'unsafe-inline' there, and every
+ *  inline script in the served HTML carrying that nonce (one without it is a script the page rendered itself). */
+export function siteCspIssues(csp: string, html: string): string[] {
+  const src = csp.split(";").map((d) => d.trim()).find((d) => /^script-src\s/i.test(d)) ?? "";
+  const nonce = src.match(/'nonce-([^']+)'/)?.[1];
+  const out: string[] = [];
+  if (!nonce) out.push(`the page's CSP has no nonce in script-src (${src || "no script-src"})`);
+  if (/'unsafe-inline'/i.test(src)) out.push("the page's CSP allows inline scripts ('unsafe-inline')");
+  for (const m of html.matchAll(/<script\b([^>]*)>/gi)) {
+    if (/\ssrc\s*=/i.test(m[1])) continue;
+    const n = m[1].match(/\snonce\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]+))/i);
+    if (!nonce || (n?.[1] ?? n?.[2] ?? n?.[3]) !== nonce) out.push(`an inline script without the response's nonce: ${html.slice(m.index!, m.index! + 120)}`);
+  }
+  return out;
+}
 
 /** Where the guard sits in the served HTML: [line, column] (1-based, as stack frames count) of the start and end of
  *  each inline script that carries it. */
@@ -308,6 +326,7 @@ async function oneRun(c: RunCtx) {
           if (!isDoc(u, req.isNavigationRequest())) return route.fulfill({ response: r, headers });
           const body = await r.text();
           spans = guardSpans(body);
+          if (i.site) for (const s of siteCspIssues(r.headers()["content-security-policy"] ?? "", body)) bad("csp", s);
           return route.fulfill({ response: r, body, headers });
         } catch (e) {
           c.notes.push(`${run}: backend ${u.pathname}: ${(e as Error).message}`);
@@ -317,7 +336,11 @@ async function oneRun(c: RunCtx) {
       if (u.pathname.startsWith("/api/kill/")) return route.fulfill({ status: 200, contentType: "application/json", body: '{"killed":false}', headers: timeHeaders({}) });
       const f = i.backend.files[`${u.pathname}${u.search}`] ?? i.backend.files[u.pathname];
       if (!f) { c.notes.push(`${run}: not in the replay: ${u.pathname}`); return route.fulfill({ status: 404, body: "", headers: timeHeaders({}) }); }
-      if (isDoc(u, req.isNavigationRequest())) spans = guardSpans(String(f.body));
+      if (isDoc(u, req.isNavigationRequest())) {
+        spans = guardSpans(String(f.body));
+        const csp = Object.entries(f.headers ?? {}).find(([k]) => k.toLowerCase() === "content-security-policy")?.[1] ?? "";
+        if (i.site) for (const s of siteCspIssues(csp, String(f.body))) bad("csp", s);
+      }
       return route.fulfill({ status: 200, contentType: f.type, body: f.body, headers: timeHeaders(f.headers ?? {}) });
     }
 
@@ -353,11 +376,16 @@ async function oneRun(c: RunCtx) {
     if (!guard) bad("guard", "the wallet guard is not in place on the page");
     if (!mounted) bad("not-mounted", `the game never mounted: ${(await page.locator("body").innerText().catch(() => "")).slice(0, 200)}`);
     if (!mounted || !guard) return; // already a kill: nothing more to learn from this run
-    // a site page's links, as the browser resolved them (entities decoded, strings joined; an SVG anchor's xlink:href
-    // too): only the page's own origin, over http(s), or a link the site's own shell carries (allowedLinks)
+    // a site page's links, as the browser resolved them (entities decoded, strings joined; an image map's areas, an SVG
+    // anchor's xlink:href and its href as an animation sets it too): only the page's own origin, over http(s), or a link
+    // the site's own shell carries (allowedLinks)
     const links = async () => {
       if (!i.site || page.isClosed()) return;
-      const hrefs = await page.$$eval("a", (as) => as.flatMap((a) => [a.getAttribute("href"), a.getAttribute("xlink:href")].filter((v): v is string => v !== null).map((v) => { try { return new URL(v, document.baseURI).href; } catch { return v; } }))).catch(() => [] as string[]);
+      const hrefs = await page.$$eval("a, area", (as) => as.flatMap((a) => {
+        const h = (a as Element & { href?: unknown }).href;
+        const anim = h && typeof h === "object" ? [(h as SVGAnimatedString).animVal, (h as SVGAnimatedString).baseVal] : [];
+        return [a.getAttribute("href"), a.getAttribute("xlink:href"), ...anim].filter((v): v is string => typeof v === "string").map((v) => { try { return new URL(v, document.baseURI).href; } catch { return v; } });
+      })).catch(() => [] as string[]);
       for (const h of hrefs) {
         let u: URL;
         try { u = new URL(h); } catch { bad("network", `a link that is no URL: ${h}`); continue; }

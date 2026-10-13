@@ -1,5 +1,6 @@
-// The play origin's CSP violation reports (report-uri): one short log line per report, nothing stored, nothing echoed.
-// A blocked request from a game page is a reason to look at that game (the kill switch is in the engine).
+// Both origins' CSP violation reports (report-uri): one short log line per report, nothing stored, nothing echoed.
+// A blocked request from a game page is a reason to look at that game (the kill switch is in the engine); a blocked
+// script on the main site, at the page that rendered it.
 export async function POST(req: Request) {
   const text = (await req.text().catch(() => "")).slice(0, 4_000);
   let r: Record<string, unknown> = {};

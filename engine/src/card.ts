@@ -36,7 +36,7 @@ export { ART_EVENTS, IMAGE_EVENTS, MAX_BYTES, artIssue, SHAPES, type Shape, shap
 export const LOGO_EVENTS = new Set(["online", "mystery_sealed", "mystery_revealed"]);
 /** Launch, progress and money posts: a pinned plate with the fact layer at once (never studio art; a treasury buy or
  *  transfer is a money fact and goes out at once). */
-export const PLATE_EVENTS = new Set(["contracts_connected", "keys_handed", "first_idea_round", "first_burn", "liquidity_added", "progress_day",
+export const PLATE_EVENTS = new Set(["contracts_connected", "keys_handed", "first_idea_round", "first_burn", "liquidity_added",
   "jackpot_params", "seq_online", "treasury_buy", "treasury_transfer"]);
 
 // ---------------------------------------------------------------- the fact layer
@@ -64,7 +64,7 @@ export function factLayer(facts: Record<string, unknown>, raw: Record<string, un
     case "fees_distributed": return { badge, headline: "FEE SPLIT", figures: some(["ETH split", facts.totalEth], ["to buyback", facts.buybackEth], ["to liquidity", facts.liquidityEth], ["to games", facts.gamesEth]), ...line(txLine) };
     case "burn_summary": return { badge, headline: "BUYBACK AND BURN", figures: some(["ETH spent", facts.spentEth], ["DNA burned", facts.burnedDna], ["buybacks", facts.buybacks]), ...line(txLine) };
     case "liquidity_added": return { badge, headline: "LIQUIDITY ADDED", figures: some(["ETH added", facts.ethAdded], ["adds", facts.adds]), ...line(txLine) };
-    case "progress_day": return { badge, headline: "THE DAY'S WORK", figures: some(["ETH split", facts.totalEth], ["ETH spent", facts.spentEth], ["DNA burned", facts.burnedDna], ["ETH added", facts.ethAdded]), ...line(txLine) };
+    case "progress_day": return { badge, headline: facts.hours === 24 ? "THE DAY'S WORK" : `THE LAST ${facts.hours} HOURS`, figures: some(["ETH split", facts.totalEth], ["ETH spent", facts.spentEth], ["DNA burned", facts.burnedDna], ["ETH added", facts.ethAdded]), ...line(txLine) };
     case "jackpot_params": return { badge, headline: "JACKPOT RULES", figures: [f("window", `#${fmt(facts.window)}`), ...some(["cap per wallet", facts.capPct, "%"], ["min balance", facts.minBalance, " DNA"])], ...line(txLine) };
     case "seq_online": return { badge, headline: "SEQUENCER ONLINE", figures: [] };
     case "treasury_buy": return { badge, headline: "TREASURY BUY", figures: some(["DNA bought", facts.dnaAmount], ["ETH spent", facts.ethSpent], ["of supply", facts.supplyPct, "%"]), ...line(txLine) };

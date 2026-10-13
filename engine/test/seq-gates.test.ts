@@ -228,6 +228,8 @@ describe("G11 web page", () => {
     ["a popup through a member", page(`"use client";\nconst w = {} as { open(u: string): void }; w.open("/g/x");`), /: open$/m],
     ["a popup after a local open in another scope", page(`"use client";\nfunction a() { const open = 1; return open; }\nopen("/g/x");`), /:3: open$/m],
     ["open destructured from an object", page(`"use client";\nconst { open } = {} as { open: () => void };`), /: open$/m],
+    ["open declared with no body", page(`"use client";\nfunction open(u: string): void;\nopen("/" + "/evil.example");`), /: open$/m],
+    ["open declared ambient", page(`"use client";\ndeclare const open: (u: string) => void;\nopen("/g/x");`), /: open$/m],
     ["navigation", page(`location.href = "/";`), /location/],
     ["storage", page(`localStorage.setItem("a", "b");`), /localStorage/],
     ["postMessage", page(`parent.postMessage("x", "*");`), /postMessage/],

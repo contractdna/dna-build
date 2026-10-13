@@ -14,7 +14,7 @@ import type { DevRole, Kind } from "../../engine/src/seq-order.ts";
 import { type Access, guardHook } from "./guard.ts";
 import { gatesServer } from "./gatetool.ts";
 import { loopbackOr } from "./ci.ts";
-import { backstopUsd, meter, usageUsd } from "./ledger.ts";
+import { backstopUsd, MAX_OUTPUT_TOKENS, meter, usageUsd } from "./ledger.ts";
 
 export type Query = {
   role: DevRole; model: string; effort: "low" | "medium" | "high" | "xhigh" | "max"; system: string; prompt: string;
@@ -22,7 +22,9 @@ export type Query = {
   /** the order's kind (absent: a game): which kit forge runs with */
   kind?: Kind;
 };
-export type Result = { costUsd: number; subtype: string; turns: number; output: unknown; text: string; modelUsage?: unknown; replied?: string[] };
+/** `raw`: what the model last answered, unparsed (its structured output, else its last reply's text and tool inputs), so
+ *  an answer the schema refused can be read. */
+export type Result = { costUsd: number; subtype: string; turns: number; output: unknown; text: string; modelUsage?: unknown; replied?: string[]; raw?: string };
 export type Driver = { run: (q: Query) => Promise<Result> };
 
 export const OPENROUTER = "https://openrouter.ai/api";
@@ -35,6 +37,8 @@ export function sdkEnv(env: Record<string, string | undefined> = process.env): R
     PATH: env.PATH ?? "/usr/bin:/bin", HOME: mkdtempSync(join(tmpdir(), "seq-home-")),
     ANTHROPIC_BASE_URL: loopbackOr(env.SEQ_MODEL_API, OPENROUTER), ANTHROPIC_AUTH_TOKEN: key, ANTHROPIC_API_KEY: "",
     CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: "1", DISABLE_TELEMETRY: "1", DISABLE_AUTOUPDATER: "1",
+    // every reply may be as long as the meter charges an unfinished one for
+    CLAUDE_CODE_MAX_OUTPUT_TOKENS: String(MAX_OUTPUT_TOKENS),
   };
 }
 
@@ -83,6 +87,7 @@ export function sdkDriver(root: string, env = sdkEnv()): Driver {
       let over = false;
       let cut = false; // the query was aborted (its timer, or a call started past the cap)
       let result: Result = { costUsd: q.maxBudgetUsd, subtype: "no_result", turns: 0, output: null, text: "" };
+      let said = "";
       try {
         // read to the end, even past the cap: every call the CLI makes is metered
         for await (const m of query({ prompt: q.prompt, options: sdkOptions(q, root, env, abort, end, { over: () => over, metered: spend.metered }) })) {
@@ -91,6 +96,11 @@ export function sdkDriver(root: string, env = sdkEnv()): Driver {
             if (over && (m.event as { type?: string }).type === "message_start") abort.abort();
             spend.see(m.event);
             over ||= spend.usd() > q.maxBudgetUsd;
+            continue;
+          }
+          if (m.type === "assistant") {
+            const blocks = (m as { message?: { content?: { type?: string; text?: string; input?: unknown }[] } }).message?.content ?? [];
+            said = blocks.map((b) => (b.type === "text" ? b.text : b.type === "tool_use" ? JSON.stringify(b.input) : "")).filter(Boolean).join("\n").slice(0, 8000);
             continue;
           }
           if (m.type !== "result") continue;
@@ -102,6 +112,7 @@ export function sdkDriver(root: string, env = sdkEnv()): Driver {
           result = {
             costUsd, subtype: r.subtype, turns: r.num_turns ?? 0,
             output: q.schema && r.structured_output !== undefined ? q.schema.safeParse(r.structured_output).data ?? null : null, text: String(r.result ?? ""), modelUsage: r.modelUsage,
+            raw: r.structured_output !== undefined ? JSON.stringify(r.structured_output).slice(0, 8000) : said,
           };
         }
       } catch (e) {
@@ -117,6 +128,7 @@ export function sdkDriver(root: string, env = sdkEnv()): Driver {
       // also for the most its unfinished call could have produced
       if (over) result = { ...result, subtype: "error_max_budget_usd", costUsd: Math.max(cut ? spend.charge() : spend.usd(), result.subtype === "no_result" ? 0 : result.costUsd) };
       const replied = spend.models();
+      if (result.raw === undefined && said) result = { ...result, raw: said };
       return replied.length ? { ...result, replied } : result;
     },
   };

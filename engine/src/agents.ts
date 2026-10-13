@@ -7,7 +7,7 @@
 // (the prompt hash is in every llm record; the local fakes use the tag to answer synthetically in tests/e2e). The task
 // wording is the persona bundle's (src/persona.ts prompt; neutral defaults in public builds); the DATA rule is code's.
 import { z } from "zod";
-import { type Call, llm, publicTextIssues, readUntrusted, type Tool } from "./llm.ts";
+import { type Call, DOMAIN, llm, publicTextIssues, readUntrusted, SPEC_DOMAIN, type Tool } from "./llm.ts";
 import { prompt, sys } from "./persona.ts";
 import { MODELS } from "./policy.ts";
 
@@ -160,12 +160,15 @@ export function allowedNumbers(input: unknown): Set<string> {
 export const strayNumbers = (text: string, allowed: Set<string>) =>
   (text.replace(/(\d),(\d{3})/g, "$1$2").match(/\d+(\.\d+)?/g) ?? []).filter((n) => !allowed.has(String(Number(n))));
 
-/** Model text bound for a record or the site: links, domains, @handles and cashtags other than $DNA removed. */
-export function sanitize(text: string) {
-  const out = text.replace(/https?:\/\/\S+|www\.\S+/gi, "").replace(/\b[a-z0-9-]+(\.[a-z0-9-]+)*\.[a-z]{2,}\b/gi, "")
+const strip = (text: string, domain: RegExp) => {
+  const out = text.replace(/https?:\/\/\S+|www\.\S+/gi, "").replace(new RegExp(domain.source, "gi"), "")
     .replace(/(^|[^\w])@\w+/g, "$1").replace(/\$(?!DNA\b)[A-Za-z][A-Za-z0-9_]*/g, "").replace(/\s+/g, " ").trim();
   return out || "(withheld: the text was only links or handles)";
-}
+};
+/** Model text bound for a record or the site: links, domains, @handles and cashtags other than $DNA removed. */
+export const sanitize = (text: string) => strip(text, DOMAIN);
+/** sanitize for a spec: only real links go (SPEC_DOMAIN), so code in it (block.timestamp, msg.sender) stays whole. */
+export const sanitizeSpec = (text: string) => strip(text, SPEC_DOMAIN);
 
 /** Published text check: constrained numbers and no links/handles/foreign cashtags. */
 export const textOk = (text: string, allowed: Set<string>) => !strayNumbers(text, allowed).length && !publicTextIssues(text).length;

@@ -254,10 +254,39 @@ const ENGINE_NODE_OFF = new Set(["node:child_process", "node:vm", "node:worker_t
  *  data layer's public read side (never the database client or request internals). Beyond these, only its own folder. */
 const SITE_SHARED = /^web\/app\/(_ui\/(ui|Shell|icons)|_data\/(source|types|flags|chain|launchFee))(\.tsx?)?$/;
 
+/** What a site page may take from react by name (types too): never createElement or the rest of React, which would
+ *  render any tag, a <script> included. */
+const SITE_REACT = new Set(["Fragment", "Suspense"]);
+/** A site page's package imports: react only by name (SITE_REACT), never its default or namespace; next/link and
+ *  next/image by their default only; no package re-exported. */
+function siteImportIssues(path: string, text: string): string[] {
+  const sf = ts.createSourceFile(path, text, ts.ScriptTarget.Latest, true, path.endsWith("x") ? ts.ScriptKind.TSX : ts.ScriptKind.TS);
+  const out: string[] = [];
+  for (const st of sf.statements) {
+    if (!(ts.isImportDeclaration(st) || ts.isExportDeclaration(st)) || !st.moduleSpecifier || !ts.isStringLiteral(st.moduleSpecifier) || !TS_PACKAGES.has(st.moduleSpecifier.text)) continue;
+    const spec = st.moduleSpecifier.text;
+    if (ts.isExportDeclaration(st)) { out.push(`${path}: re-exports ${JSON.stringify(spec)}`); continue; }
+    const c = st.importClause;
+    if (!c || c.isTypeOnly) continue;
+    const nb = c.namedBindings;
+    if (spec !== "react") {
+      // a type-only specifier is erased: `import Link, { type LinkProps } from "next/link"` imports the default alone
+      const values = nb && (ts.isNamespaceImport(nb) ? 1 : nb.elements.filter((e) => !e.isTypeOnly).length);
+      const typesOnly = !c.name && !!nb && ts.isNamedImports(nb) && nb.elements.length > 0 && !values;
+      if (!typesOnly && (!c.name || values)) out.push(`${path}: ${JSON.stringify(spec)} by its default import only`);
+    } else if (c.name || (nb && ts.isNamespaceImport(nb))) {
+      out.push(`${path}: React as a whole (${c.name ? "a default" : "a namespace"} import); import only ${[...SITE_REACT].join(" or ")} by name`);
+    } else if (nb) {
+      for (const e of nb.elements) if (!e.isTypeOnly && !SITE_REACT.has((e.propertyName ?? e.name).text)) out.push(`${path}: imports ${(e.propertyName ?? e.name).text} from "react" (only ${[...SITE_REACT].join(" or ")})`);
+    }
+  }
+  return out;
+}
+
 /** G2: no new dependency. Game sources import only the kit and their own files; tests also forge-std and the
  *  conformance suite; pages only react, next/link, next/image, the tx helper, the shared UI, and their own files. A
- *  site change's code imports only react, next/link, next/image, types from next, SITE_SHARED and files in its own
- *  folder. */
+ *  site change's code imports only react (SITE_REACT by name), next/link and next/image (their default), types from
+ *  next, SITE_SHARED and files in its own folder. */
 export function depGate(files: Record<string, string>, slug: string, kind: Kind = "game"): GateResult {
   const out: string[] = [];
   if (kind === "site") {
@@ -268,6 +297,7 @@ export function depGate(files: Record<string, string>, slug: string, kind: Kind 
         const ok = TS_PACKAGES.has(spec) || (spec === "next" && typeOnly) || (spec.startsWith(".") && (SITE_SHARED.test(r) || posix.dirname(r) === posix.dirname(path)));
         if (!ok) out.push(`${path}: import ${JSON.stringify(spec)} is not allowed`);
       }
+      out.push(...siteImportIssues(path, text));
     }
     return gate("G2", "dependencies", out);
   }
@@ -587,23 +617,33 @@ const BANNED_IDS = new Set([
   "require", "process", "dangerouslySetInnerHTML", "innerHTML", "outerHTML", "insertAdjacentHTML", "createElement", "appendChild", "setAttribute",
   "write", "clipboard", "ethereum", "web3", "unescape", "decodeURIComponent", "escape",
   "RTCPeerConnection", "webkitRTCPeerConnection", "RTCDataChannel",
+  "__lookupGetter__", "__defineGetter__", "__lookupSetter__", "__defineSetter__",
 ]);
 /** Banned globals that are also plain local names (a menu's `open` state): allowed where the name is a local binding
  *  (a variable, parameter, function or array-destructured element) or a reference to one bound in an enclosing scope
  *  of the same file. Never a member (x.open), a destructured property ({ open } = x) or an unbound reference (the
  *  global itself). */
 const LOCAL_OK = new Set(["open"]);
-/** The plain names a binding declares: an identifier, or an array pattern's elements (an object pattern reads members). */
-const boundNames = (b: ts.BindingName): string[] =>
-  ts.isIdentifier(b) ? [b.text] : ts.isArrayBindingPattern(b) ? b.elements.flatMap((e) => (ts.isBindingElement(e) && !e.dotDotDotToken ? boundNames(e.name) : [])) : [];
-const declaresHere = (scope: ts.Node, name: string): boolean => {
-  const vars = (l: ts.VariableDeclarationList | undefined) => !!l && l.declarations.some((d) => boundNames(d.name).includes(name));
-  if (ts.isFunctionLike(scope) && (scope.parameters.some((p) => boundNames(p.name).includes(name)) || (ts.isFunctionExpression(scope) && scope.name?.text === name))) return true;
+/** The plain names a binding declares: an identifier, or an array pattern's elements (an object pattern reads members).
+ *  `all`: every name it declares (object patterns and rest elements too). */
+const boundNames = (b: ts.BindingName, all = false): string[] =>
+  ts.isIdentifier(b) ? [b.text] : ts.isArrayBindingPattern(b) || all ? (b.elements as ts.NodeArray<ts.ArrayBindingElement>).flatMap((e) => (ts.isBindingElement(e) && (all || !e.dotDotDotToken) ? boundNames(e.name, all) : [])) : [];
+/** An ambient declaration (`declare const Object: …`) or a function signature with no body (`function Object(): never;`):
+ *  it emits nothing, so the name stays the global at run time. */
+const ambient = (n: ts.Node) => (ts.isFunctionDeclaration(n) && !n.body) || (ts.canHaveModifiers(n) && !!ts.getModifiers(n)?.some((m) => m.kind === ts.SyntaxKind.DeclareKeyword));
+/** Does `scope` declare `name`? `all`: any binding of it (imports, classes, object patterns), not only the plain local
+ *  kinds LOCAL_OK takes. An ambient declaration or a type-only import binds nothing (erased, the global stays). */
+const declaresHere = (scope: ts.Node, name: string, all = false): boolean => {
+  const vars = (l: ts.VariableDeclarationList | undefined) => !!l && l.declarations.some((d) => boundNames(d.name, all).includes(name));
+  if (ts.isFunctionLike(scope) && (scope.parameters.some((p) => boundNames(p.name, all).includes(name)) || (ts.isFunctionExpression(scope) && scope.name?.text === name))) return true;
+  if (all && ts.isClassExpression(scope) && scope.name?.text === name) return true;
   if (ts.isBlock(scope) || ts.isSourceFile(scope) || ts.isCaseClause(scope) || ts.isDefaultClause(scope)) {
-    return scope.statements.some((st) => (ts.isVariableStatement(st) && vars(st.declarationList)) || (ts.isFunctionDeclaration(st) && st.name?.text === name));
+    return scope.statements.some((st) => !ambient(st) && ((ts.isVariableStatement(st) && vars(st.declarationList)) || (ts.isFunctionDeclaration(st) && st.name?.text === name)
+      || (all && (ts.isClassDeclaration(st) || ts.isEnumDeclaration(st)) && st.name?.text === name)
+      || (all && ts.isImportDeclaration(st) && !!st.importClause && !st.importClause.isTypeOnly && (st.importClause.name?.text === name || (!!st.importClause.namedBindings && (ts.isNamespaceImport(st.importClause.namedBindings) ? st.importClause.namedBindings.name.text === name : st.importClause.namedBindings.elements.some((e) => !e.isTypeOnly && e.name.text === name)))))));
   }
   if ((ts.isForStatement(scope) || ts.isForOfStatement(scope) || ts.isForInStatement(scope)) && scope.initializer && ts.isVariableDeclarationList(scope.initializer)) return vars(scope.initializer);
-  if (ts.isCatchClause(scope)) return !!scope.variableDeclaration && boundNames(scope.variableDeclaration.name).includes(name);
+  if (ts.isCatchClause(scope)) return !!scope.variableDeclaration && boundNames(scope.variableDeclaration.name, all).includes(name);
   return false;
 };
 /** `id` declares a local of that name, or refers to one in an enclosing scope. */
@@ -616,7 +656,46 @@ function localName(id: ts.Identifier): boolean {
   for (let a: ts.Node | undefined = p; a; a = a.parent) if (declaresHere(a, id.text)) return true;
   return false;
 }
+/** The globals a site page may name: plain values and pure helpers. Every other name it reads is bound in its own file
+ *  (siteFreeName): no Object or Reflect to reach a module's members by reflection, no Function, globalThis or process. */
+const SITE_GLOBALS = new Set(["Math", "Number", "String", "Boolean", "Date", "Array", "JSON", "Intl", "Map", "Set", "BigInt", "parseInt", "parseFloat", "isNaN", "isFinite", "undefined", "NaN", "Infinity", "Promise", "encodeURIComponent", "encodeURI"]);
+/** `id` is a name read as a value (not a member, a key, a declaration, an attribute, an intrinsic tag, a label or a
+ *  type) that no enclosing scope of the file binds: a global. */
+function siteFreeName(id: ts.Identifier): boolean {
+  const p = id.parent;
+  if ((ts.isPropertyAccessExpression(p) || ts.isMetaProperty(p) || ts.isJsxAttribute(p)) && p.name === id) return false;
+  if (ts.isLabeledStatement(p) || ts.isBreakOrContinueStatement(p)) return false; // a label
+  if ((ts.isPropertyAssignment(p) || ts.isMethodDeclaration(p) || ts.isPropertyDeclaration(p) || ts.isAccessor(p) || ts.isPropertySignature(p) || ts.isMethodSignature(p) || ts.isEnumMember(p)) && p.name === id) return false;
+  if (ts.isBindingElement(p) && (p.name === id || p.propertyName === id)) return false; // its default value is read
+  if (ts.isImportSpecifier(p) || ts.isExportSpecifier(p) || ts.isImportClause(p) || ts.isNamespaceImport(p)) return false;
+  if ((ts.isVariableDeclaration(p) || ts.isParameter(p) || ts.isFunctionDeclaration(p) || ts.isFunctionExpression(p) || ts.isClassLike(p) || ts.isEnumDeclaration(p) || ts.isTypeAliasDeclaration(p) || ts.isInterfaceDeclaration(p) || ts.isTypeParameterDeclaration(p) || ts.isModuleDeclaration(p)) && p.name === id) return false;
+  if ((ts.isJsxOpeningElement(p) || ts.isJsxSelfClosingElement(p) || ts.isJsxClosingElement(p)) && p.tagName === id && /^[a-z]/.test(id.text)) return false;
+  // a type is erased (a class's `extends` is not: it runs)
+  for (let a: ts.Node = p; !ts.isSourceFile(a); a = a.parent) {
+    if (ts.isTypeNode(a) && !(ts.isExpressionWithTypeArguments(a) && ts.isHeritageClause(a.parent) && a.parent.token === ts.SyntaxKind.ExtendsKeyword && ts.isClassLike(a.parent.parent))) return false;
+    if (ts.isInterfaceDeclaration(a) || ts.isTypeAliasDeclaration(a)) return false;
+  }
+  for (let a: ts.Node | undefined = p; a; a = a.parent) if (declaresHere(a, id.text, true)) return false;
+  return true;
+}
+/** CSS properties that take a URL or an image: a site page's style object gives them only a literal without url(). */
+const URL_CSS = /image|background|content|cursor|mask|filter|clip|shape|offset|list|src|fill|stroke|marker|font/i;
+/** A site page's style attribute: an object literal of plain keys; a URL-taking property only a number or a string
+ *  literal with no url(), image-set() or escape (a string built at run time could hold any of them). */
+function siteStyleIssue(v: ts.Expression | undefined): string | null {
+  while (v && ts.isParenthesizedExpression(v)) v = v.expression;
+  if (!v || !ts.isObjectLiteralExpression(v)) return "style is an object literal";
+  for (const q of v.properties) {
+    if (!(ts.isPropertyAssignment(q) || ts.isShorthandPropertyAssignment(q)) || !ts.isIdentifier(q.name)) return "style keys are plain names (no spread, string or computed key)";
+    if (!URL_CSS.test(q.name.text)) continue;
+    const x = ts.isPropertyAssignment(q) ? q.initializer : undefined;
+    if (!x || !(ts.isNumericLiteral(x) || (ts.isStringLiteralLike(x) && !/url\s*\(|image-set|\\/i.test(x.text)))) return `style ${q.name.text} is a number or a string written out, with no url()`;
+  }
+  return null;
+}
 const BANNED_TAGS = new Set(["iframe", "frame", "frameset", "script", "meta", "link", "base", "object", "embed", "form", "portal", "applet"]);
+/** A site page's tags beyond BANNED_TAGS: <style>, and SVG animation, which can set an attribute (an href) at run time. */
+const SITE_TAGS_OFF = new Set(["style", "animate", "set", "animateMotion", "animateTransform"]);
 const BANNED_ATTRS = new Set(["httpEquiv", "formAction", "ping", "srcDoc", "dangerouslySetInnerHTML"]);
 const BANNED_STRINGS = [/eth_/i, /wallet_/i, /personal_sign/i, /\bapprove\b/i, /\bpermit\b/i, /setapprovalforall/i, /increaseallowance/i, /:\/\//, /^\s*\/\//, /javascript:/i, /<script/i, /use server/i, /data:[a-z]+\/[a-z0-9.+-]+[;,]/i, /eip6963/i];
 /** A site page has no wallet at all (G15 refuses any request to one), so plain words like "approve" are just words. */
@@ -625,8 +704,13 @@ const ADDRESS = /0x[0-9a-fA-F]{40}/;
 /** A game's page files together, in UTF-8 bytes: about 12× the largest template (game.json's ABI is most of it). */
 const MAX_PAGE = 200_000;
 /** A site page's link or source: a path on the site written out (a literal, or a template whose text starts with one),
- *  so the URL can never be built into another site ("/" + "/x.example", a tab or a backslash after the slash). */
-const SITE_URL_ATTRS = new Set(["href", "xlinkHref", "src"]);
+ *  so the URL can never be built into another site ("/" + "/x.example", a tab or a backslash after the slash). Names
+ *  compared lowercased (an attribute's name is case-blind in HTML: HREF is href). SITE_URL_ATTRS for an object's key
+ *  handed to a shared component; SITE_URL_JSX for an attribute. */
+const SITE_URL_ATTRS = new Set(["href", "xlinkhref", "src"]);
+const SITE_URL_JSX = new Set([...SITE_URL_ATTRS, "srcset", "poster", "background", "data", "action", "formaction"]);
+/** An HTML character reference: JSX decodes it in an attribute's string ("/&#47;x.example" renders "//x.example"). */
+const ENTITY = /&(#|[a-z][a-z0-9]*;)/i;
 const SITE_PATH = /^\/[A-Za-z0-9_.~%?#=&-]/;
 const sitePath = (e: ts.Expression | undefined): boolean => {
   while (e && ts.isParenthesizedExpression(e)) e = e.expression;
@@ -634,20 +718,41 @@ const sitePath = (e: ts.Expression | undefined): boolean => {
   if (ts.isStringLiteralLike(e)) return e.text === "/" || SITE_PATH.test(e.text) || /^#[A-Za-z0-9_-]*$/.test(e.text);
   return ts.isTemplateExpression(e) && SITE_PATH.test(e.head.text);
 };
+/** Is this string (or a template's text) a URL attribute's value that sitePath accepts, on an intrinsic tag or on the
+ *  next/link or next/image component? Then a dotted name in it ("/token.png", "/faq/chart.svg") is a file on this site,
+ *  not another site's name. Anywhere else (a page's own component could show it) it is text. */
+function sitePathValue(sf: ts.SourceFile, n: ts.Node): boolean {
+  let e: ts.Node = n.kind === ts.SyntaxKind.TemplateHead ? n.parent : ts.isTemplateSpan(n.parent) ? n.parent.parent : n;
+  while (ts.isParenthesizedExpression(e.parent)) e = e.parent;
+  const a = ts.isJsxExpression(e.parent) ? e.parent.parent : e.parent;
+  if (!ts.isJsxAttribute(a) || !ts.isIdentifier(a.name) || !SITE_URL_JSX.has(a.name.text.toLowerCase()) || !sitePath(e as ts.Expression)) return false;
+  const tag = a.parent.parent.tagName;
+  return ts.isIdentifier(tag) && (/^[a-z]/.test(tag.text) || sf.statements.some((st) => ts.isImportDeclaration(st) && ts.isStringLiteral(st.moduleSpecifier) && /^next\/(link|image)$/.test(st.moduleSpecifier.text) && st.importClause?.name?.text === tag.text));
+}
 /** What a site page may not name at all (beyond BANNED_IDS): the raw-HTML prop's parts and the element cloner that
  *  could hand it to a tag. */
 const SITE_IDS = new Set(["__html", "dangerouslySetInnerHTML", "cloneElement"]);
 /** A site page's attributes that are off whatever their value: next/link's `as` overrides the href the gate read. */
 const SITE_ATTRS_OFF = new Set(["as"]);
 
-/** A site page's tag: a lowercase intrinsic (never BANNED_TAGS or <style>), or a plain name this file binds only as an
- *  import (G2 holds the sources), a function declaration or a const arrow. `const S = ("scr" + "ipt") as "div"; <S>`
- *  renders a <script> (the site's CSP allows inline scripts), so a name bound any other way, and a member (<x.y>), is
- *  refused. `seen`: the file's names already read. */
+/** Is this `this` a class's own: in a member's body (an arrow inside it too), never a plain function's or an object
+ *  method's, whose `this` is whatever called it. */
+function inClassBody(n: ts.Node): boolean {
+  for (let a = n.parent; !ts.isSourceFile(a); a = a.parent) {
+    if (ts.isClassLike(a)) return true; // a property's initializer or a static block
+    if (ts.isFunctionLike(a) && !ts.isArrowFunction(a)) return ts.isClassLike(a.parent);
+  }
+  return false;
+}
+
+/** A site page's tag: a lowercase intrinsic (never BANNED_TAGS or SITE_TAGS_OFF), or a plain name this file binds only
+ *  as an import (G2 holds the sources), a function declaration or a const arrow. `const S = ("scr" + "ipt") as "div"; <S>`
+ *  renders a <script> (the site's nonce CSP keeps it from running, a second wall), so a name bound any other way, and a
+ *  member (<x.y>), is refused. `seen`: the file's names already read. */
 function siteTagIssue(sf: ts.SourceFile, tag: ts.JsxTagNameExpression, seen: Map<string, boolean>): string | null {
   if (!ts.isIdentifier(tag)) return `<${tag.getText(sf)}> (a tag is a plain name)`;
   const name = tag.text;
-  if (/^[a-z]/.test(name)) return BANNED_TAGS.has(name) || name === "style" ? `<${name}>` : null;
+  if (/^[a-z]/.test(name)) return BANNED_TAGS.has(name) || SITE_TAGS_OFF.has(name) ? `<${name}>` : null;
   let ok = seen.get(name);
   if (ok === undefined) {
     let good = 0, other = 0;
@@ -671,10 +776,12 @@ function siteTagIssue(sf: ts.SourceFile, tag: ts.JsxTagNameExpression, seen: Map
  *  approvals, URLs (protocol-relative too) or addresses (game.json holds the one address). G15 and the CSP stand behind
  *  it. A site change's code is held to the same reach rules, and more: it renders on the server only (no "use client",
  *  no on… handler attribute), its page.tsx may also export its metadata (one const, a title and a description, the name
- *  used nowhere else), no JSX spread, no <style>, no namespaced attribute, no `as`, every tag an intrinsic or a name
- *  the file binds as an import, a function or a const arrow (siteTagIssue), every href and src a path on the site
- *  written out, and its text and strings pass the public text screen (no handles, cashtags or other sites); its file
- *  names are G1's. */
+ *  used nowhere else), no JSX spread, no <style> or SVG animation, no namespaced attribute, no `as`, every tag an
+ *  intrinsic or a name the file binds as an import, a function or a const arrow (siteTagIssue), every URL attribute
+ *  (any case) a path on the site written out, no character reference in an attribute, a style object with no URL built
+ *  at run time, no global but SITE_GLOBALS, no computed key but a literal and no banned name as a string key, and its
+ *  text and strings pass the public text screen (no handles, cashtags or other sites); no backslash or image-set() in
+ *  its CSS; its file names are G1's. */
 export function webGate(files: Record<string, string>, slug: string, kind: Kind = "game"): GateResult {
   const out: string[] = [];
   const site = kind === "site";
@@ -690,6 +797,8 @@ export function webGate(files: Record<string, string>, slug: string, kind: Kind 
     if (!site && (NEXT_FILES.test(name) || !FILE_OK.test(name))) { out.push(`${path}: not page.tsx, a PascalCase component, a CSS module or game.json`); continue; }
     if (name.endsWith(".css")) {
       if (/@import|url\s*\(|expression\s*\(|behavior\s*:|-moz-binding/i.test(text)) out.push(`${path}: CSS @import, url(), expression or binding`);
+      // an escape spells url( or anything else past the check above; image-set() takes a bare string as an image
+      if (site && /\\|image-set\s*\(/i.test(text)) out.push(`${path}: a backslash or image-set() in CSS`);
       continue;
     }
     if (name === "game.json") {
@@ -729,11 +838,14 @@ export function webGate(files: Record<string, string>, slug: string, kind: Kind 
     }
     const tags = new Map<string, boolean>();
     const visit = (n: ts.Node) => {
+      // a page declares nothing ambient: `declare const Object` would read as a local and leave the global in reach
+      if (ambient(n)) out.push(`${where(n)}: an ambient declare or a function with no body (it binds nothing at run time)`);
       if (ts.isIdentifier(n) || ts.isPrivateIdentifier(n)) {
         // an attribute's name on a site page (<details open>) reaches no global; its value is still read
         const attrName = site && ts.isJsxAttribute(n.parent) && n.parent.name === n;
         const local = LOCAL_OK.has(n.text) && ts.isIdentifier(n) && localName(n);
         if ((BANNED_IDS.has(n.text) || (site && SITE_IDS.has(n.text))) && !attrName && !local) out.push(`${where(n)}: ${n.text}`);
+        else if (site && ts.isIdentifier(n) && !SITE_GLOBALS.has(n.text) && siteFreeName(n)) out.push(`${where(n)}: the global ${n.text} (a site page names only ${[...SITE_GLOBALS].join(", ")} and what its file binds)`);
       } else if (ts.isStringLiteralLike(n) || ts.isJsxText(n) || n.kind === ts.SyntaxKind.TemplateHead || n.kind === ts.SyntaxKind.TemplateMiddle || n.kind === ts.SyntaxKind.TemplateTail) {
         const s = (n as ts.LiteralLikeNode).text;
         for (const re of site ? SITE_STRINGS : BANNED_STRINGS) if (re.test(s)) out.push(`${where(n)}: string matching ${re}`);
@@ -741,17 +853,30 @@ export function webGate(files: Record<string, string>, slug: string, kind: Kind 
         // a site page's words and strings, as the public text screen reads a post (an import's path is no text)
         const spec = (ts.isImportDeclaration(n.parent) || ts.isExportDeclaration(n.parent)) && n.parent.moduleSpecifier === n;
         if (site && !spec) {
-          for (const i of publicTextIssues(s)) out.push(`${where(n)}: ${i === "url" ? "another site's name or link" : `a ${i}`} in the page's text`);
+          const file = sitePathValue(sf, n);
+          for (const i of publicTextIssues(s)) if (!(i === "url" && file)) out.push(`${where(n)}: ${i === "url" ? "another site's name or link" : `a ${i}`} in the page's text`);
           if (SITE_IDS.has(s.trim())) out.push(`${where(n)}: ${s.trim()}`);
+          // a key written as a string ({ "constructor": F } = …) reaches what the name would
+          const p = n.parent;
+          const key = ts.isComputedPropertyName(p) || ((ts.isPropertyAssignment(p) || ts.isMethodDeclaration(p) || ts.isPropertyDeclaration(p)) && p.name === n) || (ts.isBindingElement(p) && p.propertyName === n);
+          if (key && BANNED_IDS.has(s)) out.push(`${where(n)}: ${s} as a key`);
         }
       } else if (ts.isNumericLiteral(n) || ts.isBigIntLiteral(n)) {
         if (/^0x[0-9a-f]{30,}/i.test(n.text)) out.push(`${where(n)}: a long hex literal`);
       } else if (n.kind === ts.SyntaxKind.ImportKeyword && ts.isCallExpression(n.parent)) {
         out.push(`${where(n)}: dynamic import()`);
+      } else if (site && ts.isMetaProperty(n)) {
+        // import.meta (the module's own URL and resolver), new.target (the function's caller): neither is a page's
+        out.push(`${where(n)}: ${n.getText(sf)}`);
+      } else if (site && n.kind === ts.SyntaxKind.ThisKeyword && !inClassBody(n)) {
+        out.push(`${where(n)}: this outside a class (whatever called the function)`);
       } else if (ts.isElementAccessExpression(n)) {
         if (!ts.isNumericLiteral(n.argumentExpression)) out.push(`${where(n)}: computed member access (only a numeric literal key)`);
       } else if (ts.isTaggedTemplateExpression(n)) {
         out.push(`${where(n)}: tagged template`);
+      } else if (site && ts.isComputedPropertyName(n) && !ts.isStringLiteral(n.expression) && !ts.isNumericLiteral(n.expression)) {
+        // { [k]: v } = module: a member picked by a name built at run time
+        out.push(`${where(n)}: a computed key (only a string or numeric literal)`);
       } else if (ts.isJsxOpeningElement(n) || ts.isJsxSelfClosingElement(n)) {
         if (site) {
           const issue = siteTagIssue(sf, n.tagName, tags);
@@ -769,10 +894,18 @@ export function webGate(files: Record<string, string>, slug: string, kind: Kind 
         if (/^on[A-Z]/.test(n.name.text) && n.initializer && ts.isStringLiteral(n.initializer)) out.push(`${where(n)}: inline event handler string`);
         else if (site && /^on[A-Z]/i.test(n.name.text)) out.push(`${where(n)}: event handler ${n.name.text} (a site page renders on the server only)`);
         const v = n.initializer && ts.isJsxExpression(n.initializer) ? n.initializer.expression : (n.initializer as ts.Expression | undefined);
-        if (site && SITE_URL_ATTRS.has(n.name.text) && !sitePath(v)) out.push(`${where(n)}: ${n.name.text} must be a path on this site, written out ("/rules", or \`/journal/\${day}\`)`);
+        const attr = n.name.text.toLowerCase();
+        if (site && SITE_URL_JSX.has(attr) && !sitePath(v)) out.push(`${where(n)}: ${n.name.text} must be a path on this site, written out ("/rules", or \`/journal/\${day}\`)`);
+        // one image only: a second candidate after a comma could be on another site
+        if (site && attr === "srcset" && !(v && ts.isStringLiteralLike(v) && !v.text.includes(","))) out.push(`${where(n)}: ${n.name.text} is one path written out`);
+        if (site && n.initializer && ts.isStringLiteral(n.initializer) && ENTITY.test(n.initializer.text)) out.push(`${where(n)}: a character reference in ${n.name.text} (write the character)`);
+        if (site && attr === "style") {
+          const issue = siteStyleIssue(v);
+          if (issue) out.push(`${where(n)}: ${issue}`);
+        }
       } else if (site && ts.isJsxSpreadAttribute(n)) {
         out.push(`${where(n)}: a spread attribute (write each attribute out)`);
-      } else if (site && (ts.isPropertyAssignment(n) || ts.isShorthandPropertyAssignment(n)) && (ts.isIdentifier(n.name) || ts.isStringLiteral(n.name)) && SITE_URL_ATTRS.has(n.name.text) && !(ts.isPropertyAssignment(n) && sitePath(n.initializer))) {
+      } else if (site && (ts.isPropertyAssignment(n) || ts.isShorthandPropertyAssignment(n)) && (ts.isIdentifier(n.name) || ts.isStringLiteral(n.name)) && SITE_URL_ATTRS.has(n.name.text.toLowerCase()) && !(ts.isPropertyAssignment(n) && sitePath(n.initializer))) {
         // a link handed to a shared component ({ back: { href: "/lab", label } })
         out.push(`${where(n)}: ${n.name.text} must be a path on this site, written out`);
       }

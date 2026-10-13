@@ -1284,7 +1284,7 @@ export async function burnedDna(from: Date, to?: Date) {
   return Math.round(Number(BigInt(String(burned ?? "0").split(".")[0]) / 10n ** 18n));
 }
 
-/** Daily (23:00 UTC), one post that counts as 1 of the 25: the day's numbers (`dayFacts`) and the posts that did not
+/** Daily (23:00 UTC), one post that counts as 1 of the day's 50: the day's numbers (`dayFacts`) and the posts that did not
  *  fit today (rolled over, or still queued behind the cap) by kind, with the link to the full list; each of those is
  *  on the site already (announced again here if it never resolved before). */
 export const digestHandler: Handler = {

@@ -504,7 +504,7 @@ test("X pipeline: chain event → fact sheet → writer (no tools) → filter �
     assert.match(String(await xM.sendHandler.run(job())), new RegExp(`^waiting: posts \\d+/${X.dailyPosts} \\(spacing 20 min\\)`));
     X.spacingMs = 0; X.dailyPosts = (await xM.usedToday()).post;
     assert.match(String(await xM.sendHandler.run(job())), /^waiting: posts (\d+)\/\1 /);
-    X.dailyPosts = 25;
+    X.dailyPosts = 50;
     // dry_run: written and filtered, never posted
     await modeM.setOverride("dry_run", "test");
     const t = tweets().length;
@@ -1505,6 +1505,17 @@ test("X ideas: the author is tagged as the idea moves (under our own last reply,
     const merged = await row("idea_update:x:9801:merged");
     assert.deepEqual([merged.reply_to, merged.link, merged.event.step, merged.event.target, merged.event.vetoable], ["88002", `${LOG_BASE_URL}/sequencer`, "merged", "site", true]);
     await post("idea_update:x:9801:merged", "88003");
+    // the site serves it days after the idea last moved (a deploy by hand: sequencer.ts serveStep): still told, once
+    await sql`update idea_queue set updated_at = now() - interval '3 days' where id = 'x:9801'`;
+    assert.equal((await social.ideaUpdatesHandler.run(job()) as Record<string, string>)["x:9801"], undefined, "not moved");
+    await build("shipped", { kind: "site", mergeSha: "ab".repeat(20), served: new Date().toISOString() });
+    // 20 newer X ideas moved today (at a status no reply tells): the served one is still looked at
+    await sql`insert into idea_queue (id, kind, status, data) select 'x:fill' || g, 'build', 'waiting', '{"source":{"source":"x"}}'::jsonb from generate_series(1, 20) g`;
+    assert.equal((await social.ideaUpdatesHandler.run(job()) as Record<string, string>)["x:9801"], "shipped");
+    await sql`delete from idea_queue where id like 'x:fill%'`;
+    assert.equal((await social.ideaUpdatesHandler.run(job()) as Record<string, string>)["x:9801"], "told");
+    await sql`delete from x_outbox where event_key = 'idea_update:x:9801:shipped'`;
+    await sql`update idea_queue set updated_at = now() where id = 'x:9801'`;
     await build("shipping", {});
     assert.equal((await social.ideaUpdatesHandler.run(job()) as Record<string, string>)["x:9801"], "waiting: the game is not live yet");
     await build("shipped", {});

@@ -361,7 +361,7 @@ test("the digest stays silent when nothing happened", async () => {
 
 test("launch, progress and treasury posts get a plate card at once: a headline and code's figures on a pinned plate, under the upload cap; the engine going live gets the logo", () => {
   assert.deepEqual([...card.PLATE_EVENTS].sort(), Object.keys(PLATE_SAMPLES).filter((e) => !media.hasArt(e)).sort());
-  assert.deepEqual(Object.keys(PLATE_SAMPLES).filter(media.hasArt).sort(), ["burn_summary", "fees_distributed", "site_changed"], "studio art first, the same card on a plate when it does not come");
+  assert.deepEqual(Object.keys(PLATE_SAMPLES).filter(media.hasArt).sort(), ["burn_summary", "fees_distributed", "progress_day", "site_changed"], "studio art first, the same card on a plate when it does not come");
   assert.ok(card.LOGO_EVENTS.has("online") && readFileSync(card.LOGO_MP4).length > 0);
   const p = plates();
   const tx = `0x${"ab".repeat(32)}`;
@@ -382,7 +382,7 @@ test("launch, progress and treasury posts get a plate card at once: a headline a
 });
 
 test("a fee split, a buyback and burn and a site change: studio art under a borrowed scene (the studio's enum is unchanged), the ETH as light; treasury posts stay plates", () => {
-  assert.deepEqual(["burn_summary", "fees_distributed", "site_changed"].map((e) => slotsOf({ event: e, ...PLATE_SAMPLES[e] }, `${e}:t`, "riso").event), ["digest", "jackpot_drawn", "outcome"]);
+  assert.deepEqual(["burn_summary", "fees_distributed", "progress_day", "site_changed"].map((e) => slotsOf({ event: e, ...PLATE_SAMPLES[e] }, `${e}:t`, "riso").event), ["digest", "jackpot_drawn", "digest", "outcome"]);
   assert.ok(slotsOf({ event: "fees_distributed", totalEth: 5 }, "k", "riso").light > slotsOf({ event: "fees_distributed", totalEth: 0.1 }, "k", "riso").light, "a bigger split glows more");
   assert.ok(slotsOf({ event: "burn_summary", spentEth: 2 }, "k", "riso").light > 0);
   for (const e of ["treasury_buy", "treasury_transfer"]) assert.ok(card.PLATE_EVENTS.has(e) && !media.hasArt(e), e);

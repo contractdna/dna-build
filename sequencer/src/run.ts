@@ -28,7 +28,8 @@ import { type Amendment, data, Findings, gameRoots, Plan, prompt, Review, roleFo
 export type Outcome = { ok: boolean; why: string; plan?: Plan; prBody?: string; report: Report };
 /** One tester round: its verdict and findings, plus the build's own suite failure if any (each cut to 400 characters). */
 export type TestRound = { round: number; pass: boolean; findings: string[] };
-export type Report = { orderId: string; round: number; runId: string | null; runAttempt: string | null; queries: Spent[]; tests: TestRound[]; totalUsd: number; outcome: string; amendment?: Amendment };
+/** `leadAnswer`: the lead's own answer when it gave no valid plan (cut to 2,000 characters), so the failure can be read. */
+export type Report = { orderId: string; round: number; runId: string | null; runAttempt: string | null; queries: Spent[]; tests: TestRound[]; totalUsd: number; outcome: string; amendment?: Amendment; leadAnswer?: string };
 /** Each step's own limit: a query, the build's suite run (up to fixRounds times), the final compile. */
 const QUERY_MS = 20 * 60_000;
 const SUITE_MS = 10 * 60_000;
@@ -49,7 +50,8 @@ export async function build(o: Order, root: string, driver: Driver, env: Record<
   const ledger = new Ledger(o.budget.ceilingUsd, o.budget.perQueryUsd);
   const tests: TestRound[] = [];
   let amendment: Amendment | undefined;
-  const report = (outcome: string): Report => ({ orderId: o.id, round: o.round, runId: env.GITHUB_RUN_ID ?? null, runAttempt: env.GITHUB_RUN_ATTEMPT ?? null, queries: ledger.entries, tests, totalUsd: Number(ledger.spent.toFixed(6)), outcome, ...(amendment ? { amendment } : {}) });
+  let leadAnswer: string | undefined;
+  const report = (outcome: string): Report => ({ orderId: o.id, round: o.round, runId: env.GITHUB_RUN_ID ?? null, runAttempt: env.GITHUB_RUN_ATTEMPT ?? null, queries: ledger.entries, tests, totalUsd: Number(ledger.spent.toFixed(6)), outcome, ...(amendment ? { amendment } : {}), ...(leadAnswer ? { leadAnswer } : {}) });
   // report.json is an artifact anyone with read access can download: the model key never reaches it, even quoted back
   const key = env.OPENROUTER_API_KEY_SEQUENCER;
   const clip = (s: string) => (key ? s.split(key).join("<key>") : s).slice(0, 400);
@@ -64,6 +66,7 @@ export async function build(o: Order, root: string, driver: Driver, env: Record<
 
   async function team(): Promise<Outcome> {
     const kind = kindOf(o);
+    let leadRaw: string | undefined;
     /** One query of `role`; null when it can't start or didn't finish cleanly (budget, turns, time, error). */
     const ask = async (role: DevRole, extra: string, files?: string[]): Promise<Result | null> => {
       const ms = slot(QUERY_MS, deadline, now());
@@ -76,18 +79,34 @@ export async function build(o: Order, root: string, driver: Driver, env: Record<
         timeoutMs: ms, slug: o.slug, kind, schema: spec.schema, access: { root, tools: spec.tools, read: spec.read(o.slug), write: spec.write(o.slug, files), output: spec.schema !== undefined },
       });
       ledger.settle(cap, { role, model: o.models[role], costUsd: r.costUsd, subtype: r.subtype, turns: r.turns, modelUsage: r.modelUsage, replied: r.replied });
+      if (role === "lead") leadRaw = r.raw;
       return r.subtype === "success" ? r : null;
     };
 
     // lead: the plan
     const lead = await ask("lead", "Plan this build.");
     const plan = Plan.safeParse(lead?.output);
+    // the report is public: the key never reaches it
+    if (!lead || !plan.success) leadAnswer = leadRaw && (key ? leadRaw.split(key).join("<key>") : leadRaw).slice(0, 2000);
     if (!lead) return stop("the lead did not finish");
     if (!plan.success) return stop("the lead's plan is not valid");
-    // a spec amendment goes to the brain with the report, whatever the build's end (the enclave reviews it at the verdict)
+    // a spec amendment goes to the brain with the report, whatever the build's end (the enclave reviews it as the round ends)
     const a = plan.data.amendment;
     const redact = (s: string) => (key ? s.split(key).join("<key>") : s);
     amendment = a && { reason: redact(a.reason), change: redact(a.change) };
+    // a file in two tasks (two workers writing it at once) stays with the first; a task left with no file is dropped, its
+    // goal going to the tasks that hold its files (cut to the plan's 800 characters)
+    plan.data.tasks = plan.data.tasks.reduce<Plan["tasks"]>((kept, t) => {
+      const owner = (f: string) => kept.find((k) => k.files.includes(f));
+      const taken = t.files.filter(owner);
+      const files = [...new Set(t.files.filter((f) => !taken.includes(f)))];
+      if (files.length) return [...kept, { ...t, files }];
+      for (const k of new Set(taken.map(owner))) {
+        const goal = `${k!.goal} Also: ${t.goal}`;
+        k!.goal = goal.length > 800 ? `${goal.slice(0, 799)}…` : goal;
+      }
+      return kept;
+    }, []);
     const planned = plan.data.tasks.flatMap((t) => t.files);
     // the gates' own reach (G1, path by path): a plan never names a file the gates would refuse
     const outside = planned.filter((f) => scopeIssue(kind, o.slug, f) !== null);
@@ -95,7 +114,6 @@ export async function build(o: Order, root: string, driver: Driver, env: Record<
     // a site change: new files only, in a new route folder, on a URL no page serves yet (G1 against the checkout's base)
     const notNew = kind === "site" ? siteNewIssues(planned, basePaths(root)) : [];
     if (notNew.length) return stop(`the plan does not add a new route: ${notNew.slice(0, 3).join("; ")}`, plan.data);
-    if (new Set(planned).size !== planned.length) return stop("the plan gives one file to two tasks", plan.data);
     // a module's plan names its policy and the bounds proposed to the Safe; nothing else's does
     const bounds = specBounds(plan.data.bounds);
     if (kind === "module" && !plan.data.module) return stop("the plan names no module kind (fee or split)", plan.data);
@@ -108,6 +126,8 @@ export async function build(o: Order, root: string, driver: Driver, env: Record<
     if (kind === "engine" && !planned.some((f) => /^engine\/test\/[a-z][a-z0-9-]*\.test\.ts$/.test(f))) return stop("an engine change's plan writes no test", plan.data);
     // the lead's plan is model output: the others get it as data too
     const planText = `PLAN (data):\n<<<\n${data(JSON.stringify(plan.data, null, 1))}\n>>>`;
+    // the brain rules on an amendment only once the round ends, and the team builds to it: the review checks that spec
+    const amended = amendment ? "\nThe plan carries a spec amendment the brain has not ruled on yet. The team built to it: check the build against the spec with the amendment's change (unless the issues say the brain refused one; then the spec as written stands)." : "";
 
     // workers, in parallel
     const done = await Promise.all(plan.data.tasks.map((t, i) => ask("worker", `${planText}\nYOUR TASK: number ${i + 1} of ${plan.data.tasks.length} in the plan\nFILES YOU WRITE: ${t.files.join(", ")}`, t.files)));
@@ -123,7 +143,7 @@ export async function build(o: Order, root: string, driver: Driver, env: Record<
         const fx = await ask("fixer", `${planText}\nFINDINGS TO FIX (data):\n<<<\n${data(issues.slice(0, 20).map((x) => `- ${x}`).join("\n"))}\n>>>`, planned);
         if (!fx) return stop("the fixer did not finish", plan.data);
       }
-      const rv = await ask("review", `${planText}\nReview the change.`);
+      const rv = await ask("review", `${planText}${amended}\nReview the change.`);
       const review = Review.safeParse(rv?.output);
       if (!rv || !review.success) return stop("the review did not finish", plan.data);
       if (!review.data.ready) return stop(`the review found it not ready: ${review.data.review.slice(0, 300)}`, plan.data);
@@ -178,7 +198,7 @@ export async function build(o: Order, root: string, driver: Driver, env: Record<
     }
 
     // review
-    const rv = await ask("review", `${planText}\nReview the build.`);
+    const rv = await ask("review", `${planText}${amended}\nReview the build.`);
     const review = Review.safeParse(rv?.output);
     if (!rv || !review.success) return stop("the review did not finish", plan.data);
     if (!review.data.ready) return stop(`the review found it not ready: ${review.data.review.slice(0, 300)}`, plan.data);

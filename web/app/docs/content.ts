@@ -72,7 +72,7 @@ export const CHAPTERS: Chapter[] = [
       "every move it makes is public, and you can check it yourself.",
     ],
     smart: {
-      lead: "DNA is an ERC-20 on Ethereum, traded against ETH in one Uniswap v4 pool. The pool's hook, DNAHook, charges a dynamic fee whose policy is a swappable module: what CT calls a new hook, DNA calls a mutation. An AI agent proposes parameters for registered modules through ModuleRegistry (registering new Safe-approved bytecode needs level 10). A separate pipeline, the Sequencer, builds standalone game contracts and new modules (see The Sequencer). Each change waits in a public 1 h queue, then runs in shadow and on a slice of live trades before it is kept or rolled back.",
+      lead: "DNA is an ERC-20 on Ethereum, traded against ETH in one Uniswap v4 pool. The pool's hook, DNAHook, charges a dynamic fee whose policy is a swappable module: what CT calls a new hook, DNA calls a mutation. An AI agent proposes parameters for registered modules through ModuleRegistry (registering new Safe-approved bytecode needs level 10). A separate pipeline, the Sequencer, builds standalone game contracts, new modules and new pages on this site (see The Sequencer). Each change waits in a public 1 h queue, then runs in shadow and on a slice of live trades before it is kept or rolled back.",
       facts: [
         { k: "Token", v: "DNA (ticker DNA), 1,000,000,000 minted once. Burnable, no mint function, no owner", at: "DNAToken.SUPPLY" },
         { k: "Pool", v: "ETH/DNA on Uniswap v4, dynamic fee, tick spacing 1, one canonical pool", at: "DNAHook.poolKey" },
@@ -137,7 +137,7 @@ export const CHAPTERS: Chapter[] = [
     id: "sequencer",
     title: "The Sequencer",
     dumb: [
-      "the sequencer takes the best ideas and builds new games and fee modules: contract, page and tests.",
+      "the sequencer takes the best ideas and builds each one as a game, a fee module or a new page on the site, tests included.",
       "a tester attacks every build, the brain decides if it ships, and the deploy and its funding wait one public hour the Safe can cancel.",
       "it's switched on and builds from the first winning idea, up to 3 ideas at once. a game ships only after every check and one public hour.",
     ],
@@ -150,7 +150,7 @@ export const CHAPTERS: Chapter[] = [
           "Lead plans; workers write contract, page and tests; tester attacks; fixer repairs (≤ 3 rounds); reviewer checks",
           "Brain verdict: ship, rework or kill, signed",
           "Public hour: deploy and funding queued, the Safe can cancel",
-          "Sealed engine deploys; the site updates from the release branch",
+          "Sealed engine deploys a game; a new site page goes out on the release branch and is announced once the site serves it",
         ],
         branches: [
           { when: "fails the gates or 3 rounds", then: "dropped, reason published" },

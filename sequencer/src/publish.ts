@@ -26,14 +26,23 @@ export function appJwt(appId: string, pem: string, nowS = Math.floor(Date.now() 
   return `${head}.${body}.${b64url(sig)}`;
 }
 
-export async function gh<T = Record<string, unknown>>(token: string, method: string, path: string, body?: unknown): Promise<T> {
-  const r = await fetch(`${API}${path}`, {
-    method, headers: { authorization: `Bearer ${token}`, accept: "application/vnd.github+json", "x-github-api-version": "2022-11-28", "content-type": "application/json" },
-    ...(body === undefined ? {} : { body: JSON.stringify(body) }), signal: AbortSignal.timeout(30_000),
-  });
-  const text = await r.text();
-  if (!r.ok) throw new Error(`GitHub ${method} ${path}: ${r.status} ${text.slice(0, 300)}`);
-  return (text ? JSON.parse(text) : {}) as T;
+/** One REST call. A rate limit (429) or a server error (5xx) is tried again, up to 3 times: after its Retry-After (at
+ *  most a minute), else after waitMs, doubling. A failure carries its status and whether the call was tried again. */
+export async function gh<T = Record<string, unknown>>(token: string, method: string, path: string, body?: unknown, waitMs = 2_000): Promise<T> {
+  for (let attempt = 0; ; attempt++) {
+    const r = await fetch(`${API}${path}`, {
+      method, headers: { authorization: `Bearer ${token}`, accept: "application/vnd.github+json", "x-github-api-version": "2022-11-28", "content-type": "application/json" },
+      ...(body === undefined ? {} : { body: JSON.stringify(body) }), signal: AbortSignal.timeout(30_000),
+    });
+    const text = await r.text();
+    if (r.ok) return (text ? JSON.parse(text) : {}) as T;
+    if (attempt < 3 && (r.status === 429 || r.status >= 500)) {
+      const after = Number(r.headers.get("retry-after"));
+      await new Promise((ok) => setTimeout(ok, after > 0 ? Math.min(after, 60) * 1000 : waitMs * 2 ** attempt));
+      continue;
+    }
+    throw Object.assign(new Error(`GitHub ${method} ${path}: ${r.status} ${text.slice(0, 300)}`), { status: r.status, retried: attempt > 0 });
+  }
 }
 
 /** The patch applied to the base checkout, as the gates see it: changes and file texts. */
@@ -69,8 +78,23 @@ export async function publish(o: Order, patch: string, body: string, title: stri
   // no author or committer: GitHub signs a commit an App makes through the API
   const c = await gh<{ sha: string }>(token, "POST", `/repos/${repo}/git/commits`, { message: `Sequencer: ${title}\n\nOrder ${o.id}, round ${o.round}.`, tree: t.sha, parents: [o.baseSha] });
   const branch = `seq/${o.id}-r${o.round}`;
-  await gh(token, "POST", `/repos/${repo}/git/refs`, { ref: `refs/heads/${branch}`, sha: c.sha });
-  const pr = await gh<{ number: number }>(token, "POST", `/repos/${repo}/pulls`, { title: `Sequencer: ${title}`.slice(0, 120), head: branch, base: "main", body, maintainer_can_modify: false });
+  // a create tried again whose first try went through answers 422 "already exists": what is there is taken only when it
+  // is what this call made (the branch on this commit, the pull request from this branch to main)
+  const made = async <T>(e: unknown, find: () => Promise<T | undefined>): Promise<T> => {
+    const x = e as Error & { status?: number; retried?: boolean };
+    const found = x.status === 422 && x.retried && /already exists/i.test(x.message) ? await find() : undefined;
+    if (found === undefined) throw e;
+    return found;
+  };
+  await gh(token, "POST", `/repos/${repo}/git/refs`, { ref: `refs/heads/${branch}`, sha: c.sha }).catch((e) => made(e, async () => {
+    const r = await gh<{ object?: { sha?: string } }>(token, "GET", `/repos/${repo}/git/ref/heads/${branch}`);
+    return r.object?.sha === c.sha ? r : undefined;
+  }));
+  const pr = await gh<{ number: number }>(token, "POST", `/repos/${repo}/pulls`, { title: `Sequencer: ${title}`.slice(0, 120), head: branch, base: "main", body, maintainer_can_modify: false }).catch((e) => made(e, async () => {
+    const q = new URLSearchParams({ head: `${repo.split("/")[0]}:${branch}`, base: "main", state: "open" });
+    const open = await gh<{ number: number; head: { ref: string; sha: string }; base: { ref: string } }[]>(token, "GET", `/repos/${repo}/pulls?${q}`);
+    return open.find((p) => p.head.ref === branch && p.head.sha === c.sha && p.base.ref === "main");
+  }));
   return { pr: pr.number, sha: c.sha, branch };
 }
 

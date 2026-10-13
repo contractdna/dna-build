@@ -146,12 +146,12 @@ const FIELDS: Record<string, readonly string[]> = {
   keys_handed: [],
   first_idea_round: [],
   first_burn: [],
-  // chain progress per 2 h window (src/status.ts): fee distributions by leg, buybacks and burns, liquidity adds; ETH to
+  // chain progress per window (src/status.ts): fee distributions by leg, buybacks and burns, liquidity adds; ETH to
   // three significant digits, DNA whole, every number from the finalized chain
   fees_distributed: ["hours", "distributions", "totalEth", "buybackEth", "liquidityEth", "treasuryEth", "gamesEth"],
   burn_summary: ["hours", "buybacks", "spentEth", "burnedDna"],
   liquidity_added: ["hours", "adds", "ethAdded"],
-  // after the launch window: the day's progress in one post (only the kinds that happened)
+  // every 6 h: the window's progress in one post (only the kinds that happened)
   progress_day: ["hours", "distributions", "totalEth", "buybackEth", "liquidityEth", "treasuryEth", "gamesEth", "buybacks", "spentEth", "burnedDna", "adds", "ethAdded"],
   // the twice-daily status, the weekly recap, milestones (src/status.ts: every number from code)
   status: ["pending", "moved", "hours", "swaps", "volumeEth", "feesEth", "burnedDna", "buybackPotEth", "jackpotPotEth", "gamesLive", "liveFee", "testing", "devTeam", "changed", "launchTaxSwaps", "launchTaxVolumeEth", "launchTaxEth"],
@@ -349,7 +349,7 @@ const KEYS_HANDED_PLAIN = "the Safe's owners executed SetAgent: the agent role m
 const ENCLAVE_WORDS = [/\b(enclaves?|attest(?:s|ed|ation)?|confidential (?:vm|computing))\b/i, /\b(TEE|TDX|CVM)s?\b/];
 
 /** Progress posts get a short noun phrase of what happened, not a sentence the writer would copy (their numbers say it). */
-const WHAT: Record<string, string> = { fees_distributed: "fee split", burn_summary: "buyback and burn", liquidity_added: "permanent liquidity add", progress_day: "the day's fee split, burns and liquidity adds" };
+const WHAT: Record<string, string> = { fees_distributed: "fee split", burn_summary: "buyback and burn", liquidity_added: "permanent liquidity add", progress_day: "the window's fee split, burns and liquidity adds" };
 /** Events whose post may state the on-chain bounds (they answer something there); every other post leaves them out. */
 const BOUNDS_EVENTS = new Set(["queued", "test_live"]);
 const MILESTONE_LABEL: Record<string, string> = { dna_burned: "total DNA burned", jackpot_pot: "the jackpot pot in ETH" };

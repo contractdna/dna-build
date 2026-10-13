@@ -19,7 +19,8 @@
 //               if every gate passed. Rework ⇒ the next round (at most 4, the old PR closed); kill ⇒ the PR closed.
 //               A spec amendment the lead proposed (in the run's report) goes to the brain first, once a build, unless
 //               the spec checks refuse it: approved, the amended spec is what the verdict and later orders carry, and
-//               the ship record names it.
+//               the ship record names it. A round with no verdict (no pull request) has its amendment reviewed as it
+//               ends.
 //  verdict    → a 4th live game would be one too many (counting the other ships on their way): of the games live 8 h
 //               or more, the fewest-players one no other ship already evicts gets a brain-signed, delayed `retire`
 //               record. Then the delayed `ship` record (one public hour, Safe veto: M1) with everything the deploy will
@@ -54,7 +55,7 @@ import { edb as sql } from "./db.ts";
 import { ENCLAVE } from "./enclave.ts";
 import { Defer, type Handler } from "./jobs.ts";
 import { append, type EnclaveRow, newestOf, RolledBack, rolledBack, stateSig, trusted, trustedRecord } from "./log.ts";
-import { dailyCap, orderCeiling, overCap, publicTextIssues, RESERVE_AGENT, spendToday } from "./llm.ts";
+import { dailyCap, orderCeiling, overCap, publicTextIssues, RESERVE_AGENT, SPEC_DOMAIN, spendToday } from "./llm.ts";
 import { slugOf, unpriced } from "./models.ts";
 import { mode } from "./mode.ts";
 import type { GatedModule } from "./seq-forge.ts";
@@ -84,13 +85,18 @@ export const SEQ = {
   pagesDailyWaitMs: 6 * HOUR, // the daily live page check waits for builds going at most this long
   ownIdeas: false, // with no idea queued, may the brain build a fix for one of its own open risks? Off: people's ideas only
   // does the website deploy from the build repository's `release` branch? Off, a site change would never reach the
-  // site: the brain's pick of one is then a no-build, and nothing says a site change shipped or is live. Off until the
-  // site guard's next round (a page must not be able to render a script or an off-site link) ships
-  siteLive: false,
+  // site: the brain's pick of one is then a no-build, and nothing says a site change shipped or is live. On since the
+  // site guard's second round: the main site's nonce CSP, the site gates' global allowlist (no reflection) and the page
+  // check's CSP and link checks
+  siteLive: true,
   // a released site change is announced (and its idea's author told it is live) only once the site serves it: the
   // health route names the merge or a later commit and each new page answers 200. Not served this long after the
-  // release branch holds it (or the release branch not there this long after the first look): one alert, no announcement
+  // release branch holds it (or the release branch not there this long after the first look): one alert, not
+  // announced yet
   siteServeMs: 30 * 60_000,
+  // then the hourly job looks again (the site may be deployed by hand), this long after the first look: served, it is
+  // announced then; still not, one more alert and no more looks
+  siteServeRecheckMs: 14 * DAY,
   siteReleaseMs: 3 * HOUR, // covers a release record's own hour and the hourly job that then moves the branch
   idleMs: 48 * HOUR, // no players this long ⇒ retire
   playersWindowBlocks: 14_400n, // ≈ 48 h of 12 s blocks
@@ -98,8 +104,10 @@ export const SEQ = {
   /** the trusted kit the enclave gates with: the image's contracts dir (tests point it at the repo) */
   kit: process.env.SEQ_KIT_DIR ?? "/app/contracts",
   bot: process.env.SEQ_BOT ?? "",
-  perQuery12: { lead: 2, worker: 0.5, tester: 1, fixer: 1, review: 2 } as Record<DevRole, number>,
-  effort: { lead: "medium", worker: "max", tester: "high", fixer: "high", review: "high" } as Order["effort"],
+  // a worker writes whole files (the page's are the largest): medium effort leaves its replies room for them, and $1 is
+  // headroom for the page's (the order's ceiling bounds the round's total whatever the per-query caps)
+  perQuery12: { lead: 2, worker: 1, tester: 1, fixer: 1, review: 2 } as Record<DevRole, number>,
+  effort: { lead: "medium", worker: "medium", tester: "high", fixer: "high", review: "high" } as Order["effort"],
 };
 export const ROUND_AGENT = "dev-round";
 const ZERO = "0x0000000000000000000000000000000000000000" as Address;
@@ -136,7 +144,7 @@ export function specIssues(spec: string): string[] {
   const out: string[] = [];
   if (spec.trim().length < 20) out.push("the spec is too short");
   if (spec.length > 4000) out.push("the spec is over 4000 characters");
-  for (const i of publicTextIssues(spec)) out.push(`the spec has a ${i}`);
+  for (const i of publicTextIssues(spec, SPEC_DOMAIN)) out.push(`the spec has a ${i}`);
   return out;
 }
 /** The rework rounds left after round `round` (what the verdict is told, so it never counts them itself). */
@@ -156,14 +164,20 @@ export const amendedSpec = (spec: string, a: Amendment) => `${spec}\n\nAmendment
 /** A best-effort text screen, never the rule (the gates and the kit enforce every rule whatever the spec says): a change
  *  whose verb loosens a rule, a cap, a limit or a gate. Only the change is read; its reason may name what it avoids. */
 const RELAX = /\b(?:rais|increas|lift|remov|drop|relax|loosen|skip|bypass|disabl|waiv|ignor|exceed)\w*\b[^.;:\n]{0,40}?\b(?:caps?|limits?|ceilings?|max(?:imum)?s?|budgets?|gates?|rules?|checks?|guards?|veto(?:es)?|timelocks?|bounds?|safety|tests?)\b/i;
-/** The same screen for what the game rules forbid outright: value in, calls out, low-level code, weak randomness. */
-const FORBIDDEN = /\b(?:payable|fallback|selfdestruct|suicide|delegatecall|assembly|tx\.origin|msg\.value|deposits?|token approvals?|external calls?|unchecked|prevrandao|blockhash)\b|\breceive\s*(?:\(|function)/i;
+/** The same screen for what the game rules forbid outright: value in, calls out, low-level code, weak randomness. A word
+ *  the change says it goes without ("instead of blockhash", "the place of the draw block's blockhash", "no external
+ *  calls") asks for nothing: a negation at most three plain words before it. A verb of change is no negation (replace X
+ *  with blockhash asks for it), nor is "not only", and a preposition or a conjunction between ("no limit on deposits",
+ *  "no external calls except token approvals") ends the negation's reach. */
+const FORBIDDEN = /\b(?:payable|fallback|selfdestruct|suicide|delegatecall|assembly|tx\.origin|msg\.value|deposits?|token approvals?|external calls?|unchecked|prevrandao|blockhash)\b|\breceive\s*(?:\(|function)/gi;
+const DROPPED = /\b(?:no|not(?!\s+only\b)|never|nor|without|instead of|rather than|place of|avoid\w*)\s+(?:(?!(?:on|of|for|to|with|in|at|from|by|and|or|but|also|except|than|plus)\b)[\w'’-]+\s+){0,3}$/i;
+const forbids = (change: string) => [...change.matchAll(FORBIDDEN)].some((m) => !DROPPED.test(change.slice(0, m.index)));
 /** Why an amendment can't be put to the brain: the amended spec fails the spec checks, or the change relaxes a rule or
  *  asks for something forbidden. */
 export function amendmentIssues(spec: string, a: Amendment): string[] {
   const out = specIssues(amendedSpec(spec, a));
   if (RELAX.test(a.change)) out.push("the change would relax a rule, a cap, a limit or a gate");
-  if (FORBIDDEN.test(a.change)) out.push("the change asks for what the rules forbid");
+  if (forbids(a.change)) out.push("the change asks for what the rules forbid");
   return out;
 }
 /** The spec a build is checked against: the amended one once the brain approved it, else the spec as written. */
@@ -202,7 +216,7 @@ export type BuildData = {
   deployed?: boolean; deployedOnce?: boolean; deployFails?: number; codeWaits?: number; badMerge?: string; // the deploy mined; failed deploys; minutes waited for its code; a merge never to be released
   /** a site change: when the engine first looked for it on the site, and first saw the release branch hold it; `served`:
    *  when the site was seen serving it (only then is it announced, and told as live) */
-  serve?: { since: string; onRelease?: string }; served?: string;
+  serve?: { since: string; onRelease?: string; gaveUp?: string }; served?: string;
 };
 export type Status = "decided" | "dispatched" | "gated" | "verdict" | "shipping" | "shipped" | "handed" | "killed" | "skipped";
 export type BuildRow = { id: string; status: Status; round: number; data: BuildData };
@@ -776,8 +790,12 @@ async function intake(r: BuildRow, now: number): Promise<string> {
 /** The next round (with these issues; the old PR closed), or a kill after the 4th. */
 async function next(r: BuildRow, issues: string[]): Promise<string> {
   const o = cur(r);
-  // an amendment is reviewed only at a verdict: one from a round that never reached one is said so, not lost silently
-  if (o.amendment && !r.data.amendment && !issues.some((i) => i.startsWith("the spec amendment"))) issues = [`the spec amendment proposed in round ${r.round} was not reviewed (no verdict this round): propose it again if it is still needed`, ...issues];
+  // a round that ended without a verdict (no pull request: its review would not pass code built to an amendment not yet
+  // ruled on) still has its amendment reviewed here; at a verdict it already was, and this is a no-op
+  const am = await reviewAmendment(r, o);
+  if (am.approved) issues = ["the spec amendment was approved: build to the amended spec in this order", ...issues];
+  else if (am.notes.length) issues = [...am.notes, ...issues];
+  else if (o.amendment && r.data.amendment?.round !== r.round && r.data.amendment?.brainSeq && r.round < SEQ.maxRounds) issues = [`the spec amendment proposed in round ${r.round} was not put to the brain: it already ruled on one in round ${r.data.amendment.round} (${r.data.amendment.approved ? "approved" : "refused"}), and rules once a build`, ...issues];
   if (o.pr) await (await SEQ_DEPS.github()).closePull(o.pr, "Superseded: this build goes on in its next round.").catch(() => {});
   if (r.round >= SEQ.maxRounds) return end(r, "killed", `no shippable build after ${SEQ.maxRounds} rounds`);
   const round = r.round + 1;
@@ -830,11 +848,13 @@ async function verdict(r: BuildRow, now: number): Promise<string> {
   return next(r, [...am.notes, ...issuesFor(dv.issues, g.results)]);
 }
 
-/** The lead's spec amendment, put to the brain once a build (at the verdict of the round that proposed it, while a
- *  round is left to build it): one the text screen refuses never reaches it. Approved just now: `approved` (the caller
- *  rebuilds the round); refused just now: the note for the next round. */
+/** The lead's spec amendment, put to the brain once a build (at the end of the round that proposed it, at its verdict
+ *  or without one, while a round is left to build it): one the text screen refuses never reaches it, and a later round's
+ *  may still be put to it. Each round's is reviewed once. Approved just now: `approved` (the caller rebuilds the round);
+ *  refused just now: the note for the next round. */
 async function reviewAmendment(r: BuildRow, o: OrderState): Promise<{ approved: boolean; notes: string[] }> {
-  if (r.data.amendment || !o.amendment || reworksLeft(r.round) === 0) return { approved: false, notes: [] };
+  const done = r.data.amendment && (r.data.amendment.brainSeq || r.data.amendment.round === r.round);
+  if (done || !o.amendment || reworksLeft(r.round) === 0) return { approved: false, notes: [] };
   const a = o.amendment;
   const spec = amendedSpec(r.data.spec, a);
   const bad = amendmentIssues(r.data.spec, a);
@@ -842,7 +862,12 @@ async function reviewAmendment(r: BuildRow, o: OrderState): Promise<{ approved: 
   let why = bad.join("; ");
   let brainSeq: string | undefined;
   if (!bad.length) {
-    const b = await SEQ_DEPS.decide("amend", { kind: kindOf(r.data), title: r.data.title, spec: r.data.spec, reason: a.reason, change: a.change, amendedSpec: spec, untrusted: true }, r.id);
+    // a crash after the brain's record and before this row was saved: that record is the ruling (the brain rules once a
+    // build), never asked for again
+    const [row] = await sql<(EnclaveRow & { seq: string })[]>`select seq::text, kind, ref, body, eprev, ehash, esig from log where kind = 'brain' and ref = ${`amend:${r.id}`} order by log.seq desc limit 1`;
+    const b = row && (await trustedRecord(row, "brain record"))
+      ? { seq: row.seq, decision: (JSON.parse(row.body) as { decision: Record<string, unknown> }).decision }
+      : await SEQ_DEPS.decide("amend", { kind: kindOf(r.data), title: r.data.title, spec: r.data.spec, reason: a.reason, change: a.change, amendedSpec: spec, untrusted: true }, r.id);
     approved = b.decision.approve === true;
     why = String(b.decision.reason ?? "");
     brainSeq = String(b.seq);
@@ -1200,26 +1225,28 @@ async function ship(r: BuildRow, now: number): Promise<string> {
   await releaseReservation(r);
   // a site change is live only once the site serves it: until then it waits here (Defer), on its way
   const unserved = !isGame && body.target !== "module" && SEQ.siteLive ? await siteServe(r, body.paths ?? [], now) : null;
-  await saveBuild({ ...r, status: "shipped" });
+  // the row turns shipped only after its announcement (deduped by key): a crash between the two announces again, never
+  // leaves a shipped row nothing announced
+  const shipped = async (why: string) => { await saveBuild({ ...r, status: "shipped" }); return why; };
   if (body.target === "module") {
     // the Sequencer's part ends here: the Safe decides whether this code hash is ever approved, registered or tested
     const m = (body as ShipRecord & { module: { codehash: Hex; address: Address } }).module;
     await SEQ_DEPS.alert(`Sequencer: module "${r.data.title.slice(0, 80)}" is merged (${r.data.mergeSha}). Ship record ${row.seq} carries its code hash ${m.codehash}, its address ${m.address}, its bounds and the calls for the Safe: deploy through the CREATE2 deployer, ApproveCodehash, Register. The engine sends none of them.`, `alert:seq:module:${r.id}`);
     await SEQ_DEPS.announce({ event: "seq_released", build: r.id, title: r.data.title, target: "module", record: row.seq });
-    return `shipped: ${r.id} (module ${m.codehash}, proposed to the Safe)`;
+    return shipped(`shipped: ${r.id} (module ${m.codehash}, proposed to the Safe)`);
   }
   if (!isGame) {
     // a site change built before the site took them: released in the repository, but not on the site, so not announced
     if (!SEQ.siteLive) {
       await SEQ_DEPS.alert(`Sequencer: site change "${r.data.title.slice(0, 80)}" is merged and released (${r.data.mergeSha}), but the website does not deploy from release, so it is not live and was not announced.`, `alert:seq:site-not-live:${r.id}`);
-      return `shipped: ${r.id} (site, released at ${r.data.mergeSha}; the website does not deploy it)`;
+      return shipped(`shipped: ${r.id} (site, released at ${r.data.mergeSha}; the website does not deploy it)`);
     }
-    if (unserved) return `shipped: ${r.id} (site, released at ${r.data.mergeSha}; not served, not announced: ${unserved})`;
+    if (unserved) return shipped(`shipped: ${r.id} (site, released at ${r.data.mergeSha}; not served, not announced: ${unserved})`);
     await SEQ_DEPS.announce({ event: "seq_released", build: r.id, title: r.data.title, target: "site", record: row.seq });
-    return `shipped: ${r.id} (site, released at ${r.data.mergeSha})`;
+    return shipped(`shipped: ${r.id} (site, released at ${r.data.mergeSha})`);
   }
   await SEQ_DEPS.announce({ event: "seq_shipped", build: r.id, title: r.data.title, slug: r.data.slug, game: body.predicted, fundEth: r.data.fund?.queued ? Number(r.data.fund.amount) / 1e18 : null, record: row.seq });
-  return `shipped: ${r.id} at ${body.predicted}`;
+  return shipped(`shipped: ${r.id} at ${body.predicted}`);
 }
 
 /** Does the site serve this site change: its health names the merge or a later commit (RAILWAY_GIT_COMMIT_SHA), and each
@@ -1243,21 +1270,52 @@ export async function siteServed(sha: string, paths: string[]): Promise<{ ok: tr
  *  the branch does not); then one alert to the owners and why it is not announced. */
 async function siteServe(r: BuildRow, paths: string[], now: number): Promise<string | null> {
   if (r.data.served) return null;
-  const sha = r.data.mergeSha!;
-  const gh = await SEQ_DEPS.github();
-  const s = (r.data.serve ??= { since: new Date(now).toISOString() });
-  if (!s.onRelease && (await gh.contains(await gh.refSha("release"), sha))) s.onRelease = new Date(now).toISOString();
-  await saveBuild(r);
-  const c = s.onRelease ? await siteServed(sha, paths) : { ok: false as const, why: "the release branch does not hold it yet" };
+  const c = await serveCheck(r, paths, now);
   if (c.ok) {
     r.data.served = new Date(now).toISOString();
     await saveBuild(r);
     return null;
   }
+  const s = r.data.serve!;
   const late = s.onRelease ? now - Date.parse(s.onRelease) >= SEQ.siteServeMs : now - Date.parse(s.since) >= SEQ.siteReleaseMs;
   if (!late) throw new Defer(60_000, `${r.id}: not served yet: ${c.why}`);
-  await SEQ_DEPS.alert(`Sequencer: site change "${r.data.title.slice(0, 80)}" (${r.id}) is released at ${sha} but the site has not picked it up: ${c.why.slice(0, 200)}. It was not announced.`, `alert:seq:site-not-served:${r.id}`);
+  await SEQ_DEPS.alert(`Sequencer: site change "${r.data.title.slice(0, 80)}" (${r.id}) is released at ${r.data.mergeSha} but the site has not picked it up: ${c.why.slice(0, 200)}. It is not announced until the site serves it (looked for each hour, for ${SEQ.siteServeRecheckMs / DAY} days).`, `alert:seq:site-not-served:${r.id}`);
   return c.why;
+}
+/** One look: notes when the release branch first holds the change, then asks the site (siteServed). */
+async function serveCheck(r: BuildRow, paths: string[], now: number) {
+  const sha = r.data.mergeSha!;
+  const gh = await SEQ_DEPS.github();
+  const s = (r.data.serve ??= { since: new Date(now).toISOString() });
+  if (!s.onRelease && (await gh.contains(await gh.refSha("release"), sha))) s.onRelease = new Date(now).toISOString();
+  await saveBuild(r);
+  return s.onRelease ? siteServed(sha, paths) : { ok: false as const, why: "the release branch does not hold it yet" };
+}
+/** Hourly: a released site change the site did not serve within SEQ.siteServeMs (a deploy by hand comes later) is
+ *  looked for again, up to SEQ.siteServeRecheckMs after the first look. Served: announced as its ship would have, once
+ *  (the announcement dedupes by key, and `served` is marked only after it), and its author told it is live (x-social.ts
+ *  reads `served`). Still not by then: one alert, no more looks. */
+async function serveStep(now: number) {
+  const out: Record<string, string> = {};
+  if (!SEQ.siteLive) return out;
+  for (const r of await builds(sql`status = 'shipped' and data ? 'serve' and not data ? 'served' and not (data->'serve' ? 'gaveUp')`)) {
+    const [row] = await trustedRows("ship", `ship:${r.id}`, 1);
+    if (!row || row.seq !== r.data.shipSeq) { out[r.id] = "no signed ship record"; continue; }
+    const c = await serveCheck(r, (JSON.parse(row.body) as ShipRecord).paths ?? [], now);
+    if (c.ok) {
+      await SEQ_DEPS.announce({ event: "seq_released", build: r.id, title: r.data.title, target: "site", record: row.seq });
+      r.data.served = new Date(now).toISOString();
+      await saveBuild(r);
+      out[r.id] = "served, announced";
+      continue;
+    }
+    out[r.id] = `not served: ${c.why.slice(0, 120)}`;
+    if (now - Date.parse(r.data.serve!.since) < SEQ.siteServeRecheckMs) continue;
+    await SEQ_DEPS.alert(`Sequencer: site change "${r.data.title.slice(0, 80)}" (${r.id}) is released at ${r.data.mergeSha} and still not served after ${SEQ.siteServeRecheckMs / DAY} days: ${c.why.slice(0, 200)}. It is never announced; the engine stops looking.`, `alert:seq:site-never-served:${r.id}`);
+    r.data.serve!.gaveUp = new Date(now).toISOString();
+    await saveBuild(r);
+  }
+  return out;
 }
 
 // ---------------------------------------------------------------- release (M2)
@@ -1467,6 +1525,7 @@ export async function seqHourly() {
   const m = await SEQ_DEPS.mode();
   if (m === "live") await step("games", () => retireStep(now));
   if (m === "live") await step("release", () => releaseStep(now)); // the public site branch moves only in live mode
+  await step("serve", () => serveStep(now));
   await step("daily", () => dailyPost(now));
   await step("token", () => tokenCheck(now));
   return out;
@@ -1492,4 +1551,4 @@ export const pagesDailyHandler: Handler = {
     return (await import("./pages.ts")).dailyPages(await shippedGames());
   },
 };
-export const _test = { start, dispatchRound, intake, verdict, shipRecord, ship, releaseStep, retireStep, dailyPost, liveGames, ZERO, requeueAgain: () => { requeued = false; } };
+export const _test = { start, dispatchRound, intake, verdict, shipRecord, ship, releaseStep, serveStep, retireStep, dailyPost, liveGames, ZERO, requeueAgain: () => { requeued = false; } };

@@ -1,21 +1,28 @@
 // The play origin a check runs against, built from source: a copy of the web app (the image's, or the repo's in
 // tests) with the game folders added, built and served on loopback as the play role. node_modules is copied too
 // (cloned where the filesystem can): the bundler refuses a link out of the project, and a build must not be able to
-// change what the next check runs with. Kill state: PAGECHECK=1 makes a build without live data answer "not killed"
-// (app/g/state.ts); a live build ignores it. A site change is built the same way as the main site (no SITE_ROLE, mock
-// data) with its files laid over the copy.
+// change what the next check runs with; native binaries a node_modules above the copy already holds stay out (NATIVE).
+// Kill state: PAGECHECK=1 makes a build without live data answer "not killed" (app/g/state.ts); a live build ignores it.
+// A site change is built the same way as the main site (no SITE_ROLE, mock data) with its files laid over the copy.
 import { type ChildProcess, spawn } from "node:child_process";
-import { constants, cpSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { constants, cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { freePort, waitFor } from "./util.ts";
 
 export type Role = "play" | "main";
+/** Next's swc and sharp's binaries: left out of a copy when a node_modules above it holds them, so Node, walking up from
+ *  the copy, loads those. In the image that is /node_modules, links into /app/web on the read-only filesystem: the copy
+ *  lives on /tmp, a noexec tmpfs where a native binary cannot load, and nothing a build does reaches them. */
+const NATIVE = /^\/node_modules\/(@next\/swc-[^/]+|@img)(\/|$)/;
 /** A fresh copy of `web` with `games` (slug → file name → text) under app/g/ and `over` (path under web/ → text, or null:
  *  that file removed) laid over it. */
 export function prepareSite(web: string, games: Record<string, Record<string, string>>, root = tmpdir(), over: Record<string, string | null> = {}): string {
   const dir = mkdtempSync(join(root, "pc-site-"));
-  cpSync(web, dir, { recursive: true, verbatimSymlinks: true, mode: constants.COPYFILE_FICLONE, filter: (p) => !/^\/(\.next|test|node_modules\/\.cache)(\/|$)/.test(p.slice(web.length)) });
+  const above = createRequire(join(root, "_.js")).resolve.paths("_") ?? [];
+  const shared = (rel: string) => { const m = NATIVE.exec(rel); return !!m && above.some((d) => existsSync(join(d, m[1]))); };
+  cpSync(web, dir, { recursive: true, verbatimSymlinks: true, mode: constants.COPYFILE_FICLONE, filter: (p) => { const rel = p.slice(web.length); return !/^\/(\.next|test|node_modules\/\.cache)(\/|$)/.test(rel) && !shared(rel); } });
   const put = (p: string, text: string | null) => {
     if (!p.startsWith(`${dir}/`)) throw new Error("a file outside the site copy");
     if (text === null) return rmSync(p, { force: true });
@@ -32,6 +39,15 @@ const siteEnv = (role: Role, extra: Record<string, string> = {}) => ({
 });
 const next = (dir: string) => join(dir, "node_modules", "next", "dist", "bin", "next");
 
+/** Why a build failed. Next's native swc binary that cannot load is the host's fault (a copy of it on a noexec /tmp: the
+ *  image's /node_modules holds it, NATIVE), never the page's, and says so up front. */
+export function buildFailure(code: number | null, out: string): string {
+  if (/failed to map segment from shared object|Failed to load SWC binary/i.test(out)) {
+    return `next build failed: the swc binary could not load (is /tmp mounted noexec?): ${out.slice(-2000)}`;
+  }
+  return `next build failed (${code}): ${out}`;
+}
+
 /** `next build` as the play role (or the main site); rejects with the tail of its output. */
 export function buildSite(dir: string, timeoutMs = 10 * 60_000, role: Role = "play"): Promise<void> {
   return new Promise((resolve, reject) => {
@@ -41,7 +57,7 @@ export function buildSite(dir: string, timeoutMs = 10 * 60_000, role: Role = "pl
     p.stdout!.on("data", take);
     p.stderr!.on("data", take);
     const t = setTimeout(() => { try { process.kill(-p.pid!, "SIGKILL"); } catch { /* gone */ } }, timeoutMs);
-    p.on("close", (code) => { clearTimeout(t); code === 0 ? resolve() : reject(new Error(`next build failed (${code}): ${out}`)); });
+    p.on("close", (code) => { clearTimeout(t); code === 0 ? resolve() : reject(new Error(buildFailure(code, out))); });
   });
 }
 

@@ -75,6 +75,23 @@ test("lead → worker → the gates' checks (a child process sent to the fixer) 
   assert.deepEqual(run.results.filter((x) => !x.ok), []);
 });
 
+test("a plan with a spec amendment: the review checks the build against the amended spec (the brain rules on it only as the round ends)", async () => {
+  const { dir, base } = checkout();
+  made.push(dir);
+  const amendment = { reason: "A retry loop past two reads would hold the watch past its own interval.", change: "Retry once, not until the read succeeds." };
+  const t = team(dir, { plan: { ...PLAN, amendment } });
+  const r = await build(order(base), dir, t.driver, {});
+  assert.equal(r.ok, true, r.why);
+  const review = t.calls.find((c) => c.role === "review")!;
+  assert.match(review.prompt, /spec amendment the brain has not ruled on yet\. The team built to it: check the build against the spec with the amendment's change/);
+  // no amendment: the review is told nothing of one
+  const { dir: d2, base: b2 } = checkout();
+  made.push(d2);
+  const t2 = team(d2);
+  assert.equal((await build(order(b2), d2, t2.driver, {})).ok, true);
+  assert.doesNotMatch(t2.calls.find((c) => c.role === "review")!.prompt, /amendment/);
+});
+
 test("planted: a new network sink and env read go to the fixer as G16's findings (against the checkout's base)", async () => {
   const { dir, base } = checkout();
   made.push(dir);

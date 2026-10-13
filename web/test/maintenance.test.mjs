@@ -39,7 +39,8 @@ test("maintenance on: every page, router prefetch and API but the kept paths get
       assert.equal(res.status, 503, p);
       assert.equal(res.headers.get("retry-after"), "600");
       assert.equal(res.headers.get("cache-control"), "no-store");
-      assert.equal(res.headers.get("content-security-policy"), mainCsp());
+      assert.match(res.headers.get("content-security-policy"), /^default-src 'self'; script-src 'self' 'nonce-[A-Za-z0-9+/=]{24}'; /);
+      assert.equal(res.headers.get("content-security-policy").replace(/'nonce-[^']+'/, "'nonce-n'"), mainCsp("n"));
       assert.equal(res.headers.get("strict-transport-security"), HSTS);
       const html = await res.text();
       assert.match(html, /We'll be right back\./);
@@ -71,17 +72,42 @@ test("maintenance on, play origin: the 503 page with the play CSP (fresh nonce)"
   });
 });
 
-test("maintenance off: unchanged (main passes through; play keeps its nonce, prefetches pass)", async () => {
+test("maintenance off: unchanged (both roles pass through with a fresh nonce each request, prefetches too)", async () => {
   await withEnv({ SITE_MAINTENANCE: "0", SITE_ROLE: "" }, () => {
     for (const p of [...DOWN, ...UP, "/api/health"]) assert.ok(passes(call(p)), p);
+    const res = call("/trade");
+    assert.match(res.headers.get("content-security-policy"), /script-src 'self' 'nonce-[A-Za-z0-9+/=]{24}'/);
+    assert.notEqual(res.headers.get("content-security-policy"), call("/trade").headers.get("content-security-policy"));
+    // Next reads the nonce from the request's CSP and puts it on its own scripts; the layout reads x-nonce
+    const nonce = res.headers.get("content-security-policy").match(/'nonce-([^']+)'/)[1];
+    assert.equal(res.headers.get("x-middleware-request-x-nonce"), nonce);
+    assert.equal(res.headers.get("x-middleware-request-content-security-policy"), res.headers.get("content-security-policy"));
+    assert.equal(call("/trade", { "x-game-slug": "lastclick" }).headers.get("x-middleware-request-x-game-slug"), null, "a visitor's slug header is dropped");
   });
   await withEnv({ SITE_ROLE: "play" }, () => {
     const res = call("/g/lastclick");
     assert.ok(passes(res));
     assert.match(res.headers.get("content-security-policy"), /'nonce-/);
-    const pre = call("/g/lastclick", { "next-router-prefetch": "1", rsc: "1" });
-    assert.ok(passes(pre));
-    assert.equal(pre.headers.get("content-security-policy"), null);
+  });
+});
+
+test("prefetches get the nonce CSP like any request; a visitor's own nonce, CSP and slug headers never reach Next", async () => {
+  const spoof = { "x-nonce": "attackerX", "content-security-policy": "script-src *", "x-game-slug": "lastclick" };
+  for (const [role, path] of [["", "/trade"], ["play", "/g/lastclick"]]) {
+    await withEnv({ SITE_MAINTENANCE: "0", SITE_ROLE: role }, () => {
+      for (const h of [{}, { "next-router-prefetch": "1", rsc: "1" }, { purpose: "prefetch" }, { "sec-purpose": "prefetch" }]) {
+        const res = call(path, { ...h, ...spoof });
+        assert.ok(passes(res), role);
+        const csp = res.headers.get("content-security-policy");
+        assert.match(csp, /script-src 'self' 'nonce-[A-Za-z0-9+/=]{24}'/, `${role} ${JSON.stringify(h)}`);
+        assert.equal(res.headers.get("x-middleware-request-content-security-policy"), csp);
+        assert.equal(res.headers.get("x-middleware-request-x-nonce"), csp.match(/'nonce-([^']+)'/)[1]);
+        assert.equal(res.headers.get("x-middleware-request-x-game-slug"), role === "play" ? "lastclick" : null, "only the path names the game");
+      }
+    });
+  }
+  await withEnv({ SITE_MAINTENANCE: "0", SITE_ROLE: "play" }, () => {
+    assert.equal(call("/g/bad..slug", { ...spoof, purpose: "prefetch" }).headers.get("x-middleware-request-x-game-slug"), null);
   });
 });
 
@@ -107,7 +133,7 @@ test("built server, maintenance on: / and /trade 503 with the page; /token.png 2
       assert.equal(res.status, 503, p);
       assert.equal(res.headers.get("retry-after"), "600");
       assert.equal(res.headers.get("cache-control"), "no-store");
-      assert.equal(res.headers.get("content-security-policy"), mainCsp());
+      assert.equal(res.headers.get("content-security-policy").replace(/'nonce-[^']+'/, "'nonce-n'"), mainCsp("n"));
       assert.equal(res.headers.get("x-content-type-options"), "nosniff");
       assert.match(await res.text(), /We'll be right back\./);
     }
@@ -133,5 +159,15 @@ test("built server, maintenance off: / and /trade render, /token.png the same by
     }
     assert.ok(Buffer.from(await (await fetch(`${base}/token.png`)).arrayBuffer()).equals(TOKEN));
     assert.deepEqual(await (await fetch(`${base}/api/health`)).json(), { live: false, commit: null });
+    // a whole-page prefetch with the visitor's own nonce and CSP: the page carries the proxy's nonce, never theirs
+    for (const h of [{ purpose: "prefetch" }, { "next-router-prefetch": "1" }]) {
+      const res = await fetch(`${base}/trade`, { headers: { ...h, "x-nonce": "attackerX", "content-security-policy": "script-src *" } });
+      assert.equal(res.status, 200);
+      const nonce = res.headers.get("content-security-policy")?.match(/script-src 'self' 'nonce-([A-Za-z0-9+/=]{24})'/)?.[1];
+      assert.ok(nonce, JSON.stringify(h));
+      const html = await res.text();
+      assert.doesNotMatch(html, /attackerX|script-src \*/);
+      assert.ok(html.includes(`nonce="${nonce}"`), "Next's scripts carry the proxy's nonce");
+    }
   });
 });

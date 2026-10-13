@@ -16,7 +16,10 @@ if (!a.pr || !a.base || !a.kit) throw new Error("usage: seq-gate.ts --pr <checko
 const git = (...args: string[]) => execFileSync("git", ["-C", a.pr!, ...args], { maxBuffer: 64 * 1024 ** 2 });
 
 const head = git("rev-parse", "HEAD").toString().trim();
-const changes = parseRaw(git("diff", "--raw", "-z", "--no-abbrev", "-M", a.base, head).toString("utf8"));
+// the build's own changes: from where it branched, not from --base (a pull request's base is main as it is now, and
+// what main gained since the order's base would read as the build's)
+const base = git("merge-base", a.base, head).toString().trim();
+const changes = parseRaw(git("diff", "--raw", "-z", "--no-abbrev", "-M", base, head).toString("utf8"));
 const files: Record<string, string> = {};
 for (const c of changes) {
   if (c.status === "D" || c.mode === "160000") continue;
@@ -32,17 +35,17 @@ const kind = (a.kind ?? (gameSlug ? "game" : moduleSlug ? "module" : changes.som
 if (!(KINDS as readonly string[]).includes(kind)) throw new Error(`--kind: one of ${KINDS.join(", ")}`);
 const slug = a.slug ?? (kind === "game" ? gameSlug ?? "" : kind === "module" ? moduleSlug ?? "" : `${kind}-change`);
 const baseHasSlug = (kind === "game" || kind === "module") && roots(slug, kind).some((r) => {
-  try { git("cat-file", "-e", `${a.base}:${r.slice(0, -1)}`); return true; } catch { return false; }
+  try { git("cat-file", "-e", `${base}:${r.slice(0, -1)}`); return true; } catch { return false; }
 });
 const run = await runGates({
   // an engine change: the edited and removed files' base texts (G16 compares against them)
   baseFiles: kind === "engine" ? Object.fromEntries(changes.filter((c) => c.status !== "A").flatMap((c) => {
     const p = c.oldPath ?? c.path;
-    try { return [[p, git("show", `${a.base}:${p}`).toString("utf8")]]; } catch { return []; }
+    try { return [[p, git("show", `${base}:${p}`).toString("utf8")]]; } catch { return []; }
   })) : undefined,
-  kind, slug, changes, files, baseHasSlug, basePaths: kind === "site" ? git("ls-tree", "-r", "--name-only", a.base).toString().split("\n").filter(Boolean) : [], prBody: a["body-file"] ? readFileSync(a["body-file"], "utf8") : "", kit: a.kit,
+  kind, slug, changes, files, baseHasSlug, basePaths: kind === "site" ? git("ls-tree", "-r", "--name-only", base).toString().split("\n").filter(Boolean) : [], prBody: a["body-file"] ? readFileSync(a["body-file"], "utf8") : "", kit: a.kit,
   order: { seed: head, ...(a.factory && a.salt ? { factory: a.factory as Address, salt: a.salt as Hex } : {}) },
 });
 for (const r of run.results) console.log(`${r.ok ? "ok  " : "FAIL"} ${r.gate} ${r.name}${r.ok ? "" : `\n${r.issues.map((i) => `       - ${i}`).join("\n")}`}`);
-if (a.out) writeFileSync(a.out, `${JSON.stringify({ kind, slug, head, base: a.base, results: run.results }, null, 2)}\n`);
+if (a.out) writeFileSync(a.out, `${JSON.stringify({ kind, slug, head, base, results: run.results }, null, 2)}\n`);
 process.exit(run.results.every((r) => r.ok) ? 0 : 1);

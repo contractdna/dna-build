@@ -35,7 +35,7 @@ export const PRIORITY: Record<string, number> = {
   // the social layer (src/x-social.ts): the idea of the day and the weekly idea-givers' shoutout
   idea_of_day: 3.5, shoutout: 3.5,
   // launch day (src/status.ts): the engine going live is the opening post (first of all, once), then the Safe's first
-  // batch (once); chain progress every 2 h with the status
+  // batch (once)
   online: 0.5, contracts_connected: 1,
   // once-ever firsts (src/status.ts FIRST_KEYS): announce-worthy, each once
   keys_handed: 1, first_idea_round: 1, first_burn: 1,
@@ -46,8 +46,8 @@ export const PRIORITY: Record<string, number> = {
   vault_funded: 1, vault_minted: 2, vault_burned: 2,
   // the lab (src/lab.ts): the brain's simulated fee candidates, every 2 h on a launch day, every 6 h after
   lab: 3.5,
-  // after the launch window, one combined progress post a day: below every event, so a full day's digest absorbs it
-  progress_day: 4,
+  // chain progress, one combined post every 6 h (src/status.ts)
+  progress_day: 3.5,
   // live idea mode (config.ts IDEA_MODE): a site idea's verdict and an idea the brain chose not to build go out too, and
   // every step of a build (its pull request, each verdict), so the whole way from idea to game is in public
   ...(IDEAS_LIVE ? { idea_judged: 3.5, seq_declined: 3, seq_pr: 3, seq_verdict: 3 } : {}),

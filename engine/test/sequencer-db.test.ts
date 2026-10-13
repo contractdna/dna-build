@@ -20,6 +20,7 @@ const gh = await startFakeGitHub({ repo: "dna/game-lab", bot: "dna-sequencer[bot
 const dbName = `dna_seq_${process.pid}`;
 const admin = ADMIN ? postgres(ADMIN, { max: 1, onnotice: () => {} }) : undefined;
 const HOUR = 3600_000;
+const DAY = 24 * HOUR;
 if (ADMIN) {
   await admin!.unsafe(`create database ${dbName}`);
   const u = new URL(ADMIN);
@@ -378,6 +379,19 @@ test("an impossible spec: the lead's amendment is reviewed once at the first ver
   assert.match(a.brainSeq, /^\d+$/);
 });
 
+test("an amendment the brain ruled on before a crash (its record signed, the row not yet saved) is not put to it again", { skip }, async () => {
+  await step(); await step();
+  const id = (await active())!.id;
+  const ruled = await append("brain", `amend:${id}`, { kind: "amend", decision: { approve: true, reason: "claims keep the idea" }, inputSha256: "x" });
+  await devTeam({ amendment: { reason: "Crediting every finisher at settle loops over all players, past the 200k gas limit.", change: "Pay by claim instead of at settle: each finisher claims their share." } });
+  await step(); // gated
+  assert.equal(await step(), "rework: round 2");
+  assert.equal(st.inputs.amend, undefined, "never asked again");
+  const a = (await active())!.data.amendment!;
+  assert.deepEqual([a.approved, a.brainSeq, a.why], [true, String(ruled.seq), "claims keep the idea"]);
+  assert.equal((await sql`select 1 from log where kind = 'brain' and ref = ${`amend:${id}`}`).length, 1);
+});
+
 test("an amendment that relaxes a cap is refused without the brain: the verdict checks the spec as written and the next round is told", { skip }, async () => {
   await step(); await step();
   const original = (await active())!.data.spec;
@@ -396,15 +410,47 @@ test("an amendment that relaxes a cap is refused without the brain: the verdict 
   assert.equal((await active())!.data.amendment?.approved, false);
 });
 
-test("an amendment in a round that reaches no verdict is not reviewed: the next round is told to propose it again", { skip }, async () => {
+test("an amendment in a round that reaches no verdict (no pull request) is reviewed as the round ends: approved, the next round builds the amended spec", { skip }, async () => {
   await step(); await step();
-  await devTeam({ amendment: { reason: "Crediting every finisher at settle loops over all players.", change: "Pay by claim instead of at settle." }, noPr: true });
+  const original = (await active())!.data.spec;
+  const amendment = { reason: "A game can't make external calls, so it can't read a token balance.", change: "Tiers come from the check-in streak, not token.balanceOf(msg.sender); the seed hashes block.timestamp instead of blockhash." };
+  await devTeam({ amendment, noPr: true });
   assert.equal(await step(), "rework: round 2");
-  assert.equal(st.inputs.amend, undefined);
+  const asked = st.inputs.amend as { change: string; spec: string };
+  assert.equal(asked.change, amendment.change, "the spec's code reaches the brain whole");
+  assert.equal(asked.spec, original);
   assert.match(await step(), /^dispatched/);
   const order2 = JSON.parse(gh.dispatches.at(-1).client_payload.body);
-  assert.ok(order2.issues.some((i: string) => /^the spec amendment proposed in round 1 was not reviewed/.test(i)), order2.issues.join(" | "));
-  assert.equal((await active())!.data.amendment, undefined);
+  assert.ok(order2.spec.startsWith(original) && order2.spec.includes(amendment.change), "round 2 builds the amended spec");
+  assert.ok(order2.issues.some((i: string) => /^the spec amendment was approved/.test(i)), order2.issues.join(" | "));
+  assert.equal((await active())!.data.amendment?.approved, true);
+  // the brain rules once a build: round 2's proposal is not put to it, and round 3 is told why
+  delete st.inputs.amend;
+  await devTeam({ amendment: { reason: "Fewer players settle faster.", change: "Cap participants at 10 per round." }, noPr: true });
+  assert.equal(await step(), "rework: round 3");
+  assert.equal(st.inputs.amend, undefined);
+  await step();
+  const order3 = JSON.parse(gh.dispatches.at(-1).client_payload.body);
+  assert.ok(order3.issues.some((i: string) => /^the spec amendment proposed in round 2 was not put to the brain: it already ruled on one in round 1 \(approved\)/.test(i)), order3.issues.join(" | "));
+  assert.equal(order3.spec, order2.spec);
+});
+
+test("an amendment the screen refused (the brain never asked) leaves a later round's free for review", { skip }, async () => {
+  await step(); await step();
+  st.amend = false;
+  await devTeam({ amendment: { reason: "Settling every player needs more gas than allowed.", change: "Raise the gas limit to 500k for settle." }, noPr: true });
+  assert.equal(await step(), "rework: round 2");
+  assert.equal(st.inputs.amend, undefined, "never put to the brain");
+  assert.equal((await active())!.data.amendment?.approved, false);
+  await step();
+  await devTeam({ amendment: { reason: "Crediting every finisher at settle loops over all players.", change: "Pay by claim instead of at settle." }, noPr: true });
+  assert.equal(await step(), "rework: round 3");
+  assert.equal((st.inputs as { amend?: { change: string } }).amend?.change, "Pay by claim instead of at settle.", "round 2's amendment is put to the brain");
+  const a = (await active())!.data.amendment!;
+  assert.deepEqual([a.round, a.approved, typeof a.brainSeq], [2, false, "string"]);
+  await step();
+  const order3 = JSON.parse(gh.dispatches.at(-1).client_payload.body);
+  assert.ok(order3.issues.some((i: string) => /^the spec amendment was refused/.test(i)), order3.issues.join(" | "));
 });
 
 test("a re-run is refused (charged the whole ceiling); a second run of one order alerts and only the first counts", { skip }, async () => {
@@ -1204,6 +1250,51 @@ test("site served: 30 minutes without the site serving it: one alert to the owne
   assert.deepEqual(await s.ideaShip(r0.data.idea), { target: "site", live: false });
   await step();
   assert.equal(st.alerts.filter((a) => /the site has not picked it up/.test(a)).length, 1, "once");
+}));
+
+test("site served late: a deploy by hand days after the merge is announced by the hourly job, once, and told live", { skip }, () => realGates(async () => {
+  st.siteCommit = base; // the site is not redeployed when the release branch moves
+  const r0 = await siteBuildToHour();
+  await assert.rejects(step(), isDefer);
+  st.now += 30 * 60_000 + 1000;
+  assert.match(await step(), /not served, not announced/);
+  assert.ok(st.alerts.some((a) => a.includes(`(${r0.id}) is released at`) && /not announced until the site serves it/.test(a)));
+  assert.ok(!(await said(r0.id)).includes("seq_released"));
+  assert.equal((await sql`select status from idea_queue where id = ${r0.data.idea}`)[0].status, "reward", "rewarded at the merge");
+  // an hour later the site still runs the old commit: looked for, nothing said
+  st.now += HOUR;
+  assert.match(String(((await s.seqHourly()).serve as Record<string, string>)[r0.id]), /^not served: the site serves/);
+  assert.ok(!(await said(r0.id)).includes("seq_released"));
+  assert.deepEqual(await s.ideaShip(r0.data.idea), { target: "site", live: false });
+  // two days later the owners deploy the release branch by hand
+  st.siteCommit = null;
+  st.now += 2 * DAY;
+  assert.equal(((await s.seqHourly()).serve as Record<string, string>)[r0.id], "served, announced");
+  assert.ok((await said(r0.id)).includes("seq_released"));
+  assert.equal((await sql`select 1 from x_outbox where event_key = ${`seq:${r0.id}:seq_released`}`).length, 1);
+  assert.ok((await buildRow(r0.id)).data.served);
+  assert.deepEqual(await s.ideaShip(r0.data.idea), { target: "site", live: true });
+  const calls = st.siteCalls2.length;
+  st.now += HOUR;
+  assert.deepEqual((await s.seqHourly()).serve, {}, "never looked for again");
+  assert.equal(st.siteCalls2.length, calls);
+  assert.equal((await said(r0.id)).filter((x) => x === "seq_released").length, 1);
+}));
+
+test("site served late: still not served 14 days after the first look: one alert, never announced, no more looks", { skip }, () => realGates(async () => {
+  st.siteCommit = base;
+  const r0 = await siteBuildToHour();
+  await assert.rejects(step(), isDefer);
+  st.now += 30 * 60_000 + 1000;
+  await step();
+  st.now += 14 * DAY;
+  assert.match(String(((await s.seqHourly()).serve as Record<string, string>)[r0.id]), /^not served/);
+  assert.equal(st.alerts.filter((a) => a.includes(`(${r0.id})`) && /still not served after 14 days/.test(a)).length, 1);
+  st.siteCommit = null;
+  st.now += HOUR;
+  assert.deepEqual((await s.seqHourly()).serve, {});
+  assert.ok(!(await said(r0.id)).includes("seq_released"));
+  assert.deepEqual(await s.ideaShip(r0.data.idea), { target: "site", live: false });
 }));
 
 test("site served: the deployed commit holds the change but its page answers 500: waited on like a deploy still building; after 30 minutes one alert, no announcement", { skip }, () => realGates(async () => {

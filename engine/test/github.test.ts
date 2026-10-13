@@ -107,3 +107,17 @@ test("token expiry: read off every answer; outages are told apart from refusals"
   await assert.rejects(gh.refSha("main"), (e) => !gh.outage(e));
   fake.knobs.fail = null;
 });
+
+test("CI's Slither advice: only findings in the build's own folder; the shared kit's are left out", () => {
+  // shaped like a real build's report (dna-build PR 6): four in GameKit.sol, one in the game
+  const at = (f: string) => ({ source_mapping: { filename_relative: `pr/contracts/src/games/${f}` } });
+  const report = JSON.stringify({ results: { detectors: [
+    { check: "incorrect-equality", impact: "Medium", description: "GameKit._send(address,uint256) (src/games/GameKit.sol#131-135) uses a dangerous strict equality", elements: [at("GameKit.sol")] },
+    { check: "missing-zero-check", impact: "Low", description: "WordHunt.setKeeper(address).who (src/games/word-hunt-1000006/WordHunt.sol#50) lacks a zero-check", elements: [at("word-hunt-1000006/WordHunt.sol")] },
+    { check: "timestamp", impact: "Low", description: "GameKit.sweep() (src/games/GameKit.sol#88-95) uses timestamp for comparisons", elements: [at("GameKit.sol")] },
+    { check: "dead-code", impact: "Informational", description: "GameKit._credit(address,uint256) (src/games/GameKit.sol#119-126) is never used", elements: [at("GameKit.sol")] },
+    { check: "reentrancy-events", impact: "Low", description: "Reentrancy in WordHunt.play() (src/games/word-hunt-1000006/WordHunt.sol#70-80) through GameKit._send" },
+  ] } });
+  assert.deepEqual(gh.slitherFindings(report).map((f) => f.check), ["missing-zero-check", "reentrancy-events"]);
+  assert.deepEqual(gh.slitherFindings("not json"), []);
+});
