@@ -1,0 +1,51 @@
+{
+  "registry": {
+    "address": "0xc6CD8e3C58f557fBd68e977742Eeb62e3F24a34D",
+    "startBlock": 26165041
+  },
+  "commit": "786a270af3f1f67d1b3804eb2c8877d5e88cb58d",
+  "notes": [
+    "Up to 50 posts a day, at least 10 minutes apart",
+    "Fees, burns and liquidity adds are combined in a post every 6 hours",
+    "Replies answer what was asked, and know what the engine can and cannot do",
+    "Site pages block any script the site did not put there",
+    "Game builds pass the page check, and spec changes are reviewed at round end",
+    "The engine restarts itself if its work stalls, and queued posts are kept"
+  ],
+  "image": "ghcr.io/contractdna/dna-engine",
+  "imageDigest": "sha256:12b3bcdd8e9d91ca27dbe353d1a54b251a3ff27c76c9aacf152e5bbfa74bfe66",
+  "pagecheckImage": "ghcr.io/contractdna/dna-pagecheck",
+  "pagecheckDigest": "sha256:5811f631859cd7e9df4d739c9fc1035a354a186c0331d6602d0165f7fd1c0416",
+  "composeHash": "9ec0cbc8de93028a577a82f873697d44a7986bfd8e8dd15b0c98958c0c288dce",
+  "allowedEnvs": [
+    "DATABASE_URL",
+    "ALCHEMY_KEY",
+    "DRPC_KEY",
+    "XAI_API_KEY",
+    "OPENROUTER_API_KEY_ENGINE",
+    "KEEPER_PRIVATE_KEY",
+    "TELEGRAM_BOT_TOKEN",
+    "TELEGRAM_GROUP_ID",
+    "TELEGRAM_ALLOWED_USER_IDS",
+    "X_CLIENT_SECRET",
+    "X_REFRESH_TOKEN",
+    "ENGINE_MODE",
+    "POLICY_THRESHOLDS",
+    "STUDIO_TOKEN",
+    "GITHUB_TOKEN",
+    "DNA_PERSONA"
+  ],
+  "dstackApp": "0xf0839119995E13Aa6C5148eDD0ce7C7a929952BC",
+  "attestationUrl": "https://f0839119995e13aa6c5148edd0ce7c7a929952bc-8080.dstack-eth-prod9.phala.network/attestation",
+  "measurements": {
+    "mrtd": "f06dfda6dce1cf904d4e2bab1dc370634cf95cefa2ceb2de2eee127c9382698090d7a4a13e14c536ec6c9c3c8fa87077",
+    "rtmr0": "ec216f1d1d591468ff4741b9b192f016b26d3f90303bfa9dbb97557273853183981f21a4bcb3ae908247538d371ad072",
+    "rtmr1": "b598fde9491427341bc4683b75d10d3e36770af3a36a6954d8b6b7b22aa66358f13e1f172e51b7d6e6710d99a8d8532f",
+    "rtmr2": "9284cde236231d5ddace01104a440fd504df5182a2ad1ac3d2138b80c6a7864bd2c30f69041d8264217f3d24541580cf",
+    "osImageHash": "6427f4f5ded88b72d326bd973e581c1689c5080c6444a0cf90fec7d9e4c8b92a"
+  },
+  "logSigner": "0x7Ce826aA41E06Ca0D1f6F5a0B87b562f4cf50c59",
+  "funder": "0xe3677495BDc8da19D465660A3434A6041EDCA86F",
+  "kmsAuth": "0xd343a3f5593b93D8056aB5D60c433622d7D65a80",
+  "kmsKeyProvider": "3059301306072a8648ce3d020106082a8648ce3d03010703420004daad2c8833eae6d5912fdc9b1d088caa771120fab387a019acced35f40951561a97621078a66008aaa15c51420086960be14b24dc326b5c012038fdd68812710"
+}
