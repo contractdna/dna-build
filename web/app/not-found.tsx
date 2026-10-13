@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import Link from "next/link";
+import { roleOf, SITE_URL } from "../security";
 import { Shell } from "./_ui/Shell";
 import { PageHead, ui } from "./_ui/ui";
 
@@ -9,6 +10,8 @@ export const metadata: Metadata = {
 };
 
 export default function NotFound() {
+  // the play origin has no live feed (layout.tsx PlayRoot), so no Shell there: a plain page back to the main site
+  if (roleOf(process.env) === "play") return <main><p>There&apos;s no game at this address. <a href={SITE_URL}>Back to DNA</a></p></main>;
   return (
     <Shell>
       <div className={ui.page}>

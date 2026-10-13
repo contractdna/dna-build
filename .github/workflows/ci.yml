@@ -225,8 +225,8 @@ jobs:
         run: node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --test test/maintenance.test.mjs
       - name: build (LIVE, no database at build time)
         run: NEXT_PUBLIC_LIVE=1 npm run build
-      - name: build the play origin (game pages) and check the built wallet guard
-        run: SITE_ROLE=play NEXT_PUBLIC_LIVE=1 npm run build && node scripts/check-guard-build.mjs
+      - name: build the play origin (game pages), check the built wallet guard and its 404
+        run: SITE_ROLE=play NEXT_PUBLIC_LIVE=1 npm run build && node scripts/check-guard-build.mjs && node scripts/check-play-start.mjs
 
   e2e:
     needs: changes
