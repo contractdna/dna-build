@@ -18,7 +18,7 @@ import { attestation, nonceOk } from "./attest.ts";
 import { gameAgentHandler, gameKeeperHandlers } from "./games.ts";
 import { bootAnchor, bootCheck, persistHead } from "./head.ts";
 import { setKeyProvider } from "./sealed.ts";
-import { enqueue, type Handler, schedule, type Schedule, startWorker } from "./jobs.ts";
+import { enqueue, type Handler, schedule, type Schedule, stalled, startWorker, workerPulse } from "./jobs.ts";
 import { ideaLoopHandler } from "./idea-queue.ts";
 import { intakeHandler, liveHandler, roundsHandler } from "./ideas.ts";
 import { ideaOfDayHandler, ideaUpdatesHandler, shoutoutHandler, threadsHandler } from "./x-social.ts";
@@ -190,6 +190,7 @@ const health = async () => {
   return {
     ...flags, prelaunch: PRELAUNCH, keys: keyAddresses(), balancesEth: bal, lastWatcherBlock: lastWatched()?.toString() ?? null,
     loop: { cycleMs: LOOP.cycleMs, cycle: st.cycle, cyclesToday: st.day === new Date().toISOString().slice(0, 10) ? st.cyclesToday ?? 0 : 0, searchThread: st.thread ?? null, fork: forkStats },
+    worker: { pollAgeS: Math.round((Date.now() - workerPulse.polledAt) / 1000), inFlight: [...workerPulse.running.values()].map((r) => ({ kind: r.kind, ageS: Math.round((Date.now() - r.since) / 1000) })) },
     dueJobs: due.n, oldestDueJobAgeS: due.oldest ? Math.round((Date.now() - due.oldest.getTime()) / 1000) : 0,
     llmSpendTodayUsd: Number(spend.total.toFixed(4)), llmSpendByBudget: spend.by, llmCapUsd: dailyCap(Date.now()), gas: { maxGwei: GAS.maxGwei },
   };
@@ -249,11 +250,25 @@ const loops = [
   loop("heartbeat", 60_000, async () => { await heartbeat(); const headErr = boot ? persistHead(boot.scannedTo) : null; if (headErr) await alert(`Enclave: the disk head could not be written (${headErr.slice(0, 200)}); agent txs wait, the heartbeat retries.`, `alert:headsync:${new Date().toISOString().slice(0, 13)}`); if (boot && AGENT_HOLD.why) await bootAnchor().catch((e) => alert(`Boot anchor not mined yet (agent txs wait): ${(e as Error).message}`, `alert:bootanchor:${new Date().toISOString().slice(0, 13)}`)); if (!PRELAUNCH) await minuteChecks(); }),
   pollTelegram(commands, () => stopping, pressReply),
 ];
+// The stall guard: the check is a timer, never a DB call (the hang it catches may be the DB's own). The process exits and
+// the compose's restart: always brings it back; every job is restart-safe (an expired lock is reclaimed, a mid-post
+// attempt resolved). The console line is the sure trace: the alert is a queued job (a DB write that may fail the same
+// way), sent once the restarted worker runs it.
+let exiting = false;
+const guard = setInterval(() => {
+  const why = stalled(workerPulse);
+  if (!why || stopping || exiting) return;
+  exiting = true;
+  console.error(`worker stalled: ${why}; exiting for a restart`);
+  void Promise.race([alert(`Engine restarting itself: ${why}.`, `alert:stall:${new Date().toISOString().slice(0, 13)}`), new Promise((r) => setTimeout(r, 10_000))])
+    .catch(() => {}).finally(() => process.exit(1));
+}, 60_000);
 console.log(`engine up: mode ${(await getFlags()).mode}, port ${PORT}, ${Object.keys(handlers).length} job kinds`);
 
 const shutdown = async () => {
   if (stopping) return;
   stopping = true;
+  clearInterval(guard);
   stopWorker();
   server.close();
   await Promise.race([Promise.all(loops), new Promise((r) => setTimeout(r, 5000))]);

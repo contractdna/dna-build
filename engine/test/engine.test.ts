@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { parseGwei, zeroAddress } from "viem";
 import { z } from "zod";
-import { backoff, periodStart } from "../src/jobs.ts";
+import { backoff, periodStart, STALL, stalled } from "../src/jobs.ts";
 import { readFileSync } from "node:fs";
 import { anchorDays, AWARD_GRACE, due, EXEC_RETRY_MS, KEEPER_EVERY, queueHandler, retryMs } from "../src/keepers.ts";
 import { decodeOp, encodeOp, OPS } from "../src/lib.ts";
@@ -13,7 +13,7 @@ import { effective } from "../src/mode.ts";
 import { allowed, parseCallback, type Update } from "../src/telegram.ts";
 import { agentCheck, bumpFees, type FeeHistory, gasGuard, nextFees, quoteFees } from "../src/tx.ts";
 import { describe } from "../src/watch.ts";
-import { postedNote, postIssues, weightedLength } from "../src/x.ts";
+import { insertOnce, postedNote, postIssues, weightedLength } from "../src/x.ts";
 import { labelOf, siteChangeDue, treasuryFacts } from "../src/status.ts";
 import { titleOf } from "../src/announce.ts";
 import { factSheet, shapesFor, voiceIssues as vi } from "../src/voice.ts";
@@ -45,6 +45,33 @@ test("scheduler periods and backoff", () => {
   assert.equal(periodStart(t + 1000, 86_400_000, 600_000).toISOString(), "2026-10-06T00:10:00.000Z");
   assert.equal(periodStart(Date.UTC(2026, 9, 6, 13, 59), 3600_000).toISOString(), "2026-10-06T13:00:00.000Z");
   assert.deepEqual([1, 2, 3, 20].map(backoff), [20_000, 40_000, 80_000, 3600_000]);
+});
+
+test("stall guard: a poll loop that stopped coming round, or a job past its limit", () => {
+  const now = 1_800_000_000_000;
+  const pulse = (pollAgo: number, jobs: [string, number][] = []) => ({ polledAt: now - pollAgo, running: new Map(jobs.map(([k, ago], i) => [String(i), { kind: k, since: now - ago }])) });
+  assert.equal(stalled(pulse(5_000), now), null);
+  assert.equal(stalled(pulse(STALL.pollMs), now), null); // at the limit: not yet
+  assert.match(stalled(pulse(STALL.pollMs + 1), now)!, /job poll has not come round in 10 min/);
+  // a page check that waited for the service and ran a deep check (2.5 h) is not a stall
+  assert.equal(stalled(pulse(1_000, [["pages:check", 150 * 60_000], ["x:send", 60_000]]), now), null);
+  assert.match(stalled(pulse(1_000, [["x:send", 60_000], ["cycle", STALL.jobMs + 1]]), now)!, /job 1 cycle has run 240 min/);
+  // the daily page check (one check per shipped game, in series) has its own limit
+  assert.equal(stalled(pulse(1_000, [["pages:daily", 6 * 3600_000]]), now), null);
+  assert.match(stalled(pulse(1_000, [["pages:daily", 12 * 3600_000 + 1]]), now)!, /pages:daily has run 720 min/);
+});
+
+test("insertOnce: a signed row is inserted (and signed) once per key, even when callers race", async () => {
+  const rows = new Set<string>();
+  let signed = 0;
+  const put = (k: string) => insertOnce(`t:${k}`, async () => { await new Promise((r) => setTimeout(r, 5)); return rows.has(k); }, async () => { signed++; rows.add(k); return k; });
+  assert.deepEqual(await Promise.all([put("a"), put("a"), put("a"), put("b")]), ["a", undefined, undefined, "b"]);
+  assert.equal(signed, 2);
+  assert.equal(await put("a"), undefined); // already there: nothing signed
+  assert.equal(signed, 2);
+  // a failed insert frees the key for the next caller
+  await assert.rejects(insertOnce("t:c", async () => false, async () => { throw new Error("db down"); }));
+  assert.equal(await put("c"), "c");
 });
 
 test("gas guard: ceiling, value share, emergency, max-delay override", () => {

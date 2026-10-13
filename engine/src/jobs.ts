@@ -57,6 +57,20 @@ export async function finish(job: Job, err?: unknown): Promise<"done" | "queued"
   return failed ? "failed" : "queued";
 }
 
+/** The worker's liveness, read by the stall guard (src/engine.ts): when the poll loop last came round, and since when
+ *  each job is in flight in this process. */
+export const workerPulse = { polledAt: Date.now(), running: new Map<string, { kind: string; since: number }>() };
+/** A poll loop that has not come round in `pollMs` is stuck on a call that never returns (a DB socket gone dead); a
+ *  job in flight past its limit holds its lane shut for good. A build's page check (wait for the service, then a deep
+ *  check) is ≤ 2.5 h; the daily check runs one check per shipped game in series, so it grows with the games. */
+export const STALL = { pollMs: 10 * 60_000, jobMs: 4 * 3600_000, jobMsByKind: { "pages:daily": 12 * 3600_000 } as Record<string, number> };
+/** Why the worker is stuck, or null. */
+export function stalled(p: typeof workerPulse, now = Date.now()): string | null {
+  if (now - p.polledAt > STALL.pollMs) return `the job poll has not come round in ${Math.round((now - p.polledAt) / 60_000)} min`;
+  for (const [id, r] of p.running) if (now - r.since > (STALL.jobMsByKind[r.kind] ?? STALL.jobMs)) return `job ${id} ${r.kind} has run ${Math.round((now - r.since) / 60_000)} min`;
+  return null;
+}
+
 /** Worker loop: fill every lane with capacity, run handlers concurrently, poll every `pollMs`. */
 export function startWorker(handlers: Record<string, Handler>, onFailed: (job: Job, err: unknown) => void, pollMs = 2000) {
   const busy: Record<string, number> = {};
@@ -65,15 +79,17 @@ export function startWorker(handlers: Record<string, Handler>, onFailed: (job: J
   const open = () => Object.entries(handlers).filter(([, h]) => (busy[h.lane] ?? 0) < (LANES[h.lane] ?? 1)).map(([k]) => k);
   (async () => {
     while (!stopped) {
+      workerPulse.polledAt = Date.now();
       try {
         for (let job = await claim(open()); job; job = await claim(open())) {
           const j = job;
           const h = handlers[j.kind];
           busy[h.lane] = (busy[h.lane] ?? 0) + 1;
+          workerPulse.running.set(j.id, { kind: j.kind, since: Date.now() });
           h.run(j).then(() => finish(j), async (e) => {
             if (!(e instanceof Defer)) console.error(`job ${j.id} ${j.kind} attempt ${j.attempts} failed:`, (e as Error)?.message ?? e);
             if ((await finish(j, e)) === "failed") onFailed(j, e);
-          }).catch((e) => console.error("finish failed", e)).finally(() => { busy[h.lane]--; wake(); });
+          }).catch((e) => console.error("finish failed", e)).finally(() => { busy[h.lane]--; workerPulse.running.delete(j.id); wake(); });
         }
       } catch (e) {
         console.error("worker poll failed", e);

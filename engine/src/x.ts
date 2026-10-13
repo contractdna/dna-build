@@ -216,9 +216,9 @@ async function storeMentions(b: Mentions) {
   for (const m of b.data ?? []) {
     const u = m.author_id ? users.get(m.author_id) : undefined;
     const raw = JSON.parse(JSON.stringify({ ...m, user: u ?? null })) as Mention;
-    await sql`insert into x_mention (id, author_id, author_username, text, created_at, raw, sig)
+    await insertOnce(`x_mention:${m.id}`, async () => (await sql`select 1 from x_mention where id = ${m.id}`).length > 0, async () => sql`insert into x_mention (id, author_id, author_username, text, created_at, raw, sig)
       values (${m.id}, ${m.author_id ?? null}, ${u?.username ?? null}, ${m.text}, ${m.created_at ?? null}, ${sql.json(raw as never)}, ${await stateSig("x_mention", m.id, { author: m.author_id ?? null, text: m.text, raw })})
-      on conflict (id) do nothing`;
+      on conflict (id) do nothing`);
   }
 }
 export const MENTION_FIELDS = { expansions: "author_id", "user.fields": "username,created_at,public_metrics,verified,verified_type", "tweet.fields": "created_at,referenced_tweets,conversation_id,entities" };
@@ -442,10 +442,23 @@ type Kind = "post" | "reply";
 /** One row per event key (a chain log, a closed experiment, a mention): a replayed watcher range never posts twice. */
 export async function enqueueX(eventKey: string, type: Kind, event: Record<string, unknown>, o: { replyTo?: string; link?: string } = {}) {
   const ev = JSON.parse(JSON.stringify(event)) as Record<string, unknown>;
-  const sig = await stateSig("x_outbox", eventKey, outboxValue(type, ev, o.replyTo ?? null, o.link ?? null));
-  const [r] = await sql<{ id: string }[]>`insert into x_outbox (type, event_key, event, reply_to, link, sig)
-    values (${type}, ${eventKey}, ${sql.json(ev as never)}, ${o.replyTo ?? null}, ${o.link ?? null}, ${sig}) on conflict do nothing returning id::text`;
-  return r?.id;
+  return insertOnce(`x_outbox:${eventKey}`, async () => (await sql`select 1 from x_outbox where event_key = ${eventKey}`).length > 0, async () => {
+    const sig = await stateSig("x_outbox", eventKey, outboxValue(type, ev, o.replyTo ?? null, o.link ?? null));
+    const [r] = await sql<{ id: string }[]>`insert into x_outbox (type, event_key, event, reply_to, link, sig)
+      values (${type}, ${eventKey}, ${sql.json(ev as never)}, ${o.replyTo ?? null}, ${o.link ?? null}, ${sig}) on conflict do nothing returning id::text`;
+    return r?.id;
+  });
+}
+/** A signed insert-if-absent, one per key at a time. Signing appends the key's newest `state` record, and a row must
+ *  carry the newest one (src/log.ts trusted): a second signing for a row that is already there (an insert that then
+ *  conflicts) would leave the stored row unsigned for good, so nothing is signed once the row exists. One engine
+ *  process: an in-process lock is enough. */
+const inserting = new Map<string, Promise<unknown>>();
+export async function insertOnce<T>(key: string, exists: () => Promise<boolean>, insert: () => Promise<T>): Promise<T | undefined> {
+  while (inserting.has(key)) await inserting.get(key)!.catch(() => {});
+  const p = (async () => ((await exists()) ? undefined : insert()))();
+  inserting.set(key, p);
+  try { return await p; } finally { if (inserting.get(key) === p) inserting.delete(key); }
 }
 /** What an outbox row's signature covers (enclave): a row the DB made up never reaches the writer. */
 const outboxValue = (type: string, event: unknown, replyTo: string | null, link: string | null) => ({ type, event, replyTo, link });
